@@ -1,0 +1,10 @@
+[Unit]
+Description=RAS startup script
+
+[Service]
+ExecStart=/usr/bin/amd-ras
+SyslogIdentifier=amd-ras
+
+[Install]
+WantedBy=multi-user.target
+
