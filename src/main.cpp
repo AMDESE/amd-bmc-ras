@@ -31,6 +31,8 @@ extern "C" {
 #define SUCCESS  1
 #define FAILURE  0
 
+#define MAX_RETRIES 128
+
 static boost::asio::io_service io;
 std::shared_ptr<sdbusplus::asio::connection> conn;
 
@@ -46,52 +48,10 @@ static boost::asio::posix::stream_descriptor P1_apmlAlertEvent(io);
 struct i2c_info p0_info = {2, 60};
 struct i2c_info p1_info = {3, 56};
 
-const static constexpr int resetPulseTimeMs = 500;
+const static constexpr int resetPulseTimeMs = 100;
 static boost::asio::steady_timer gpioAssertTimer(io);
 
-bool harvest_ras_errors(struct i2c_info info)
-{
-    uint16_t n = 0;
-    uint16_t bytespermca;
-    uint16_t numbanks = 0;
-    uint32_t buffer;
-    struct mca_bank mca_dump;
-    oob_status_t ret;
-	std::string file;
-    std::ofstream outfile;
-
-    std::cerr << "read_bmc_ras_mca_validity_check\n";
-    ret = read_bmc_ras_mca_validity_check(info, &bytespermca, &numbanks);
-    if (ret != OOB_SUCCESS) {
-            printf("Failed to get MCA banks with valid status Err[%d]\n",ret);
-		return false;
-    }
-	std::cout << " numbanks = " << numbanks << " bytespermca = " << bytespermca << std::endl;
-
-    if(numbanks > 0 ) {
-        phosphor::logging::log<phosphor::logging::level::INFO>
-            ("MCA banks returned non zero value.Harvesting RAS errors");
-
-		std::cout << "MCA valid banks = " << numbanks << std::endl;
-
-        file = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".txt";
-        err_count++;
-
-		outfile.open(file, std::ios_base::app);
-        while(n < numbanks) {
-            ret = read_bmc_ras_mca_msr_dump(info, mca_dump, &buffer);
-            if (ret != OOB_SUCCESS) {
-                printf("Failed to get MCA bank data, Err[%d]\n",ret);
-				n++;
-                continue;
-            }
-			outfile << buffer;
-            n++;
-        }
-		outfile.close();
-    }
-	return true;
-}
+bool harvest_ras_errors(struct i2c_info info);
 
 bool getPlatformID()
 {
@@ -271,23 +231,12 @@ static void P0_apmlAlertHandler()
 
     if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
     {
-    	std::cerr << "P0 APML Alert received\n";
-		sleep(2);
-    	harvest_ras_errors(p0_info);
-		setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
-		sleep(5);
+        std::cerr << "P0 APML Alert received\n";
+
+        harvest_ras_errors(p0_info);
+        //setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+
     }
-    P0_apmlAlertEvent.async_wait(
-        boost::asio::posix::stream_descriptor::wait_read,
-        [](const boost::system::error_code ec) {
-            if (ec)
-            {
-                std::cerr << "P0 APML alert handler error: "
-                          << ec.message() << "\n";
-                return;
-            }
-            P0_apmlAlertHandler();
-        });
 }
 
 static void P1_apmlAlertHandler()
@@ -296,29 +245,134 @@ static void P1_apmlAlertHandler()
 
     if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
     {
-    	std::cerr << "P1 APML Alert received\n";
-    	harvest_ras_errors(p1_info);
-        setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
-        sleep(5);
+        std::cerr << "P1 APML Alert received\n";
+        harvest_ras_errors(p1_info);
+        //setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
     }
-    P1_apmlAlertEvent.async_wait(
+}
+
+/* Schedule a wait event */
+static void scheduleP0AlertEventHandler()
+{
+
+    P0_apmlAlertEvent.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
         [](const boost::system::error_code ec) {
             if (ec)
             {
+                std::cerr << "P0 APML alert handler error: "
+                          << ec.message() << std::endl;
+                return;
+            }
+            P0_apmlAlertHandler();
+        });
+}
+
+static void scheduleP1AlertEventHandler()
+{
+
+    P1_apmlAlertEvent.async_wait(
+        boost::asio::posix::stream_descriptor::wait_read,
+        [](const boost::system::error_code& ec) {
+            if (ec)
+            {
                 std::cerr << "P1 APML alert handler error: "
-                          << ec.message() << "\n";
+                                          << ec.message() << std::endl;
                 return;
             }
             P1_apmlAlertHandler();
         });
 }
 
+bool harvest_ras_errors(struct i2c_info info)
+{
+    uint16_t n = 0;
+    uint16_t retries = 0;
+    uint16_t bytespermca;
+    uint16_t maxOffset32;
+    uint16_t numbanks = 0;
+    uint32_t buffer;
+    struct mca_bank mca_dump;
+    oob_status_t ret = OOB_MAILBOX_ERR;
+    FILE *file;
+    std::string filePath;
+
+    std::cerr << "read_bmc_ras_mca_validity_check" << std::endl;
+
+    while (ret != OOB_SUCCESS)
+    {
+        retries++;
+
+        ret = read_bmc_ras_mca_validity_check(info, &bytespermca, &numbanks);
+
+        if (numbanks == 0)
+        {
+            std::cerr << "Invalid MCA bank data. Retry Count = " << retries << std::endl;
+            ret = OOB_MAILBOX_ERR;
+            continue;
+        }
+        if (retries > MAX_RETRIES)
+        {
+            std::cerr << "Failed to get MCA banks with valid status Error :" << ret << std::endl;
+            return false;
+        }
+
+    }
+
+
+
+    filePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".txt";
+    err_count++;
+
+    file = fopen(filePath.c_str(), "w");
+
+    maxOffset32 = ((bytespermca % 4) ? 1 : 0) + (bytespermca >> 2);
+    std::cerr << "Number of Valid MCA bank:" << numbanks << " Bytes per MCA:" << bytespermca << std::endl;
+    std::cerr << "Harvesting RAS Errors ...MAX 32 Bit Words:" << maxOffset32 << std::endl;
+
+    while(n < numbanks)
+    {
+
+        fprintf(file, "MCA bank Number: 0x%x\n", n);
+
+        for (int offset = 0; offset < maxOffset32; offset++)
+        {
+            memset(&buffer, 0, sizeof(buffer));
+            memset(&mca_dump, 0, sizeof(mca_dump));
+            mca_dump.index  = n;
+            mca_dump.offset = offset * 4;
+
+            ret = read_bmc_ras_mca_msr_dump(info, mca_dump, &buffer);
+
+            if (ret != OOB_SUCCESS)
+            {
+                std::cerr << "Failed to get MCA bank data from Bank =" << n << "Offset Addr =" << offset << std::endl;
+                continue;
+            }
+
+            fprintf(file, "Offset: 0x%x\n", mca_dump.offset);
+            fprintf(file, "buffer: 0x%x\n", buffer);
+        }
+        fprintf(file, "______________________\n");
+        n++;
+    }
+    fclose(file);
+
+    scheduleP0AlertEventHandler();
+    if( (BoardName.compare("Quartz")   == 0 )  ||
+        (BoardName.compare("Titanite") == 0 ) )
+    {
+        scheduleP1AlertEventHandler();
+    }
+
+    return true;
+}
+
 int main() {
 
-	int dir;
-	struct stat buffer;
-	std::string ras_dir = "/var/lib/amd-ras/";
+    int dir;
+    struct stat buffer;
+    std::string ras_dir = "/var/lib/amd-ras/";
 
     if(getPlatformID() == false)
     {
@@ -328,25 +382,26 @@ int main() {
     }
 
     if (stat(ras_dir.c_str(), &buffer) != 0) {
-   		dir = mkdir("/var/lib/amd-ras",0777);
+        dir = mkdir("/var/lib/amd-ras",0777);
 
-    	if(dir) {
-        	phosphor::logging::log<phosphor::logging::level::INFO>
-            	("ras-errror-logging directory not created");
-		}
+        if(dir) {
+            phosphor::logging::log<phosphor::logging::level::INFO>
+                ("ras-errror-logging directory not created");
+        }
     }
 
     conn = std::make_shared<sdbusplus::asio::connection>(io);
 
-	requestGPIOEvents("P0_I3C_APML_ALERT_L", P0_apmlAlertHandler, P0_apmlAlertLine, P0_apmlAlertEvent);
+    requestGPIOEvents("P0_I3C_APML_ALERT_L", P0_apmlAlertHandler, P0_apmlAlertLine, P0_apmlAlertEvent);
 
-	if((BoardName.compare("Quartz") == 0 )  ||
-		 (BoardName.compare("Titanite") == 0 )){
+    if( (BoardName.compare("Quartz")   == 0 )  ||
+        (BoardName.compare("Titanite") == 0 ))
+    {
 
-		requestGPIOEvents("P1_I3C_APML_ALERT_L", P1_apmlAlertHandler, P1_apmlAlertLine, P1_apmlAlertEvent);
-	}
+        requestGPIOEvents("P1_I3C_APML_ALERT_L", P1_apmlAlertHandler, P1_apmlAlertLine, P1_apmlAlertEvent);
+    }
 
-	io.run();
+    io.run();
 
     return 0;
 }
