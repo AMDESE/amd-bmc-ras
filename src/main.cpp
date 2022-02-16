@@ -205,23 +205,8 @@ static int setGPIOValue(const std::string& name, const int value,
     {
         return -1;
     }
-    gpioAssertTimer.expires_after(std::chrono::milliseconds(durationMs));
-    gpioAssertTimer.async_wait(
-        [gpioLine, value, name](const boost::system::error_code ec) {
-            // Set the GPIO line back to the opposite value
-            gpioLine.set_value(!value);
-            std::cerr << name << " released\n";
-            if (ec)
-            {
-                // operation_aborted is expected if timer is canceled before
-                // completion.
-                if (ec != boost::asio::error::operation_aborted)
-                {
-                    std::cerr << name << " async_wait failed: " << ec.message()
-                              << "\n";
-                }
-            }
-        });
+    usleep(durationMs * 1000);
+    gpioLine.set_value(!value);
     return 0;
 }
 
@@ -301,33 +286,34 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
 	{
 		if (read_sbrmi_ras_status(p0_info, &buf) == 0)
 		{
-			std::cout << "RAS status register:" << buf << std::endl;
 
-			if (buf == 1)
+			if ((buf & 0x04))
 			{
 				setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
 				return true;
 			}
-		}
-		else {
-			return false;
-		}
+		} else {
+	        return false;
+        }
     }
 	else if(alert_name.compare("P1_ALERT")   == 0 )
 	{
         if (read_sbrmi_ras_status(p1_info, &buf) == 0)
         {
-            std::cout << "RAS status register:" << buf << std::endl;
 
-            if (buf == 1)
+            if ((buf & 0x04))
 			{
                 setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
                 return true;
 			}
+        } else {
+                return false;
         }
-		else {
-            return false;
-        }
+    }
+
+    if (!(buf & 0x1)) {
+        std::cout << "The alert signaled is not due to a fatal error" << std::endl;
+        return false;
     }
 
     while (ret != OOB_SUCCESS)
@@ -388,8 +374,6 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
     fclose(file);
 
     setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
-    usleep(resetPulseTimeMs);
-
     if(alert_name.compare("P0_ALERT")   == 0 ) {
         scheduleP0AlertEventHandler();
     }
