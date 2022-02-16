@@ -51,7 +51,7 @@ struct i2c_info p1_info = {3, 56};
 const static constexpr int resetPulseTimeMs = 100;
 static boost::asio::steady_timer gpioAssertTimer(io);
 
-bool harvest_ras_errors(struct i2c_info info);
+bool harvest_ras_errors(struct i2c_info info,std::string alert_name);
 
 bool getPlatformID()
 {
@@ -233,8 +233,7 @@ static void P0_apmlAlertHandler()
     {
         std::cerr << "P0 APML Alert received\n";
 
-        harvest_ras_errors(p0_info);
-        //setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+        harvest_ras_errors(p0_info,"P0_ALERT");
 
     }
 }
@@ -246,15 +245,13 @@ static void P1_apmlAlertHandler()
     if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
     {
         std::cerr << "P1 APML Alert received\n";
-        harvest_ras_errors(p1_info);
-        //setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+        harvest_ras_errors(p1_info,"P1_ALERT");
     }
 }
 
 /* Schedule a wait event */
 static void scheduleP0AlertEventHandler()
 {
-
     P0_apmlAlertEvent.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
         [](const boost::system::error_code ec) {
@@ -284,7 +281,7 @@ static void scheduleP1AlertEventHandler()
         });
 }
 
-bool harvest_ras_errors(struct i2c_info info)
+bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
 {
     uint16_t n = 0;
     uint16_t retries = 0;
@@ -296,8 +293,42 @@ bool harvest_ras_errors(struct i2c_info info)
     oob_status_t ret = OOB_MAILBOX_ERR;
     FILE *file;
     std::string filePath;
+    uint8_t buf;
 
     std::cerr << "read_bmc_ras_mca_validity_check" << std::endl;
+
+    if(alert_name.compare("P0_ALERT")   == 0 )
+	{
+		if (read_sbrmi_ras_status(p0_info, &buf) == 0)
+		{
+			std::cout << "RAS status register:" << buf << std::endl;
+
+			if (buf == 1)
+			{
+				setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+				return true;
+			}
+		}
+		else {
+			return false;
+		}
+    }
+	else if(alert_name.compare("P1_ALERT")   == 0 )
+	{
+        if (read_sbrmi_ras_status(p1_info, &buf) == 0)
+        {
+            std::cout << "RAS status register:" << buf << std::endl;
+
+            if (buf == 1)
+			{
+                setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+                return true;
+			}
+        }
+		else {
+            return false;
+        }
+    }
 
     while (ret != OOB_SUCCESS)
     {
@@ -305,20 +336,19 @@ bool harvest_ras_errors(struct i2c_info info)
 
         ret = read_bmc_ras_mca_validity_check(info, &bytespermca, &numbanks);
 
-        if (numbanks == 0)
-        {
-            std::cerr << "Invalid MCA bank data. Retry Count = " << retries << std::endl;
-            ret = OOB_MAILBOX_ERR;
-            continue;
-        }
         if (retries > MAX_RETRIES)
         {
             std::cerr << "Failed to get MCA banks with valid status Error :" << ret << std::endl;
             return false;
         }
 
+        if (numbanks == 0)
+        {
+            std::cerr << "Invalid MCA bank data. Retry Count = " << retries << std::endl;
+            ret = OOB_MAILBOX_ERR;
+            continue;
+        }
     }
-
 
 
     filePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".txt";
@@ -332,7 +362,6 @@ bool harvest_ras_errors(struct i2c_info info)
 
     while(n < numbanks)
     {
-
         fprintf(file, "MCA bank Number: 0x%x\n", n);
 
         for (int offset = 0; offset < maxOffset32; offset++)
@@ -358,10 +387,14 @@ bool harvest_ras_errors(struct i2c_info info)
     }
     fclose(file);
 
-    scheduleP0AlertEventHandler();
-    if( (BoardName.compare("Quartz")   == 0 )  ||
-        (BoardName.compare("Titanite") == 0 ) )
-    {
+    setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
+    usleep(resetPulseTimeMs);
+
+    if(alert_name.compare("P0_ALERT")   == 0 ) {
+        scheduleP0AlertEventHandler();
+    }
+
+    if(alert_name.compare("P1_ALERT")   == 0 ) {
         scheduleP1AlertEventHandler();
     }
 
