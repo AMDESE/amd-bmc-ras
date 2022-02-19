@@ -28,9 +28,6 @@ extern "C" {
 #define COMMAND_BOARD_ID    ("/sbin/fw_printenv -n board_id")
 #define COMMAND_LEN         3
 
-#define SUCCESS  1
-#define FAILURE  0
-
 #define MAX_RETRIES 10
 
 static boost::asio::io_service io;
@@ -45,11 +42,10 @@ static boost::asio::posix::stream_descriptor P0_apmlAlertEvent(io);
 static gpiod::line P1_apmlAlertLine;
 static boost::asio::posix::stream_descriptor P1_apmlAlertEvent(io);
 
-struct i2c_info p0_info = {2, 60};
-struct i2c_info p1_info = {3, 56};
+struct i2c_info p0_info = {2, 60, 0};
+struct i2c_info p1_info = {3, 56, 0};
 
 const static constexpr int resetPulseTimeMs = 100;
-static boost::asio::steady_timer gpioAssertTimer(io);
 
 bool harvest_ras_errors(struct i2c_info info,std::string alert_name);
 
@@ -279,21 +275,8 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
     FILE *file;
     std::string filePath;
     uint8_t buf;
-    bool status = FAILURE;
 
     std::cerr << "read_bmc_ras_mca_validity_check" << std::endl;
-
-    if (read_sbrmi_ras_status(info, &buf) != 0)
-    {
-        status = FAILURE;
-        goto exit_L;
-    }
-
-    if (!(buf & 0x1)) {
-        std::cout << "The alert signaled is not due to a fatal error" << std::endl;
-        status = FAILURE;
-        goto exit_L;
-    }
 
     while (ret != OOB_SUCCESS)
     {
@@ -304,8 +287,7 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
         if (retries > MAX_RETRIES)
         {
             std::cerr << "Failed to get MCA banks with valid status Error :" << ret << std::endl;
-            status = FAILURE;
-            goto exit_L;
+            break;
         }
 
         if (numbanks == 0)
@@ -353,18 +335,23 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
     }
     fclose(file);
 
-    if ((buf & 0x04))
+    if (read_sbrmi_ras_status(info, &buf) != 0)
     {
-        setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
-        status = SUCCESS;
-        goto exit_L;
-    }
-    else {
-        setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
-        status = SUCCESS;
+
+    	if ((buf & 0x04))
+    	{
+    		setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+    		std::cerr << "ASSERT_RST_BTN_L triggered" << std::endl;
+
+    	}
+    	else {
+    		setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
+    		std::cerr << "ASSERT_WARM_RST_BTN_L triggered" << std::endl;
+
+    	}
     }
 
-exit_L:
+
     if(alert_name.compare("P0_ALERT")   == 0 ) {
         scheduleP0AlertEventHandler();
     }
@@ -373,7 +360,7 @@ exit_L:
         scheduleP1AlertEventHandler();
     }
 
-    return status;
+    return true;
 }
 
 int main() {
