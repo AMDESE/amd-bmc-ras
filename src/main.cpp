@@ -335,7 +335,7 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
     }
     fclose(file);
 
-    if (read_sbrmi_ras_status(info, &buf) != 0)
+    if (read_sbrmi_ras_status(info, &buf) == OOB_SUCCESS)
     {
 
     	if ((buf & 0x04))
