@@ -230,38 +230,6 @@ static void P1_apmlAlertHandler()
     }
 }
 
-/* Schedule a wait event */
-static void scheduleP0AlertEventHandler()
-{
-    P0_apmlAlertEvent.async_wait(
-        boost::asio::posix::stream_descriptor::wait_read,
-        [](const boost::system::error_code ec) {
-            if (ec)
-            {
-                std::cerr << "P0 APML alert handler error: "
-                          << ec.message() << std::endl;
-                return;
-            }
-            P0_apmlAlertHandler();
-        });
-}
-
-static void scheduleP1AlertEventHandler()
-{
-
-    P1_apmlAlertEvent.async_wait(
-        boost::asio::posix::stream_descriptor::wait_read,
-        [](const boost::system::error_code& ec) {
-            if (ec)
-            {
-                std::cerr << "P1 APML alert handler error: "
-                                          << ec.message() << std::endl;
-                return;
-            }
-            P1_apmlAlertHandler();
-        });
-}
-
 bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
 {
     uint16_t n = 0;
@@ -353,11 +321,15 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
 
 
     if(alert_name.compare("P0_ALERT")   == 0 ) {
-        scheduleP0AlertEventHandler();
+        P0_apmlAlertEvent.release();
+        P0_apmlAlertLine.release();
+        requestGPIOEvents("P0_I3C_APML_ALERT_L", P0_apmlAlertHandler, P0_apmlAlertLine, P0_apmlAlertEvent);
     }
 
     if(alert_name.compare("P1_ALERT")   == 0 ) {
-        scheduleP1AlertEventHandler();
+        P1_apmlAlertEvent.release();
+        P1_apmlAlertLine.release();
+        requestGPIOEvents("P1_I3C_APML_ALERT_L", P1_apmlAlertHandler, P1_apmlAlertLine, P1_apmlAlertEvent);
     }
 
     return true;
