@@ -42,8 +42,8 @@ static boost::asio::posix::stream_descriptor P0_apmlAlertEvent(io);
 static gpiod::line P1_apmlAlertLine;
 static boost::asio::posix::stream_descriptor P1_apmlAlertEvent(io);
 
-struct i2c_info p0_info = {2, 60, 0};
-struct i2c_info p1_info = {3, 56, 0};
+struct i2c_info p0_info = {4, 0x22400000002, 0};
+struct i2c_info p1_info = {5, 0x22400000002, 0};
 
 const static constexpr int resetPulseTimeMs = 100;
 
