@@ -266,6 +266,11 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
         }
     }
 
+    if (numbanks == 0)
+    {
+        std::cerr << "No Valid MCA bank data " << std::endl;
+        return true;
+    }
 
     filePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".txt";
     err_count++;
