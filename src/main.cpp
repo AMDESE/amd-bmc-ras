@@ -42,12 +42,12 @@ static boost::asio::posix::stream_descriptor P0_apmlAlertEvent(io);
 static gpiod::line P1_apmlAlertLine;
 static boost::asio::posix::stream_descriptor P1_apmlAlertEvent(io);
 
-struct i2c_info p0_info = {4, 0x22400000002, 0};
-struct i2c_info p1_info = {5, 0x22400000002, 0};
+struct bus_info p0_info = {4, 0x22400000002, 0, 1};
+struct bus_info p1_info = {5, 0x22400000002, 0, 1};
 
 const static constexpr int resetPulseTimeMs = 100;
 
-bool harvest_ras_errors(struct i2c_info info,std::string alert_name);
+bool harvest_ras_errors(struct bus_info info,std::string alert_name);
 
 bool getPlatformID()
 {
@@ -230,7 +230,7 @@ static void P1_apmlAlertHandler()
     }
 }
 
-bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
+bool harvest_ras_errors(struct bus_info info,std::string alert_name)
 {
     uint16_t n = 0;
     uint16_t retries = 0;
@@ -245,6 +245,18 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
     uint8_t buf;
 
     std::cerr << "read_bmc_ras_mca_validity_check" << std::endl;
+
+    if (read_sbrmi_ras_status(info, &buf) != OOB_SUCCESS)
+    {
+        std::cerr << "Failed to read RAS status register" << std::endl;
+        return false;
+    }
+
+    if (!(buf & 0x1))
+    {
+        std::cerr << "The alert signaled is not due to a fatal error" << std::endl;
+        return false;
+    }
 
     while (ret != OOB_SUCCESS)
     {
@@ -308,22 +320,16 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
     }
     fclose(file);
 
-    if (read_sbrmi_ras_status(info, &buf) == OOB_SUCCESS)
+
+    if ((buf & 0x04))
     {
-
-    	if ((buf & 0x04))
-    	{
-    		setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
-    		std::cerr << "ASSERT_RST_BTN_L triggered" << std::endl;
-
-    	}
-    	else {
-    		setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
-    		std::cerr << "ASSERT_WARM_RST_BTN_L triggered" << std::endl;
-
-    	}
+        setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+        std::cerr << "ASSERT_RST_BTN_L triggered" << std::endl;
     }
-
+    else {
+        setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
+        std::cerr << "ASSERT_WARM_RST_BTN_L triggered" << std::endl;
+    }
 
     if(alert_name.compare("P0_ALERT")   == 0 ) {
         P0_apmlAlertEvent.release();
