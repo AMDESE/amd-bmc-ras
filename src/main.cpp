@@ -75,6 +75,7 @@ constexpr auto TITANITE_6   = 78;   //0x4E
 std::mutex harvest_in_progress_mtx;           // mutex for critical section
 
 bool harvest_ras_errors(struct i2c_info info,std::string alert_name);
+std::string index_file = "/var/lib/amd-ras/current_index";
 
 bool getPlatformID()
 {
@@ -410,6 +411,7 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
     uint16_t numbanks = 0;
 
     std::string filePath;
+    FILE *file;
     uint8_t buf;
     bool ras_harvest = false;
 
@@ -428,6 +430,13 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
             {
                 filePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".txt";
                 err_count++;
+                file = fopen(index_file.c_str(), "w");
+
+                if(file != NULL)
+                {
+                    fprintf(file,"%d",err_count);
+                    fclose(file);
+                }
                 harvest_mca_data_banks(filePath, info, numbanks, bytespermca);
             }
 
@@ -465,6 +474,7 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
 int main() {
 
     int dir;
+    FILE *file;
     struct stat buffer;
     std::string ras_dir = "/var/lib/amd-ras/";
 
@@ -481,6 +491,27 @@ int main() {
             sd_journal_print(LOG_ERR, "ras-errror-logging directory not created\n");
         }
     }
+
+    /*Create index file to store error file cound */
+    if (stat(index_file.c_str(), &buffer) != 0)
+    {
+        file = fopen(index_file.c_str(), "w");
+
+        if(file != NULL)
+        {
+            fprintf(file,"0");
+            fclose(file);
+        }
+    } else {
+        file = fopen(index_file.c_str(), "r");
+
+        if(file != NULL)
+        {
+             fscanf(file,"%d",&err_count);
+             fclose(file);
+        }
+    }
+    std::cout << "Err_count " << err_count << std::endl;
 
     conn = std::make_shared<sdbusplus::asio::connection>(io);
 
