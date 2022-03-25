@@ -33,6 +33,11 @@ extern "C" {
 
 #define MAX_RETRIES 10
 #define RAS_STATUS_REGISTER (0x4C)
+#define index_file  ("/var/lib/amd-ras/current_index")
+#define BAD_DATA    (0xBAADDA7A)
+
+//#undef LOG_DEBUG
+//#define LOG_DEBUG LOG_ERR
 
 static boost::asio::io_service io;
 std::shared_ptr<sdbusplus::asio::connection> conn;
@@ -73,6 +78,9 @@ constexpr auto TITANITE_5   = 77;   //0x4D
 constexpr auto TITANITE_6   = 78;   //0x4E
 
 std::mutex harvest_in_progress_mtx;           // mutex for critical section
+
+static bool P0_MCADataHarvested = false;
+static bool P1_MCADataHarvested = false;
 
 bool harvest_ras_errors(struct i2c_info info,std::string alert_name);
 
@@ -348,14 +356,19 @@ static bool harvest_mca_data_banks(std::string filePath, struct i2c_info info, u
 
                 }
                 if (ret != OOB_SUCCESS)
+                {
                     sd_journal_print(LOG_DEBUG, "Failed to get MCA bank data from Bank:%d, Offset:0x%x\n", n, offset);
+                    fprintf(file, "Offset: 0x%x\n", mca_dump.offset);
+                    fprintf(file, "buffer: 0x%x\n", BAD_DATA);
+                    continue;
+                }
 
-                continue;
-            }
+            } // if (ret != OOB_SUCCESS)
 
             fprintf(file, "Offset: 0x%x\n", mca_dump.offset);
             fprintf(file, "buffer: 0x%x\n", buffer);
-        }
+        } // for loop
+
         fprintf(file, "______________________\n");
         n++;
     }
@@ -411,7 +424,8 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
 
     std::string filePath;
     uint8_t buf;
-    bool ras_harvest = false;
+    bool ResetReady  = false;
+    FILE *file;
 
     // Check if APML ALERT is because of RAS
     if (read_sbrmi_ras_status(info, &buf) == OOB_SUCCESS)
@@ -423,12 +437,34 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
         {
             sd_journal_print(LOG_DEBUG, "The alert signaled is due to a RAS fatal error\n");
 
+            if(alert_name.compare("P0_ALERT") == 0 )
+            {
+                P0_MCADataHarvested = true;
+
+            }
+
+            if(alert_name.compare("P1_ALERT") == 0 )
+            {
+                P1_MCADataHarvested = true;
+
+            }
+
             // RAS MCA Validity Check
             if ( true == harvest_mca_validity_check(info, &numbanks, &bytespermca) )
             {
                 filePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".txt";
-                err_count++;
+
                 harvest_mca_data_banks(filePath, info, numbanks, bytespermca);
+                err_count++;
+
+                file = fopen(index_file, "w");
+
+                if(file != NULL)
+                {
+                    fprintf(file,"%d",err_count);
+                    fclose(file);
+                }
+
             }
 
             // Clear RAS status register
@@ -436,21 +472,39 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
             // check PPR to determine whether potential bug in PPR or in implementation of SMU?
             write_register(info, RAS_STATUS_REGISTER, 1);
 
-            // Trigger Cold or WARM reset
-            if ((buf & 0x04))
+            if (num_of_proc == 2)
             {
-                setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
-                sd_journal_print(LOG_DEBUG, "COLD RESET triggered\n");
-
+                if ( (P0_MCADataHarvested == true) &&
+                     (P1_MCADataHarvested == true) )
+                {
+                    ResetReady = true;
+                }
             }
             else
             {
-                setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
-                sd_journal_print(LOG_DEBUG, "WARM RESET triggered\n");
-
+                ResetReady = true;
             }
 
-            ras_harvest = true;
+            if (ResetReady == true)
+            {
+                // Trigger Cold or WARM reset
+                if ((buf & 0x04))
+                {
+                    setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+                    sd_journal_print(LOG_DEBUG, "COLD RESET triggered\n");
+
+                }
+                else
+                {
+                    setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
+                    sd_journal_print(LOG_DEBUG, "WARM RESET triggered\n");
+
+                }
+
+
+                P0_MCADataHarvested = false;
+                P1_MCADataHarvested = false;
+            }
         }
 
     }
@@ -459,13 +513,14 @@ bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
         sd_journal_print(LOG_DEBUG, "Nothing to Harvest. Not RAS Error\n");
     }
 
-    return ras_harvest;
+    return true;
 }
 
 int main() {
 
     int dir;
     struct stat buffer;
+    FILE *file;
     std::string ras_dir = "/var/lib/amd-ras/";
 
     if(getPlatformID() == false)
@@ -479,6 +534,27 @@ int main() {
 
         if(dir != 0) {
             sd_journal_print(LOG_ERR, "ras-errror-logging directory not created\n");
+        }
+    }
+
+    memset(&buffer, 0, sizeof(buffer));
+    /*Create index file to store error file cound */
+    if (stat(index_file, &buffer) != 0)
+    {
+        file = fopen(index_file, "w");
+
+        if(file != NULL)
+        {
+            fprintf(file,"0");
+            fclose(file);
+        }
+    } else {
+        file = fopen(index_file, "r");
+
+        if(file != NULL)
+        {
+            fscanf(file,"%d",&err_count);
+            fclose(file);
         }
     }
 
