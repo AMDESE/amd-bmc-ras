@@ -21,8 +21,7 @@ extern "C" {
 #include <sys/stat.h>
 #include "linux/i2c-dev.h"
 #include "i2c/smbus.h"
-#include "esmi_common.h"
-#include "esmi_i2c.h"
+#include "apml.h"
 #include "esmi_mailbox.h"
 #include "esmi_rmi.h"
 }
@@ -51,8 +50,8 @@ static boost::asio::posix::stream_descriptor P0_apmlAlertEvent(io);
 static gpiod::line P1_apmlAlertLine;
 static boost::asio::posix::stream_descriptor P1_apmlAlertEvent(io);
 
-struct i2c_info p0_info = {4, 0x22400000002, 0};
-struct i2c_info p1_info = {5, 0x22400000002, 0};
+uint8_t p0_info = 0;
+uint8_t p1_info = 1;
 
 static int num_of_proc = 0;
 
@@ -82,7 +81,7 @@ std::mutex harvest_in_progress_mtx;           // mutex for critical section
 static bool P0_MCADataHarvested = false;
 static bool P1_MCADataHarvested = false;
 
-bool harvest_ras_errors(struct i2c_info info,std::string alert_name);
+bool harvest_ras_errors(uint8_t info,std::string alert_name);
 
 bool getPlatformID()
 {
@@ -292,11 +291,11 @@ static void P1AlertEventHandler()
     });
 }
 
-static void write_register(struct i2c_info info, uint32_t reg, uint32_t value)
+static void write_register(uint8_t info, uint32_t reg, uint32_t value)
 {
     oob_status_t ret;
 
-    ret = esmi_oob_write_byte(info, reg, value);
+    ret = esmi_oob_write_byte(info, reg, SBRMI, value);
     if (ret != OOB_SUCCESS) {
         sd_journal_print(LOG_ERR, "Failed to write register: 0x%x\n", reg);
         return;
@@ -304,14 +303,14 @@ static void write_register(struct i2c_info info, uint32_t reg, uint32_t value)
     sd_journal_print(LOG_DEBUG, "Write to register 0x%x is successful\n", reg);
 }
 
-static bool harvest_mca_data_banks(std::string filePath, struct i2c_info info, uint16_t numbanks, uint16_t bytespermca)
+static bool harvest_mca_data_banks(std::string filePath, uint8_t info, uint16_t numbanks, uint16_t bytespermca)
 {
     FILE *file;
     uint16_t n = 0;
     uint16_t maxOffset32;
     uint32_t buffer;
     struct mca_bank mca_dump;
-    oob_status_t ret = OOB_MAILBOX_ERR;
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     uint16_t retryCount = MAX_RETRIES;
 
     file = fopen(filePath.c_str(), "w");
@@ -377,9 +376,9 @@ static bool harvest_mca_data_banks(std::string filePath, struct i2c_info info, u
     return true;
 }
 
-static bool harvest_mca_validity_check(struct i2c_info info, uint16_t *numbanks, uint16_t *bytespermca)
+static bool harvest_mca_validity_check(uint8_t info, uint16_t *numbanks, uint16_t *bytespermca)
 {
-    oob_status_t ret = OOB_MAILBOX_ERR;
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     uint16_t retries = 0;
     bool mac_validity_check = true;
 
@@ -399,7 +398,7 @@ static bool harvest_mca_validity_check(struct i2c_info info, uint16_t *numbanks,
              (*numbanks > MAX_MCA_BANKS) )
         {
             sd_journal_print(LOG_ERR, "Invalid MCA bank validity status. Retry Count: %d\n", retries);
-            ret = OOB_MAILBOX_ERR;
+            ret = OOB_MAILBOX_CMD_UNKNOWN;
             usleep(1000 * 1000);
             continue;
         }
@@ -416,7 +415,7 @@ static bool harvest_mca_validity_check(struct i2c_info info, uint16_t *numbanks,
     return mac_validity_check;
 }
 
-bool harvest_ras_errors(struct i2c_info info,std::string alert_name)
+bool harvest_ras_errors(uint8_t info,std::string alert_name)
 {
 
     uint16_t bytespermca = 0;
