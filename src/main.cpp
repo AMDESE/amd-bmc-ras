@@ -94,7 +94,8 @@ static bool P1_MCADataHarvested = false;
 
 static uint64_t RecordId = 1;
 unsigned int board_id = 0;
-char CdumpResetPolicy[32] = "warm";
+static uint32_t p0_eax , p0_ebx , p0_ecx , p0_edx;
+static uint32_t p1_eax , p1_ebx , p1_ecx , p1_edx;
 
 bool harvest_ras_errors(uint8_t info,std::string alert_name);
 
@@ -147,6 +148,41 @@ bool getPlatformID()
     return PLATID;
 }
 
+void getCpuID()
+{
+    uint32_t core_id = 0;
+    oob_status_t ret;
+    p0_eax = 0;
+    p0_ebx = 0;
+    p0_ecx = 0;
+    p0_edx = 0;
+
+    ret = esmi_oob_cpuid(p0_info, core_id,
+                 &p0_eax, &p0_ebx, &p0_ecx, &p0_edx);
+
+    if(ret)
+    {
+        sd_journal_print(LOG_ERR, "Failed to get the CPUID for socket 0\n");
+    }
+
+    if(num_of_proc == 2)
+    {
+        p1_eax = 0;
+        p1_ebx = 0;
+        p1_ecx = 0;
+        p1_edx = 0;
+
+        ret = esmi_oob_cpuid(p1_info, core_id,
+                 &p1_eax, &p1_ebx, &p1_ecx, &p1_edx);
+
+        if(ret)
+        {
+            sd_journal_print(LOG_ERR, "Failed to get the CPUID for socket 0\n");
+        }
+
+    }
+
+}
 static bool requestGPIOEvents(
     const std::string& name, const std::function<void()>& handler,
     gpiod::line& gpioLine,
@@ -423,23 +459,22 @@ void dump_processor_error_section(ERROR_RECORD *rcd,uint8_t info)
 
     rcd->ProcError.ValidBits = CPU_ID_VALID | LOCAL_APIC_ID_VALID;
 
-    uint32_t eax , ebx , ecx , edx;
-    uint32_t core_id = 0;
-    oob_status_t ret;
-    eax = 0;
-    ebx = 0;
-
-    ret = esmi_oob_cpuid(info, core_id,
-                 &eax, &ebx, &ecx, &edx);
-
-    rcd->ProcError.CpuId[0] = eax;
-    rcd->ProcError.CpuId[1] = ebx;
-    rcd->ProcError.CpuId[2] = ecx;
-    rcd->ProcError.CpuId[3] = edx;
-
-    rcd->ProcError.CPUAPICId = ((ebx >> 24) & 0xff);
-    sd_journal_print(LOG_ERR,"eax %d ebx = %d ecx = %d edx = %d \n",eax,ebx,ecx,edx);
-    sd_journal_print(LOG_ERR,"CPUAPICId %lld ",rcd->ProcError.CPUAPICId);
+    if(info == p0_info)
+    {
+        rcd->ProcError.CpuId[0] = p0_eax;
+        rcd->ProcError.CpuId[1] = p0_ebx;
+        rcd->ProcError.CpuId[2] = p0_ecx;
+        rcd->ProcError.CpuId[3] = p0_edx;
+        rcd->ProcError.CPUAPICId = ((p0_ebx >> 24) & 0xff);
+    }
+    else if(info == p1_info)
+    {
+        rcd->ProcError.CpuId[0] = p1_eax;
+        rcd->ProcError.CpuId[1] = p1_ebx;
+        rcd->ProcError.CpuId[2] = p1_ecx;
+        rcd->ProcError.CpuId[3] = p1_edx;
+        rcd->ProcError.CPUAPICId = ((p1_ebx >> 24) & 0xff);
+    }
 
 }
 
@@ -474,7 +509,8 @@ void dump_context_info(ERROR_RECORD *rcd,uint16_t numbanks,uint16_t bytespermca)
     rcd->ContextInfo.MmRegisterAddress = RSVD;
 }
 
-static bool harvest_mca_data_banks(std::string filePath, uint8_t info, uint16_t numbanks, uint16_t bytespermca)
+static bool harvest_mca_data_banks(std::string cperFilePath,
+            std::string rawFilePath ,uint8_t info, uint16_t numbanks, uint16_t bytespermca)
 {
     FILE *file;
     uint16_t n = 0;
@@ -499,6 +535,8 @@ static bool harvest_mca_data_banks(std::string filePath, uint8_t info, uint16_t 
 
     dump_context_info(rcd,numbanks,bytespermca);
 
+    file = fopen(rawFilePath.c_str(), "w");
+
     maxOffset32 = ((bytespermca % 4) ? 1 : 0) + (bytespermca >> 2);
     sd_journal_print(LOG_DEBUG, "Number of Valid MCA bank:%d\n", numbanks);
     sd_journal_print(LOG_DEBUG, "Number of 32 Bit Words:%d\n", maxOffset32);
@@ -508,6 +546,8 @@ static bool harvest_mca_data_banks(std::string filePath, uint8_t info, uint16_t 
 
     while(n < numbanks)
     {
+        fprintf(file, "MCA bank Number: 0x%x\n", n);
+
         for (int offset = 0; offset < maxOffset32; offset++)
         {
             memset(&buffer, 0, sizeof(buffer));
@@ -542,21 +582,28 @@ static bool harvest_mca_data_banks(std::string filePath, uint8_t info, uint16_t 
                 {
                     sd_journal_print(LOG_DEBUG, "Failed to get MCA bank data from Bank:%d, Offset:0x%x\n", n, offset);
                     CrashDumpdata[raw_data_index++]  = BAD_DATA;
+                    fprintf(file, "Offset: 0x%x\n", mca_dump.offset);
+                    fprintf(file, "buffer: 0x%x\n", BAD_DATA);
                     continue;
                 }
 
             } // if (ret != OOB_SUCCESS)
+
+            fprintf(file, "Offset: 0x%x\n", mca_dump.offset);
+            fprintf(file, "buffer: 0x%x\n", buffer);
             CrashDumpdata[raw_data_index++]  = buffer;
         } // for loop
 
+        fprintf(file, "______________________\n");
         n++;
     }
+    fclose(file);
 
-    file = fopen(filePath.c_str(), "w");
+    file = fopen(cperFilePath.c_str(), "w");
     fwrite(rcd, sizeof(ERROR_RECORD), 1, file);
     fclose(file);
 
-    file = fopen(filePath.c_str(), "a+");
+    file = fopen(cperFilePath.c_str(), "a+");
     fwrite(CrashDumpdata, sizeof(uint32_t),numbanks * maxOffset32, file);
     fclose(file);
 
@@ -618,7 +665,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
     uint16_t bytespermca = 0;
     uint16_t numbanks = 0;
 
-    std::string filePath;
+    std::string cperFilePath,rawFilePath;
     uint8_t buf;
     bool ResetReady  = false;
     FILE *file;
@@ -648,9 +695,10 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
             // RAS MCA Validity Check
             if ( true == harvest_mca_validity_check(info, &numbanks, &bytespermca) )
             {
-                filePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".txt";
+                rawFilePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".txt";
+                cperFilePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".cper";
 
-                harvest_mca_data_banks(filePath, info, numbanks, bytespermca);
+                harvest_mca_data_banks(cperFilePath, rawFilePath, info, numbanks, bytespermca);
                 err_count++;
 
                 file = fopen(index_file, "w");
@@ -685,43 +733,48 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
             {
                 FILE* fp = fopen(config_file, "r");
 
-                if(fp != NULL)
+                char * line = NULL;
+                size_t len = 0;
+                ssize_t read;
+
+                while ((read = getline(&line, &len, fp)) != -1)
                 {
-                    fscanf(fp,"%s",CdumpResetPolicy);
+                    if(*line == '#')
+                        continue;
+                    else
+                    {
+                        if(*line == '1')
+                        {
+
+                            setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+                            sd_journal_print(LOG_DEBUG, "COLD RESET triggered\n");
+
+                        }
+                        else if((*line == '0') && (buf & 0x04))
+                        {
+
+                            setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+                            sd_journal_print(LOG_DEBUG, "COLD RESET triggered\n");
+
+                        }
+                        else if((*line == '0') && !(buf & 0x04))
+                        {
+
+                            setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
+                            sd_journal_print(LOG_DEBUG, "WARM RESET triggered\n");
+
+                        }
+                        else if(*line == '2')
+                        {
+                            sd_journal_print(LOG_DEBUG, "NO RESET triggered\n");
+                        }
+                        else
+                        {
+                            sd_journal_print(LOG_ERR, "CdumpResetPolicy is not valid\n");
+                        }
+                    }
                 }
                 fclose(fp);
-                // Trigger Cold or WARM reset
-                if(strncmp(CdumpResetPolicy,COLD_RESET,strlen(COLD_RESET)) == 0)
-                {
-
-                    setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
-                    sd_journal_print(LOG_DEBUG, "COLD RESET triggered\n");
-
-                }
-                else if((strncmp(CdumpResetPolicy,WARM_RESET,strlen(WARM_RESET)) == 0)
-                      && (buf & 0x04))
-                {
-
-                    setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
-                    sd_journal_print(LOG_DEBUG, "COLD RESET triggered\n");
-
-                }
-                else if((strncmp(CdumpResetPolicy,WARM_RESET,strlen(WARM_RESET)) == 0)
-                      && !(buf & 0x04))
-                {
-
-                    setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
-                    sd_journal_print(LOG_DEBUG, "WARM RESET triggered\n");
-
-                }
-                else if(strncmp(CdumpResetPolicy,NO_RESET,strlen(NO_RESET)) == 0)
-                {
-                   sd_journal_print(LOG_DEBUG, "NO RESET triggered\n");
-                }
-                else
-                {
-                   sd_journal_print(LOG_ERR, "CdumpResetPolicy is not valid\n");
-                }
 
                 P0_MCADataHarvested = false;
                 P1_MCADataHarvested = false;
@@ -749,6 +802,8 @@ int main() {
         sd_journal_print(LOG_ERR, "Could not find the board id of the platform\n");
         return false;
     }
+
+    getCpuID();
 
     if (stat(ras_dir.c_str(), &buffer) != 0) {
         dir = mkdir("/var/lib/amd-ras",0777);
@@ -786,7 +841,10 @@ int main() {
 
         if(file != NULL)
         {
-            fprintf(file,"warm");
+            fprintf(file,"# 0 ---> warm\n");
+            fprintf(file,"# 1 ---> cold\n");
+            fprintf(file,"# 2 ---> no reset\n");
+            fprintf(file,"0");
             fclose(file);
         }
     }
