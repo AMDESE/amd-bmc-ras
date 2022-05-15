@@ -16,12 +16,14 @@
 #include <phosphor-logging/log.hpp>
 #include <sdbusplus/asio/object_server.hpp>
 #include <mutex>          // std::mutex
+#include "cper.hpp"
 
 extern "C" {
 #include <sys/stat.h>
 #include "linux/i2c-dev.h"
 #include "i2c/smbus.h"
 #include "apml.h"
+#include "esmi_cpuid_msr.h"
 #include "esmi_mailbox.h"
 #include "esmi_rmi.h"
 }
@@ -29,10 +31,13 @@ extern "C" {
 #define COMMAND_BOARD_ID    ("/sbin/fw_printenv -n board_id")
 #define COMMAND_LEN         3
 #define MAX_MCA_BANKS       (32)
+#define TWO_SOCKET          (2)
+#define SHIFT_24            (24)
 
 #define MAX_RETRIES 10
 #define RAS_STATUS_REGISTER (0x4C)
 #define index_file  ("/var/lib/amd-ras/current_index")
+#define config_file ("/var/lib/amd-ras/config_file")
 #define BAD_DATA    (0xBAADDA7A)
 
 //#undef LOG_DEBUG
@@ -81,6 +86,11 @@ std::mutex harvest_in_progress_mtx;           // mutex for critical section
 static bool P0_MCADataHarvested = false;
 static bool P1_MCADataHarvested = false;
 
+static uint64_t RecordId = 1;
+unsigned int board_id = 0;
+static uint32_t p0_eax , p0_ebx , p0_ecx , p0_edx;
+static uint32_t p1_eax , p1_ebx , p1_ecx , p1_edx;
+
 bool harvest_ras_errors(uint8_t info,std::string alert_name);
 
 bool getPlatformID()
@@ -89,7 +99,6 @@ bool getPlatformID()
     char data[COMMAND_LEN];
     bool PLATID = false;
     std::stringstream ss;
-    unsigned int board_id = 0;
 
     // Setup pipe for reading and execute to get u-boot environment
     // variable board_id.
@@ -133,6 +142,41 @@ bool getPlatformID()
     return PLATID;
 }
 
+void getCpuID()
+{
+    uint32_t core_id = 0;
+    oob_status_t ret;
+    p0_eax = 0;
+    p0_ebx = 0;
+    p0_ecx = 0;
+    p0_edx = 0;
+
+    ret = esmi_oob_cpuid(p0_info, core_id,
+                 &p0_eax, &p0_ebx, &p0_ecx, &p0_edx);
+
+    if(ret)
+    {
+        sd_journal_print(LOG_ERR, "Failed to get the CPUID for socket 0\n");
+    }
+
+    if(num_of_proc == TWO_SOCKET)
+    {
+        p1_eax = 0;
+        p1_ebx = 0;
+        p1_ecx = 0;
+        p1_edx = 0;
+
+        ret = esmi_oob_cpuid(p1_info, core_id,
+                 &p1_eax, &p1_ebx, &p1_ecx, &p1_edx);
+
+        if(ret)
+        {
+            sd_journal_print(LOG_ERR, "Failed to get the CPUID for socket 1\n");
+        }
+
+    }
+
+}
 static bool requestGPIOEvents(
     const std::string& name, const std::function<void()>& handler,
     gpiod::line& gpioLine,
@@ -303,7 +347,164 @@ static void write_register(uint8_t info, uint32_t reg, uint32_t value)
     sd_journal_print(LOG_DEBUG, "Write to register 0x%x is successful\n", reg);
 }
 
-static bool harvest_mca_data_banks(std::string filePath, uint8_t info, uint16_t numbanks, uint16_t bytespermca)
+void calculate_time_stamp(ERROR_RECORD *rcd)
+{
+    using namespace std;
+    using namespace std::chrono;
+    typedef duration<int, ratio_multiply<hours::period, ratio<24> >::type> days;
+
+    system_clock::time_point now = system_clock::now();
+    system_clock::duration tp = now.time_since_epoch();
+
+    days d = duration_cast<days>(tp);
+    tp -= d;
+    hours h = duration_cast<hours>(tp);
+    tp -= h;
+    minutes m = duration_cast<minutes>(tp);
+    tp -= m;
+    seconds s = duration_cast<seconds>(tp);
+    tp -= s;
+
+    time_t tt = system_clock::to_time_t(now);
+    tm utc_tm = *gmtime(&tt);
+
+    rcd->Header.TimeStamp.Seconds = utc_tm.tm_sec;
+    rcd->Header.TimeStamp.Minutes = utc_tm.tm_min;
+    rcd->Header.TimeStamp.Hours = utc_tm.tm_hour;
+    rcd->Header.TimeStamp.Flag = 1;
+    rcd->Header.TimeStamp.Day = utc_tm.tm_mday;
+    rcd->Header.TimeStamp.Month = utc_tm.tm_mon + 1;
+    rcd->Header.TimeStamp.Year = utc_tm.tm_year;
+    rcd->Header.TimeStamp.Century = 20 + utc_tm.tm_year/100;
+    rcd->Header.TimeStamp.Year = rcd->Header.TimeStamp.Year % 100;
+}
+
+void dump_cper_header_section(ERROR_RECORD *rcd ,uint16_t numbanks, uint16_t bytespermca)
+{
+    memcpy(rcd->Header.Signature, CPER_SIG_RECORD, CPER_SIG_SIZE);
+    rcd->Header.Revision = CPER_RECORD_REV;
+    rcd->Header.SignatureEnd = CPER_SIG_END;
+    rcd->Header.SectionCount = 1;
+    rcd->Header.ErrorSeverity = CPER_SEV_FATAL;
+
+    /*Bit 0 = 1 -> PlatformID field contains valid info
+      Bit 1 = 1 -> TimeStamp field contains valid info
+      Bit 2 = 1 -> PartitionID field contains valid info*/
+
+    rcd->Header.ValidationBits = (CPER_VALID_PLATFORM_ID | CPER_VALID_TIMESTAMP);
+
+    rcd->Header.RecordLength = sizeof(ERROR_RECORD) + (numbanks * bytespermca);
+
+    calculate_time_stamp(rcd);
+
+    rcd->Header.PlatformId[0] = board_id;
+
+    rcd->Header.CreatorId = CPER_CREATOR_PSTORE;
+    rcd->Header.NotifyType = CPER_NOTIFY_MCE;
+
+    rcd->Header.RecordId = RecordId++;
+}
+
+void dump_error_descriptor_section(ERROR_RECORD *rcd, uint16_t numbanks, uint16_t bytespermca)
+{
+
+    rcd->SectionDescriptor[0].Revision = CPER_SEC_REV;
+    rcd->SectionDescriptor[1].Revision = CPER_SEC_REV;
+    /* fru_id and fru_text is invalid */
+    /* Bit 0 - the FRUId field contains valid information
+       Bit 1 - the FRUString field contains valid information*/
+	rcd->SectionDescriptor[0].SecValidMask = FRU_ID_VALID | FRU_TEXT_VALID;
+	rcd->SectionDescriptor[1].SecValidMask = FRU_ID_VALID | FRU_TEXT_VALID;
+
+    rcd->SectionDescriptor[0].SectionFlags = CPER_PRIMARY;
+    rcd->SectionDescriptor[1].SectionFlags = CPER_PRIMARY;
+
+    rcd->SectionDescriptor[0].SectionType = VENDOR_OOB_CRASHDUMP;
+    rcd->SectionDescriptor[1].SectionType = VENDOR_OOB_CRASHDUMP;
+    /*FRU text P0 and P1*/
+    rcd->SectionDescriptor[0].FRUText[0] = 'P';
+    rcd->SectionDescriptor[0].FRUText[1] = '0';
+    rcd->SectionDescriptor[1].FRUText[0] = 'P';
+    rcd->SectionDescriptor[1].FRUText[1] = '1';
+
+    if(P0_MCADataHarvested == true)
+    {
+        rcd->SectionDescriptor[0].SectionOffset = sizeof(COMMON_ERROR_RECORD_HEADER) +
+                             (2 * sizeof(ERROR_SECTION_DESCRIPTOR));
+
+        rcd->SectionDescriptor[0].SectionLength = (numbanks * bytespermca) +
+            sizeof(PROCESSOR_ERROR_SECTION) +  sizeof(PROCINFO) + sizeof(CONTEXT_INFO);
+        rcd->SectionDescriptor[0].Severity = CPER_SEV_FATAL;
+
+    } else if(P1_MCADataHarvested == true)
+    {
+        rcd->SectionDescriptor[1].SectionOffset = sizeof(COMMON_ERROR_RECORD_HEADER) +
+                             (2 * sizeof(ERROR_SECTION_DESCRIPTOR));
+        rcd->SectionDescriptor[1].SectionLength = (numbanks * bytespermca) +
+            sizeof(PROCESSOR_ERROR_SECTION) +  sizeof(PROCINFO) + sizeof(CONTEXT_INFO);
+
+        rcd->SectionDescriptor[1].Severity = CPER_SEV_FATAL;
+
+    }
+}
+
+void dump_processor_error_section(ERROR_RECORD *rcd,uint8_t info)
+{
+
+    rcd->ProcError.ValidBits = CPU_ID_VALID | LOCAL_APIC_ID_VALID;
+
+    if(info == p0_info)
+    {
+        rcd->ProcError.CpuId[0] = p0_eax;
+        rcd->ProcError.CpuId[1] = p0_ebx;
+        rcd->ProcError.CpuId[2] = p0_ecx;
+        rcd->ProcError.CpuId[3] = p0_edx;
+        rcd->ProcError.CPUAPICId = ((p0_ebx >> SHIFT_24) & 0xff);
+    }
+    else if(info == p1_info)
+    {
+        rcd->ProcError.CpuId[0] = p1_eax;
+        rcd->ProcError.CpuId[1] = p1_ebx;
+        rcd->ProcError.CpuId[2] = p1_ecx;
+        rcd->ProcError.CpuId[3] = p1_edx;
+        rcd->ProcError.CPUAPICId = ((p1_ebx >> SHIFT_24) & 0xff);
+    }
+
+}
+
+void dump_processor_info(ERROR_RECORD *rcd)
+{
+    /*AMD Vendor specific GUID for Crashdump error structure*/
+    rcd->ProcessorInfo.ErrorStructureType = AMD_ERR_STRUCT_TYPE;
+
+    /*Bit 0 – Check Info Valid
+      Bit 1 – Target Address Identifier Valid
+      Bit 2 – Requestor Identifier Valid
+      Bit 3 – Responder Identifier Valid
+      Bit 4 – Instruction Pointer Valid
+      Bits 5-63 – Reserved*/
+
+    rcd->ProcessorInfo.ValidBits = INFO_VALID_CHECK_INFO;
+
+    /*valid bits for each Raw crashdump section/mailbox cmd*/
+    rcd->ProcessorInfo.CheckInfo = RSVD;
+
+    rcd->ProcessorInfo.TargetId = RSVD;
+    rcd->ProcessorInfo.RequesterId = RSVD;
+    rcd->ProcessorInfo.ResponderId = RSVD;
+    rcd->ProcessorInfo.InstructionPointer = TBD;
+}
+
+void dump_context_info(ERROR_RECORD *rcd,uint16_t numbanks,uint16_t bytespermca)
+{
+    rcd->ContextInfo.RegisterContextType = CTX_TYPE_MSR;
+    rcd->ContextInfo.RegisterArraySize = numbanks * bytespermca;
+    rcd->ContextInfo.MSRAddress = RSVD;
+    rcd->ContextInfo.MmRegisterAddress = RSVD;
+}
+
+static bool harvest_mca_data_banks(std::string cperFilePath,
+            std::string rawFilePath ,uint8_t info, uint16_t numbanks, uint16_t bytespermca)
 {
     FILE *file;
     uint16_t n = 0;
@@ -312,13 +513,30 @@ static bool harvest_mca_data_banks(std::string filePath, uint8_t info, uint16_t 
     struct mca_bank mca_dump;
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     uint16_t retryCount = MAX_RETRIES;
+    uint32_t *CrashDumpdata = NULL;
 
-    file = fopen(filePath.c_str(), "w");
+    ERROR_RECORD  *rcd =  (ERROR_RECORD *)malloc(sizeof(ERROR_RECORD));
+
+    memset(rcd, 0, sizeof(*rcd));
+
+    dump_cper_header_section(rcd,numbanks,bytespermca);
+
+    dump_error_descriptor_section(rcd,numbanks,bytespermca);
+
+    dump_processor_error_section(rcd,info);
+
+    dump_processor_info(rcd);
+
+    dump_context_info(rcd,numbanks,bytespermca);
+
+    file = fopen(rawFilePath.c_str(), "w");
 
     maxOffset32 = ((bytespermca % 4) ? 1 : 0) + (bytespermca >> 2);
     sd_journal_print(LOG_DEBUG, "Number of Valid MCA bank:%d\n", numbanks);
     sd_journal_print(LOG_DEBUG, "Number of 32 Bit Words:%d\n", maxOffset32);
 
+    CrashDumpdata = (uint32_t *)malloc(numbanks * maxOffset32 * sizeof(uint32_t));
+    int raw_data_index = 0;
 
     while(n < numbanks)
     {
@@ -357,6 +575,7 @@ static bool harvest_mca_data_banks(std::string filePath, uint8_t info, uint16_t 
                 if (ret != OOB_SUCCESS)
                 {
                     sd_journal_print(LOG_DEBUG, "Failed to get MCA bank data from Bank:%d, Offset:0x%x\n", n, offset);
+                    CrashDumpdata[raw_data_index++]  = BAD_DATA;
                     fprintf(file, "Offset: 0x%x\n", mca_dump.offset);
                     fprintf(file, "buffer: 0x%x\n", BAD_DATA);
                     continue;
@@ -366,13 +585,32 @@ static bool harvest_mca_data_banks(std::string filePath, uint8_t info, uint16_t 
 
             fprintf(file, "Offset: 0x%x\n", mca_dump.offset);
             fprintf(file, "buffer: 0x%x\n", buffer);
+            CrashDumpdata[raw_data_index++]  = buffer;
         } // for loop
 
         fprintf(file, "______________________\n");
         n++;
     }
-
     fclose(file);
+
+    file = fopen(cperFilePath.c_str(), "w");
+    fwrite(rcd, sizeof(ERROR_RECORD), 1, file);
+    fclose(file);
+
+    file = fopen(cperFilePath.c_str(), "a+");
+    fwrite(CrashDumpdata, sizeof(uint32_t),numbanks * maxOffset32, file);
+    fclose(file);
+
+    if(CrashDumpdata != NULL)
+    {
+        free(CrashDumpdata);
+        CrashDumpdata = NULL;
+    }
+    if(rcd != NULL)
+    {
+        free(rcd);
+        rcd =  NULL;
+    }
     return true;
 }
 
@@ -421,7 +659,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
     uint16_t bytespermca = 0;
     uint16_t numbanks = 0;
 
-    std::string filePath;
+    std::string cperFilePath,rawFilePath;
     uint8_t buf;
     bool ResetReady  = false;
     FILE *file;
@@ -451,9 +689,10 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
             // RAS MCA Validity Check
             if ( true == harvest_mca_validity_check(info, &numbanks, &bytespermca) )
             {
-                filePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".txt";
+                rawFilePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".txt";
+                cperFilePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".cper";
 
-                harvest_mca_data_banks(filePath, info, numbanks, bytespermca);
+                harvest_mca_data_banks(cperFilePath, rawFilePath, info, numbanks, bytespermca);
                 err_count++;
 
                 file = fopen(index_file, "w");
@@ -471,7 +710,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
             // check PPR to determine whether potential bug in PPR or in implementation of SMU?
             write_register(info, RAS_STATUS_REGISTER, 1);
 
-            if (num_of_proc == 2)
+            if (num_of_proc == TWO_SOCKET)
             {
                 if ( (P0_MCADataHarvested == true) &&
                      (P1_MCADataHarvested == true) )
@@ -486,20 +725,50 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
 
             if (ResetReady == true)
             {
-                // Trigger Cold or WARM reset
-                if ((buf & 0x04))
+                FILE* fp = fopen(config_file, "r");
+
+                char * line = NULL;
+                size_t len = 0;
+                ssize_t read;
+
+                while ((read = getline(&line, &len, fp)) != -1)
                 {
-                    setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
-                    sd_journal_print(LOG_DEBUG, "COLD RESET triggered\n");
+                    if(*line == '#')
+                        continue;
+                    else
+                    {
+                        if(*line == '1')
+                        {
 
+                            setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+                            sd_journal_print(LOG_DEBUG, "COLD RESET triggered\n");
+
+                        }
+                        else if((*line == '0') && (buf & 0x04))
+                        {
+
+                            setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+                            sd_journal_print(LOG_DEBUG, "COLD RESET triggered\n");
+
+                        }
+                        else if((*line == '0') && !(buf & 0x04))
+                        {
+
+                            setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
+                            sd_journal_print(LOG_DEBUG, "WARM RESET triggered\n");
+
+                        }
+                        else if(*line == '2')
+                        {
+                            sd_journal_print(LOG_DEBUG, "NO RESET triggered\n");
+                        }
+                        else
+                        {
+                            sd_journal_print(LOG_ERR, "CdumpResetPolicy is not valid\n");
+                        }
+                    }
                 }
-                else
-                {
-                    setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
-                    sd_journal_print(LOG_DEBUG, "WARM RESET triggered\n");
-
-                }
-
+                fclose(fp);
 
                 P0_MCADataHarvested = false;
                 P1_MCADataHarvested = false;
@@ -528,6 +797,8 @@ int main() {
         return false;
     }
 
+    getCpuID();
+
     if (stat(ras_dir.c_str(), &buffer) != 0) {
         dir = mkdir("/var/lib/amd-ras",0777);
 
@@ -537,7 +808,7 @@ int main() {
     }
 
     memset(&buffer, 0, sizeof(buffer));
-    /*Create index file to store error file cound */
+    /*Create index file to store error file count */
     if (stat(index_file, &buffer) != 0)
     {
         file = fopen(index_file, "w");
@@ -557,11 +828,26 @@ int main() {
         }
     }
 
+    /*Create Cdump Config file to store the system recovery*/
+    if (stat(config_file, &buffer) != 0)
+    {
+        file = fopen(config_file, "w");
+
+        if(file != NULL)
+        {
+            fprintf(file,"# 0 ---> warm\n");
+            fprintf(file,"# 1 ---> cold\n");
+            fprintf(file,"# 2 ---> no reset\n");
+            fprintf(file,"0");
+            fclose(file);
+        }
+    }
+
     conn = std::make_shared<sdbusplus::asio::connection>(io);
 
     requestGPIOEvents("P0_I3C_APML_ALERT_L", P0AlertEventHandler, P0_apmlAlertLine, P0_apmlAlertEvent);
 
-    if (num_of_proc == 2)
+    if (num_of_proc == TWO_SOCKET)
     {
         requestGPIOEvents("P1_I3C_APML_ALERT_L", P1AlertEventHandler, P1_apmlAlertLine, P1_apmlAlertEvent);
     }
