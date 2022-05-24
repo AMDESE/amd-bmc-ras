@@ -44,8 +44,8 @@ extern "C" {
 #define config_file ("/var/lib/amd-ras/config_file")
 #define BAD_DATA    (0xBAADDA7A)
 
-#undef LOG_DEBUG
-#define LOG_DEBUG LOG_ERR
+//#undef LOG_DEBUG
+//#define LOG_DEBUG LOG_ERR
 
 static boost::asio::io_service io;
 std::shared_ptr<sdbusplus::asio::connection> conn;
@@ -660,6 +660,13 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
         {
             sd_journal_print(LOG_DEBUG, "The alert signaled is due to a RAS fatal error\n");
 
+            std::string ras_err_msg = "RAS FATAL Error detected. System will reset after harvesting MCA data";
+
+            sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                ras_err_msg.c_str(), NULL);
+
             if(alert_name.compare("P0_ALERT") == 0 )
             {
                 P0_MCADataHarvested = true;
@@ -758,6 +765,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
 
                 P0_MCADataHarvested = false;
                 P1_MCADataHarvested = false;
+
             }
         }
     }
