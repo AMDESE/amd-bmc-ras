@@ -11,7 +11,8 @@
 #define RSVD                        (0)
 #define TBD                         (0)
 #define GENOA_MCA_BANKS             (32)
-#define GENOA_MAX_OFFSET            (32)
+#define MCA_BANK_MAX_OFFSET         (128)
+
 /*
  * CPER section header revision, used in revision field in struct
  * cper_section_descriptor
@@ -61,7 +62,7 @@ typedef struct {
           0x15, 0xb1, 0x0c, 0xe8)
 
 typedef struct {
-  uint32_t mca_data[GENOA_MAX_OFFSET];
+  uint32_t mca_data[MCA_BANK_MAX_OFFSET];
 } CRASHDUMP_T;
 
 struct error_time_stamp {
