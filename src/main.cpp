@@ -87,8 +87,8 @@ constexpr auto TITANITE_6   = 78;   //0x4E
 
 std::mutex harvest_in_progress_mtx;           // mutex for critical section
 
-static bool P0_MCADataHarvested = false;
-static bool P1_MCADataHarvested = false;
+static bool P0_AlertProcessed = false;
+static bool P1_AlertProcessed = false;
 
 static uint64_t RecordId = 1;
 unsigned int board_id = 0;
@@ -431,13 +431,13 @@ void dump_error_descriptor_section(ERROR_RECORD *rcd, uint16_t numbanks, uint16_
     rcd->SectionDescriptor.Severity = CPER_SEV_FATAL;
 
 
-    if(P0_MCADataHarvested == true)
+    if(P0_AlertProcessed == true)
     {
 
         rcd->SectionDescriptor.FRUText[0] = 'P';
         rcd->SectionDescriptor.FRUText[1] = '0';
 
-    } else if(P1_MCADataHarvested == true)
+    } else if(P1_AlertProcessed == true)
     {
 
         rcd->SectionDescriptor.FRUText[0] = 'P';
@@ -660,26 +660,45 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
         {
             sd_journal_print(LOG_DEBUG, "The alert signaled is due to a RAS fatal error\n");
 
-            std::string ras_err_msg = "RAS FATAL Error detected. System will reset after harvesting MCA data";
-
-            sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
-                LOG_ERR, "REDFISH_MESSAGE_ID=%s",
-                "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
-                ras_err_msg.c_str(), NULL);
-
-            if(alert_name.compare("P0_ALERT") == 0 )
+            if (buf & 0x04)
             {
-                P0_MCADataHarvested = true;
+                /*if RasStatus[reset_ctrl_err] is set in any of the processors,
+                  proceed to cold reset, regardless of the status of the other P */
+                std::string ras_err_msg = "Fatal error detected in the control fabric. "
+                                           "BMC will trigger a cold reset";
+
+                sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                    LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                    "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                    ras_err_msg.c_str(), NULL);
+
+                P0_AlertProcessed = true;
+                P1_AlertProcessed = true;
 
             }
-
-            if(alert_name.compare("P1_ALERT") == 0 )
+            else
             {
-                P1_MCADataHarvested = true;
+                std::string ras_err_msg = "RAS FATAL Error detected. "
+                                          "System will reset after harvesting MCA data";
 
+                sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                    LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                    "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                    ras_err_msg.c_str(), NULL);
+
+                if(alert_name.compare("P0_ALERT") == 0 )
+                {
+                    P0_AlertProcessed = true;
+
+                }
+
+                if(alert_name.compare("P1_ALERT") == 0 )
+                {
+                    P1_AlertProcessed = true;
+
+                }
             }
-
-            // RAS MCA Validity Check
+                // RAS MCA Validity Check
             if ( true == harvest_mca_validity_check(info, &numbanks, &bytespermca) )
             {
                 rawFilePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".txt";
@@ -705,8 +724,8 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
 
             if (num_of_proc == TWO_SOCKET)
             {
-                if ( (P0_MCADataHarvested == true) &&
-                     (P1_MCADataHarvested == true) )
+                if ( (P0_AlertProcessed == true) &&
+                     (P1_AlertProcessed == true) )
                 {
                     ResetReady = true;
                 }
@@ -763,8 +782,8 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                 }
                 fclose(fp);
 
-                P0_MCADataHarvested = false;
-                P1_MCADataHarvested = false;
+                P0_AlertProcessed = false;
+                P1_AlertProcessed = false;
 
             }
         }
