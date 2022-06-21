@@ -87,13 +87,14 @@ constexpr auto TITANITE_6   = 78;   //0x4E
 
 std::mutex harvest_in_progress_mtx;           // mutex for critical section
 
-static bool P0_MCADataHarvested = false;
-static bool P1_MCADataHarvested = false;
+static bool P0_AlertProcessed = false;
+static bool P1_AlertProcessed = false;
 
 static uint64_t RecordId = 1;
 unsigned int board_id = 0;
 static uint32_t p0_eax , p0_ebx , p0_ecx , p0_edx;
 static uint32_t p1_eax , p1_ebx , p1_ecx , p1_edx;
+CPER_RECORD *rcd=NULL;
 
 bool harvest_ras_errors(uint8_t info,std::string alert_name);
 
@@ -290,6 +291,12 @@ static void P0AlertEventHandler()
     {
         sd_journal_print(LOG_DEBUG, "Falling Edge: P0 APML Alert received\n");
 
+        if( rcd == NULL)
+        {
+            rcd = (CPER_RECORD *)malloc(sizeof(CPER_RECORD));
+            memset(rcd, 0, sizeof(*rcd));
+        }
+
         harvest_in_progress_mtx.lock();
         harvest_ras_errors(p0_info,"P0_ALERT");
         harvest_in_progress_mtx.unlock();
@@ -319,6 +326,13 @@ static void P1AlertEventHandler()
     if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
     {
         sd_journal_print(LOG_DEBUG, "Falling Edge: P1 APML Alert received\n");
+
+        if( rcd == NULL)
+        {
+            rcd = (CPER_RECORD *)malloc(sizeof(CPER_RECORD));
+            memset(rcd, 0, sizeof(*rcd));
+        }
+
         harvest_in_progress_mtx.lock();
         harvest_ras_errors(p1_info,"P1_ALERT");
         harvest_in_progress_mtx.unlock();
@@ -351,7 +365,7 @@ static void write_register(uint8_t info, uint32_t reg, uint32_t value)
     sd_journal_print(LOG_DEBUG, "Write to register 0x%x is successful\n", reg);
 }
 
-void calculate_time_stamp(ERROR_RECORD *rcd)
+void calculate_time_stamp()
 {
     using namespace std;
     using namespace std::chrono;
@@ -383,12 +397,12 @@ void calculate_time_stamp(ERROR_RECORD *rcd)
     rcd->Header.TimeStamp.Year = rcd->Header.TimeStamp.Year % 100;
 }
 
-void dump_cper_header_section(ERROR_RECORD *rcd ,uint16_t numbanks, uint16_t bytespermca)
+void dump_cper_header_section(uint16_t numbanks, uint16_t bytespermca)
 {
     memcpy(rcd->Header.Signature, CPER_SIG_RECORD, CPER_SIG_SIZE);
     rcd->Header.Revision = CPER_RECORD_REV;
     rcd->Header.SignatureEnd = CPER_SIG_END;
-    rcd->Header.SectionCount = 1;
+    rcd->Header.SectionCount = SECTION_COUNT;
     rcd->Header.ErrorSeverity = CPER_SEV_FATAL;
 
     /*Bit 0 = 1 -> PlatformID field contains valid info
@@ -397,112 +411,92 @@ void dump_cper_header_section(ERROR_RECORD *rcd ,uint16_t numbanks, uint16_t byt
 
     rcd->Header.ValidationBits = (CPER_VALID_PLATFORM_ID | CPER_VALID_TIMESTAMP);
 
-    rcd->Header.RecordLength = sizeof(ERROR_RECORD) + (numbanks * bytespermca);
+    rcd->Header.RecordLength = sizeof(CPER_RECORD);
 
-    calculate_time_stamp(rcd);
+    calculate_time_stamp();
 
     rcd->Header.PlatformId[0] = board_id;
 
     rcd->Header.CreatorId = CPER_CREATOR_PSTORE;
     rcd->Header.NotifyType = CPER_NOTIFY_MCE;
 
-    rcd->Header.RecordId = RecordId++;
+    if(rcd->Header.RecordId != RSVD)
+        rcd->Header.RecordId = RecordId++;
 }
 
-void dump_error_descriptor_section(ERROR_RECORD *rcd, uint16_t numbanks, uint16_t bytespermca)
+void dump_error_descriptor_section(uint16_t numbanks, uint16_t bytespermca,uint8_t info)
 {
 
-    rcd->SectionDescriptor.SectionOffset = sizeof(COMMON_ERROR_RECORD_HEADER) +
-                                           sizeof(ERROR_SECTION_DESCRIPTOR);
-
-    rcd->SectionDescriptor.SectionLength = sizeof(PROCESSOR_ERROR_SECTION) +
-                                           sizeof(PROCINFO) + sizeof(CONTEXT_INFO);
-
-    rcd->SectionDescriptor.Revision = CPER_SEC_REV;
-    /* fru_id and fru_text is invalid */
-    /* Bit 0 - the FRUId field contains valid information
-       Bit 1 - the FRUString field contains valid information*/
-	rcd->SectionDescriptor.SecValidMask = FRU_ID_VALID | FRU_TEXT_VALID;
-
-    rcd->SectionDescriptor.SectionFlags = CPER_PRIMARY;
-
-    rcd->SectionDescriptor.SectionType = VENDOR_OOB_CRASHDUMP;
-
-    rcd->SectionDescriptor.Severity = CPER_SEV_FATAL;
+    rcd->SectionDescriptor[0].SectionOffset = sizeof(COMMON_ERROR_RECORD_HEADER) +
+                              (2 * sizeof(ERROR_SECTION_DESCRIPTOR));
+    rcd->SectionDescriptor[0].SectionLength = sizeof(ERROR_RECORD);
+    rcd->SectionDescriptor[0].Revision = CPER_SEC_REV;
+    rcd->SectionDescriptor[0].SecValidMask = FRU_ID_VALID | FRU_TEXT_VALID;
+    rcd->SectionDescriptor[0].SectionFlags = CPER_PRIMARY;
+    rcd->SectionDescriptor[0].SectionType = VENDOR_OOB_CRASHDUMP;
+    rcd->SectionDescriptor[0].Severity = CPER_SEV_FATAL;
+    rcd->SectionDescriptor[0].FRUText[0] = 'P';
+    rcd->SectionDescriptor[0].FRUText[1] = '0';
 
 
-    if(P0_MCADataHarvested == true)
+    rcd->SectionDescriptor[1].SectionOffset = sizeof(COMMON_ERROR_RECORD_HEADER) +
+                             (2 * sizeof(ERROR_SECTION_DESCRIPTOR)) + sizeof(ERROR_RECORD);
+    rcd->SectionDescriptor[1].SectionLength = sizeof(ERROR_RECORD);
+    rcd->SectionDescriptor[1].Revision = CPER_SEC_REV;
+    rcd->SectionDescriptor[1].SecValidMask = FRU_ID_VALID | FRU_TEXT_VALID;
+    rcd->SectionDescriptor[1].SectionFlags = CPER_PRIMARY;
+    rcd->SectionDescriptor[1].SectionType = VENDOR_OOB_CRASHDUMP;
+    rcd->SectionDescriptor[1].Severity = CPER_SEV_FATAL;
+    rcd->SectionDescriptor[1].FRUText[0] = 'P';
+    rcd->SectionDescriptor[1].FRUText[1] = '1';
+}
+
+void dump_processor_error_section(uint8_t info)
+{
+
+    rcd->P0_ErrorRecord.ProcError.ValidBits = CPU_ID_VALID | LOCAL_APIC_ID_VALID;
+    rcd->P0_ErrorRecord.ProcError.CpuId[0] = p0_eax;
+    rcd->P0_ErrorRecord.ProcError.CpuId[1] = p0_ebx;
+    rcd->P0_ErrorRecord.ProcError.CpuId[2] = p0_ecx;
+    rcd->P0_ErrorRecord.ProcError.CpuId[3] = p0_edx;
+    rcd->P0_ErrorRecord.ProcError.CPUAPICId = ((p0_ebx >> SHIFT_24) & 0xff);
+
+    if(num_of_proc == TWO_SOCKET)
     {
-
-        rcd->SectionDescriptor.FRUText[0] = 'P';
-        rcd->SectionDescriptor.FRUText[1] = '0';
-
-    } else if(P1_MCADataHarvested == true)
-    {
-
-        rcd->SectionDescriptor.FRUText[0] = 'P';
-        rcd->SectionDescriptor.FRUText[1] = '1';
-
+        rcd->P1_ErrorRecord.ProcError.ValidBits = CPU_ID_VALID | LOCAL_APIC_ID_VALID;
+        rcd->P1_ErrorRecord.ProcError.CpuId[0] = p1_eax;
+        rcd->P1_ErrorRecord.ProcError.CpuId[1] = p1_ebx;
+        rcd->P1_ErrorRecord.ProcError.CpuId[2] = p1_ecx;
+        rcd->P1_ErrorRecord.ProcError.CpuId[3] = p1_edx;
+        rcd->P1_ErrorRecord.ProcError.CPUAPICId = ((p1_ebx >> SHIFT_24) & 0xff);
     }
+
+   if(info == p0_info)
+   {
+       rcd->P0_ErrorRecord.ProcError.ValidBits |= PROC_CONTEXT_STRUCT_VALID;
+   }
+   if(info == p1_info)
+   {
+       rcd->P1_ErrorRecord.ProcError.ValidBits |= PROC_CONTEXT_STRUCT_VALID;
+   }
 }
 
-void dump_processor_error_section(ERROR_RECORD *rcd,uint8_t info)
+void dump_context_info(uint16_t numbanks,uint16_t bytespermca,uint8_t info)
 {
-
-    rcd->ProcError.ValidBits = CPU_ID_VALID | LOCAL_APIC_ID_VALID;
 
     if(info == p0_info)
     {
-        rcd->ProcError.CpuId[0] = p0_eax;
-        rcd->ProcError.CpuId[1] = p0_ebx;
-        rcd->ProcError.CpuId[2] = p0_ecx;
-        rcd->ProcError.CpuId[3] = p0_edx;
-        rcd->ProcError.CPUAPICId = ((p0_ebx >> SHIFT_24) & 0xff);
+        rcd->P0_ErrorRecord.ContextInfo.RegisterContextType = CTX_OOB_CRASH;
+        rcd->P0_ErrorRecord.ContextInfo.RegisterArraySize = numbanks * bytespermca;
     }
     else if(info == p1_info)
     {
-        rcd->ProcError.CpuId[0] = p1_eax;
-        rcd->ProcError.CpuId[1] = p1_ebx;
-        rcd->ProcError.CpuId[2] = p1_ecx;
-        rcd->ProcError.CpuId[3] = p1_edx;
-        rcd->ProcError.CPUAPICId = ((p1_ebx >> SHIFT_24) & 0xff);
+        rcd->P1_ErrorRecord.ContextInfo.RegisterContextType = CTX_OOB_CRASH;
+        rcd->P1_ErrorRecord.ContextInfo.RegisterArraySize = numbanks * bytespermca;
     }
-
 }
 
-void dump_processor_info(ERROR_RECORD *rcd)
-{
-    /*AMD Vendor specific GUID for Crashdump error structure*/
-    rcd->ProcessorInfo.ErrorStructureType = AMD_ERR_STRUCT_TYPE;
-
-    /*Bit 0 – Check Info Valid
-      Bit 1 – Target Address Identifier Valid
-      Bit 2 – Requestor Identifier Valid
-      Bit 3 – Responder Identifier Valid
-      Bit 4 – Instruction Pointer Valid
-      Bits 5-63 – Reserved*/
-
-    rcd->ProcessorInfo.ValidBits = INFO_VALID_CHECK_INFO;
-
-    /*valid bits for each Raw crashdump section/mailbox cmd*/
-    rcd->ProcessorInfo.CheckInfo = RSVD;
-
-    rcd->ProcessorInfo.TargetId = RSVD;
-    rcd->ProcessorInfo.RequesterId = RSVD;
-    rcd->ProcessorInfo.ResponderId = RSVD;
-    rcd->ProcessorInfo.InstructionPointer = TBD;
-}
-
-void dump_context_info(ERROR_RECORD *rcd,uint16_t numbanks,uint16_t bytespermca)
-{
-    rcd->ContextInfo.RegisterContextType = CTX_TYPE_MSR;
-    rcd->ContextInfo.RegisterArraySize = numbanks * bytespermca;
-    rcd->ContextInfo.MSRAddress = RSVD;
-    rcd->ContextInfo.MmRegisterAddress = RSVD;
-}
-
-static bool harvest_mca_data_banks(std::string cperFilePath,
-            std::string rawFilePath ,uint8_t info, uint16_t numbanks, uint16_t bytespermca)
+static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t bytespermca)
 {
     FILE *file;
     uint16_t n = 0;
@@ -512,21 +506,13 @@ static bool harvest_mca_data_banks(std::string cperFilePath,
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     uint16_t retryCount = MAX_RETRIES;
 
-    ERROR_RECORD  *rcd =  (ERROR_RECORD *)malloc(sizeof(ERROR_RECORD));
+    dump_cper_header_section(numbanks,bytespermca);
 
-    memset(rcd, 0, sizeof(*rcd));
+    dump_error_descriptor_section(numbanks,bytespermca,info);
 
-    dump_cper_header_section(rcd,numbanks,bytespermca);
+    dump_processor_error_section(info);
 
-    dump_error_descriptor_section(rcd,numbanks,bytespermca);
-
-    dump_processor_error_section(rcd,info);
-
-    dump_processor_info(rcd);
-
-    dump_context_info(rcd,numbanks,bytespermca);
-
-    file = fopen(rawFilePath.c_str(), "w");
+    dump_context_info(numbanks,bytespermca,info);
 
     maxOffset32 = ((bytespermca % 4) ? 1 : 0) + (bytespermca >> 2);
     sd_journal_print(LOG_DEBUG, "Number of Valid MCA bank:%d\n", numbanks);
@@ -535,8 +521,6 @@ static bool harvest_mca_data_banks(std::string cperFilePath,
 
     while(n < numbanks)
     {
-        fprintf(file, "Valid MCA bank entry: 0x%x\n", n);
-
         for (int offset = 0; offset < maxOffset32; offset++)
         {
             memset(&buffer, 0, sizeof(buffer));
@@ -570,33 +554,26 @@ static bool harvest_mca_data_banks(std::string cperFilePath,
                 if (ret != OOB_SUCCESS)
                 {
                     sd_journal_print(LOG_DEBUG, "Failed to get MCA bank data from Bank:%d, Offset:0x%x\n", n, offset);
-                    fprintf(file, "Offset: 0x%x\n", mca_dump.offset);
-                    fprintf(file, "buffer: 0x%x\n", BAD_DATA);
-                    rcd->ContextInfo.CrashDumpData[n].mca_data[offset] = BAD_DATA;
+                    if(info == p0_info) {
+                        rcd->P0_ErrorRecord.ContextInfo.CrashDumpData[n].mca_data[offset] = BAD_DATA;
+                    } else if(info == p1_info) {
+                       rcd->P1_ErrorRecord.ContextInfo.CrashDumpData[n].mca_data[offset] = BAD_DATA;
+                    }
                     continue;
                 }
 
             } // if (ret != OOB_SUCCESS)
 
-            fprintf(file, "Offset: 0x%x\n", mca_dump.offset);
-            fprintf(file, "buffer: 0x%x\n", buffer);
-            rcd->ContextInfo.CrashDumpData[n].mca_data[offset] = buffer;
+            if(info == p0_info) {
+                rcd->P0_ErrorRecord.ContextInfo.CrashDumpData[n].mca_data[offset] = buffer;
+            } else if(info == p1_info) {
+                rcd->P1_ErrorRecord.ContextInfo.CrashDumpData[n].mca_data[offset] = buffer;
+            }
         } // for loop
 
-        fprintf(file, "______________________\n");
         n++;
     }
-    fclose(file);
 
-    file = fopen(cperFilePath.c_str(), "w");
-    fwrite(rcd, sizeof(ERROR_RECORD), 1, file);
-    fclose(file);
-
-    if(rcd != NULL)
-    {
-        free(rcd);
-        rcd =  NULL;
-    }
     return true;
 }
 
@@ -645,7 +622,6 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
     uint16_t bytespermca = 0;
     uint16_t numbanks = 0;
 
-    std::string cperFilePath,rawFilePath;
     uint8_t buf;
     bool ResetReady  = false;
     FILE *file;
@@ -660,41 +636,49 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
         {
             sd_journal_print(LOG_DEBUG, "The alert signaled is due to a RAS fatal error\n");
 
-            std::string ras_err_msg = "RAS FATAL Error detected. System will reset after harvesting MCA data";
-
-            sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
-                LOG_ERR, "REDFISH_MESSAGE_ID=%s",
-                "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
-                ras_err_msg.c_str(), NULL);
-
-            if(alert_name.compare("P0_ALERT") == 0 )
+            if (buf & SYS_MGMT_CTRL_ERR)
             {
-                P0_MCADataHarvested = true;
+                /*if RasStatus[reset_ctrl_err] is set in any of the processors,
+                  proceed to cold reset, regardless of the status of the other P */
+                std::string ras_err_msg = "Fatal error detected in the control fabric. "
+                                           "BMC will trigger a cold reset";
+
+                sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                    LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                    "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                    ras_err_msg.c_str(), NULL);
+
+                P0_AlertProcessed = true;
+                P1_AlertProcessed = true;
 
             }
-
-            if(alert_name.compare("P1_ALERT") == 0 )
+            else
             {
-                P1_MCADataHarvested = true;
+                std::string ras_err_msg = "RAS FATAL Error detected. "
+                                          "System will reset after harvesting MCA data";
 
+                sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                    LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                    "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                    ras_err_msg.c_str(), NULL);
+
+                if(alert_name.compare("P0_ALERT") == 0 )
+                {
+                    P0_AlertProcessed = true;
+
+                }
+
+                if(alert_name.compare("P1_ALERT") == 0 )
+                {
+                    P1_AlertProcessed = true;
+
+                }
             }
-
-            // RAS MCA Validity Check
+                // RAS MCA Validity Check
             if ( true == harvest_mca_validity_check(info, &numbanks, &bytespermca) )
             {
-                rawFilePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".txt";
-                cperFilePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".cper";
 
-                harvest_mca_data_banks(cperFilePath, rawFilePath, info, numbanks, bytespermca);
-                err_count++;
-
-                file = fopen(index_file, "w");
-
-                if(file != NULL)
-                {
-                    fprintf(file,"%d",err_count);
-                    fclose(file);
-                }
+                harvest_mca_data_banks(info, numbanks, bytespermca);
 
             }
 
@@ -705,8 +689,8 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
 
             if (num_of_proc == TWO_SOCKET)
             {
-                if ( (P0_MCADataHarvested == true) &&
-                     (P1_MCADataHarvested == true) )
+                if ( (P0_AlertProcessed == true) &&
+                     (P1_AlertProcessed == true) )
                 {
                     ResetReady = true;
                 }
@@ -718,6 +702,39 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
 
             if (ResetReady == true)
             {
+
+                std::string cperFilePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".cper";
+                err_count++;
+
+                if(err_count > MAX_ERROR_FILE)
+                {
+                    /*The maximum number of error files supported is 10.
+                      The counter will be rotated once it reaches max count*/
+                    err_count = 0;
+                }
+
+                file = fopen(index_file, "w");
+
+                if(file != NULL)
+                {
+                    fprintf(file,"%d",err_count);
+                    fclose(file);
+                }
+
+                file = fopen(cperFilePath.c_str(), "w");
+                if((rcd != NULL) && (file != NULL))
+                {
+                    sd_journal_print(LOG_DEBUG, "Generating CPER file\n");
+                    fwrite(rcd, sizeof(CPER_RECORD), 1, file);
+                    fclose(file);
+                }
+
+                if(rcd != NULL)
+                {
+                    free(rcd);
+                    rcd =  NULL;
+                }
+
                 FILE* fp = fopen(config_file, "r");
 
                 char * line = NULL;
@@ -732,7 +749,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                     {
                         if(*line == WARM_RESET)
                         {
-                            if ((buf & 0x04))
+                            if ((buf & SYS_MGMT_CTRL_ERR))
                             {
                                 setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
                                 sd_journal_print(LOG_DEBUG, "COLD RESET triggered\n");
@@ -763,8 +780,8 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                 }
                 fclose(fp);
 
-                P0_MCADataHarvested = false;
-                P1_MCADataHarvested = false;
+                P0_AlertProcessed = false;
+                P1_AlertProcessed = false;
 
             }
         }
@@ -831,7 +848,7 @@ int main() {
             fprintf(file,"# 0 ---> warm\n");
             fprintf(file,"# 1 ---> cold\n");
             fprintf(file,"# 2 ---> no reset\n");
-            fprintf(file,"0");
+            fprintf(file,"2");
             fclose(file);
         }
     }
