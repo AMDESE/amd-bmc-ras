@@ -121,10 +121,10 @@ bool getPlatformID()
     // variable board_id.
     pf = popen(COMMAND_BOARD_ID,"r");
     // Error handling
-    if(pf > 0)
+    if(pf)
     {
         // Get the data from the process execution
-        if (fgets(data, COMMAND_LEN, pf) > 0)
+        if (fgets(data, COMMAND_LEN, pf))
         {
             ss << std::hex << (std::string)data;
             ss >> board_id;
@@ -351,7 +351,7 @@ static void P1AlertEventHandler()
     }
     else if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
     {
-        sd_journal_print(LOG_DEBUG, "Rising Edge: P0 APML Alert cancelled\n");
+        sd_journal_print(LOG_DEBUG, "Rising Edge: P1 APML Alert cancelled\n");
     }
     P1_apmlAlertEvent.async_wait(
             boost::asio::posix::stream_descriptor::wait_read,
