@@ -1,21 +1,28 @@
-#include <iostream>
-#include <gpiod.hpp>
+#include <array>
 #include <boost/asio.hpp>
-#include <boost/date_time/posix_time/posix_time.hpp>
-#include <fstream>
+#include <boost/asio/error.hpp>
 #include <boost/asio/io_service.hpp>
 #include <boost/asio/posix/stream_descriptor.hpp>
+#include <boost/asio/spawn.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/container/flat_map.hpp>
 #include <boost/container/flat_set.hpp>
-#include <boost/asio.hpp>
-#include <boost/asio/spawn.hpp>
-#include <boost/asio/error.hpp>
-#include <sdbusplus/asio/connection.hpp>
-#include <sdbusplus/asio/property.hpp>
+#include <boost/date_time/posix_time/posix_time.hpp>
+#include <filesystem>
+#include <fstream>
+#include <future>
+#include <gpiod.hpp>
+#include <iostream>
+#include <mutex>  // std::mutex
 #include <phosphor-logging/log.hpp>
+#include <regex>
+#include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/object_server.hpp>
-#include <mutex>          // std::mutex
+#include <sdbusplus/asio/property.hpp>
+#include <shared_mutex>
+#include <string_view>
+#include <utility>
+
 #include "cper.hpp"
 
 extern "C" {
@@ -48,7 +55,32 @@ extern "C" {
 //#define LOG_DEBUG LOG_ERR
 
 static boost::asio::io_service io;
-std::shared_ptr<sdbusplus::asio::connection> conn;
+static std::shared_ptr<sdbusplus::asio::connection> conn;
+static std::shared_ptr<sdbusplus::asio::object_server> server;
+static std::array<
+    std::pair<std::string, std::shared_ptr<sdbusplus::asio::dbus_interface>>,
+    MAX_ERROR_FILE>
+    crashdumpInterfaces;
+
+constexpr std::string_view crashdumpService = "com.amd.crashdump";
+constexpr std::string_view crashdumpPath = "/com/amd/crashdump";
+constexpr std::string_view crashdumpInterface = "com.amd.crashdump";
+
+constexpr std::string_view deleteAllInterface =
+    "xyz.openbmc_project.Collection.DeleteAll";
+constexpr std::string_view deleteAllMethod = "DeleteAll";
+constexpr std::string_view crashdumpAssertedInterface =
+    "com.amd.crashdump.Asserted";
+constexpr std::string_view crashdumpAssertedMethod = "GenerateAssertedLog";
+// These 2 interfaces will be called by bmcweb, not supported now.
+// constexpr std::string_view crashdumpOnDemandInterface =
+// "com.amd.crashdump.OnDemand"; constexpr std::string_view
+// crashdumpOnDemandMethod = "GenerateOnDemandLog"; constexpr std::string_view
+// crashdumpTelemetryInterface = "com.amd.crashdump.Telemetry"; constexpr
+// std::string_view crashdumpTelemetryMethod = "GenerateTelemetryLog";
+
+constexpr std::string_view kRasDir = "/var/lib/amd-ras/";
+constexpr int kCrashdumpTimeInSec = 300;
 
 static std::string BoardName;
 static uint32_t err_count = 0;
@@ -106,7 +138,7 @@ static uint64_t RecordId = 1;
 unsigned int board_id = 0;
 static uint32_t p0_eax , p0_ebx , p0_ecx , p0_edx;
 static uint32_t p1_eax , p1_ebx , p1_ecx , p1_edx;
-CPER_RECORD *rcd=NULL;
+std::shared_ptr<CPER_RECORD> rcd;
 
 bool harvest_ras_errors(uint8_t info,std::string alert_name);
 
@@ -194,6 +226,11 @@ void getCpuID()
     }
 
 }
+
+inline std::string getCperFilename(int num) {
+    return "ras-error" + std::to_string(num) + ".cper";
+}
+
 static bool requestGPIOEvents(
     const std::string& name, const std::function<void()>& handler,
     gpiod::line& gpioLine,
@@ -303,16 +340,11 @@ static void P0AlertEventHandler()
     {
         sd_journal_print(LOG_DEBUG, "Falling Edge: P0 APML Alert received\n");
 
-        if( rcd == NULL)
-        {
-            rcd = (CPER_RECORD *)malloc(sizeof(CPER_RECORD));
-            memset(rcd, 0, sizeof(*rcd));
+        if (rcd == nullptr) {
+            rcd = std::make_shared<CPER_RECORD>();
         }
 
-        harvest_in_progress_mtx.lock();
-        harvest_ras_errors(p0_info,"P0_ALERT");
-        harvest_in_progress_mtx.unlock();
-
+        harvest_ras_errors(p0_info, "P0_ALERT");
     }
     else if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
     {
@@ -339,15 +371,11 @@ static void P1AlertEventHandler()
     {
         sd_journal_print(LOG_DEBUG, "Falling Edge: P1 APML Alert received\n");
 
-        if( rcd == NULL)
-        {
-            rcd = (CPER_RECORD *)malloc(sizeof(CPER_RECORD));
-            memset(rcd, 0, sizeof(*rcd));
+        if (rcd == nullptr) {
+            rcd = std::make_shared<CPER_RECORD>();
         }
 
-        harvest_in_progress_mtx.lock();
-        harvest_ras_errors(p1_info,"P1_ALERT");
-        harvest_in_progress_mtx.unlock();
+        harvest_ras_errors(p1_info, "P1_ALERT");
     }
     else if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
     {
@@ -734,6 +762,7 @@ static bool harvest_mca_validity_check(uint8_t info, uint16_t *numbanks, uint16_
 
 bool harvest_ras_errors(uint8_t info,std::string alert_name)
 {
+    std::unique_lock lock(harvest_in_progress_mtx);
 
     uint16_t bytespermca = 0;
     uint16_t numbanks = 0;
@@ -818,8 +847,8 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
 
             if (ResetReady == true)
             {
-
-                std::string cperFilePath = "/var/lib/amd-ras/ras-error" + std::to_string(err_count) + ".cper";
+                std::string cperFilePath =
+                    kRasDir.data() + getCperFilename(err_count);
                 err_count++;
 
                 if(err_count > MAX_ERROR_FILE)
@@ -838,18 +867,13 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                 }
 
                 file = fopen(cperFilePath.c_str(), "w");
-                if((rcd != NULL) && (file != NULL))
-                {
+                if ((rcd != nullptr) && (file != NULL)) {
                     sd_journal_print(LOG_DEBUG, "Generating CPER file\n");
-                    fwrite(rcd, sizeof(CPER_RECORD), 1, file);
+                    fwrite(rcd.get(), sizeof(CPER_RECORD), 1, file);
                     fclose(file);
                 }
 
-                if(rcd != NULL)
-                {
-                    free(rcd);
-                    rcd =  NULL;
-                }
+                rcd = nullptr;
 
                 FILE* fp = fopen(config_file, "r");
 
@@ -910,12 +934,41 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
     return true;
 }
 
+void exportCrashdumpToDBus(int num) {
+    if (rcd == nullptr) {
+        // This shouldn't happen.
+        sd_journal_print(LOG_ERR, "Broken crashdump data\n");
+        return;
+    }
+
+    const std::string filename = getCperFilename(num);
+    const std::string fullFilePath = kRasDir.data() + filename;
+
+    // Use ISO-8601 as the timestamp format
+    // For example: 2022-07-19T14:13:47Z
+    const ERROR_TIME_STAMP& t = rcd->Header.TimeStamp;
+    char timestamp[30];
+    sprintf(timestamp, "%d-%d-%dT%d:%d:%dZ", t.Century * 100 + t.Year, t.Month,
+            t.Day, t.Hours, t.Minutes, t.Seconds);
+
+    // Create crashdump DBus instance
+    const std::string dbusPath =
+        std::string{crashdumpPath} + "/" + std::to_string(num);
+    std::shared_ptr<sdbusplus::asio::dbus_interface> iface =
+        server->add_interface(dbusPath, crashdumpInterface.data());
+    iface->register_property("Log", fullFilePath);
+    iface->register_property("Filename", filename);
+    iface->register_property("Timestamp", std::string{timestamp});
+    iface->initialize();
+
+    crashdumpInterfaces[num] = {filename, iface};
+}
+
 int main() {
 
     int dir;
     struct stat buffer;
-    FILE *file;
-    std::string ras_dir = "/var/lib/amd-ras/";
+    FILE* file;
 
     if(getPlatformID() == false)
     {
@@ -925,8 +978,8 @@ int main() {
 
     getCpuID();
 
-    if (stat(ras_dir.c_str(), &buffer) != 0) {
-        dir = mkdir("/var/lib/amd-ras",0777);
+    if (stat(kRasDir.data(), &buffer) != 0) {
+        dir = mkdir(kRasDir.data(), 0777);
 
         if(dir != 0) {
             sd_journal_print(LOG_ERR, "ras-errror-logging directory not created\n");
@@ -969,7 +1022,107 @@ int main() {
         }
     }
 
+    rcd = std::make_shared<CPER_RECORD>();
+
+    std::future<void> fut;
+
     conn = std::make_shared<sdbusplus::asio::connection>(io);
+    conn->request_name(crashdumpService.data());
+    server = std::make_shared<sdbusplus::asio::object_server>(conn);
+
+    // This DBus interface/method should be triggered by
+    // host-error-monitor(https://github.com/openbmc/host-error-monitor).
+    // However `amd-ras` monitors the alert pin by itself instead of asking
+    // `host-error-monitor` to do so. So currently no service will call this
+    // DBus method (this still can be called by `busctl` CLI).
+
+    // Generate crashdump and expose on DBus when APML_ALERT pin is asserted
+    std::shared_ptr<sdbusplus::asio::dbus_interface> assertedIface =
+        server->add_interface(crashdumpPath.data(),
+                              crashdumpAssertedInterface.data());
+    assertedIface->register_method(
+        crashdumpAssertedMethod.data(), [&fut](const std::string& alertName) {
+          // Do nothing if logging is in progress already
+          if (fut.valid() && fut.wait_for(std::chrono::seconds(0)) !=
+                                 std::future_status::ready) {
+            return "Logging is in progress already";
+          }
+
+          fut = std::async(std::launch::async, [&alertName]() {
+            const int curErrCnt = err_count;
+            // harvest the error
+            harvest_ras_errors(alertName == "P0_ALERT" ? p0_info : p1_info,
+                               alertName);
+            const int nextErrCnt = err_count;
+            // Change in err_count means we harvested something
+            if (curErrCnt != nextErrCnt) {
+              boost::asio::post(
+                  io, [&curErrCnt]() { exportCrashdumpToDBus(curErrCnt); });
+            }
+          });
+          return "Log started";
+        });
+    assertedIface->initialize();
+
+    // Delete all the generated crashdump
+    std::shared_ptr<sdbusplus::asio::dbus_interface> deleteAllIface =
+        server->add_interface(crashdumpPath.data(), deleteAllInterface.data());
+    deleteAllIface->register_method(deleteAllMethod.data(), [&fut]() {
+      if (fut.valid() &&
+          fut.wait_for(std::chrono::seconds(kCrashdumpTimeInSec)) !=
+              std::future_status::ready) {
+        sd_journal_print(
+            LOG_WARNING,
+            "A logging is still in progress, that one won't get removed\n");
+      }
+      for (auto& [filename, interface] : crashdumpInterfaces) {
+        if (!std::filesystem::remove(
+                std::filesystem::path(kRasDir.data() + filename))) {
+          sd_journal_print(LOG_WARNING, "Can't remove crashdump %s\n",
+                           filename.c_str());
+        }
+        server->remove_interface(interface);
+        filename = "";
+        interface = nullptr;
+      }
+      return "Logs cleared";
+    });
+    deleteAllIface->initialize();
+
+    // com.amd.crashdump.OnDemand/GenerateOnDemandLog currently not supported
+    // com.amd.crashdump.Telemetry/GenerateTelemetryLog currently not supported
+
+    // Check if any crashdump already exists.
+    if (std::filesystem::exists(std::filesystem::path(kRasDir.data()))) {
+        std::regex pattern("ras-error([[:digit:]]+).cper");
+        std::smatch match;
+        for (const auto& p : std::filesystem::directory_iterator(
+                 std::filesystem::path(kRasDir.data()))) {
+            std::string filename = p.path().filename();
+            if (!std::regex_match(filename, match, pattern)) {
+                continue;
+            }
+            const int kNum = stoi(match.str(1));
+            const std::string cperFilename =
+                kRasDir.data() + getCperFilename(kNum);
+            // exportCrashdumpToDBus needs the timestamp inside the CPER
+            // file. So load it first.
+            std::ifstream fin(cperFilename, std::ifstream::binary);
+            if (!fin.is_open()) {
+                sd_journal_print(LOG_WARNING,
+                                 "Broken crashdump CPER file: %s\n",
+                                 cperFilename.c_str());
+                continue;
+            }
+
+            fin.seekg(offsetof(CPER_RECORD, Header) +
+                      offsetof(COMMON_ERROR_RECORD_HEADER, TimeStamp));
+            fin.read(reinterpret_cast<char*>(&rcd->Header.TimeStamp),
+                     sizeof(ERROR_TIME_STAMP));
+            fin.close();
+            exportCrashdumpToDBus(kNum);
+        }
+    }
 
     requestGPIOEvents("P0_I3C_APML_ALERT_L", P0AlertEventHandler, P0_apmlAlertLine, P0_apmlAlertEvent);
     requestGPIOEvents("P0_DIMM_AF_ERROR", P0PmicAfEventHandler, P0_pmicAfAlertLine, P0_pmicAfAlertEvent);
