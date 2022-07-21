@@ -59,6 +59,18 @@ static boost::asio::posix::stream_descriptor P0_apmlAlertEvent(io);
 static gpiod::line P1_apmlAlertLine;
 static boost::asio::posix::stream_descriptor P1_apmlAlertEvent(io);
 
+static gpiod::line P0_pmicAfAlertLine;
+static boost::asio::posix::stream_descriptor P0_pmicAfAlertEvent(io);
+
+static gpiod::line P0_pmicGlAlertLine;
+static boost::asio::posix::stream_descriptor P0_pmicGlAlertEvent(io);
+
+static gpiod::line P1_pmicAfAlertLine;
+static boost::asio::posix::stream_descriptor P1_pmicAfAlertEvent(io);
+
+static gpiod::line P1_pmicGlAlertLine;
+static boost::asio::posix::stream_descriptor P1_pmicGlAlertEvent(io);
+
 uint8_t p0_info = 0;
 uint8_t p1_info = 1;
 
@@ -350,6 +362,110 @@ static void P1AlertEventHandler()
             return;
         }
         P1AlertEventHandler();
+    });
+}
+
+static void P0PmicAfEventHandler()
+{
+    gpiod::line_event gpioLineEvent = P0_pmicAfAlertLine.event_read();
+
+    if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
+    {
+        std::string ras_err_msg = "P0 DIMM A-F PMIC FATAL Error detected. System will be power off";
+        sd_journal_print(LOG_DEBUG, "Rising Edge: P0 PMIC DIMM A-F Alert received\n");
+        sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                        LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                        "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                        ras_err_msg.c_str(), NULL);
+    }
+
+    P0_pmicAfAlertEvent.async_wait(
+            boost::asio::posix::stream_descriptor::wait_read,
+            [](const boost::system::error_code ec) {
+        if (ec)
+        {
+            sd_journal_print(LOG_ERR, "P0 PMIC DIMM A-F alert handler error: %s\n", ec.message().c_str());
+            return;
+        }
+        P0PmicAfEventHandler();
+    });
+}
+
+static void P0PmicGlEventHandler()
+{
+    gpiod::line_event gpioLineEvent = P0_pmicGlAlertLine.event_read();
+
+    if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
+    {
+        std::string ras_err_msg = "P0 DIMM G-L PMIC FATAL Error detected. System will be power off";
+        sd_journal_print(LOG_DEBUG, "Rising Edge: P0 PMIC DIMM G-L Alert received\n");
+        sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                        LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                        "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                        ras_err_msg.c_str(), NULL);
+    }
+
+    P0_pmicGlAlertEvent.async_wait(
+            boost::asio::posix::stream_descriptor::wait_read,
+            [](const boost::system::error_code ec) {
+        if (ec)
+        {
+            sd_journal_print(LOG_ERR, "P0 PMIC DIMM G-L alert handler error: %s\n", ec.message().c_str());
+            return;
+        }
+        P0PmicGlEventHandler();
+    });
+}
+
+static void P1PmicAfEventHandler()
+{
+    gpiod::line_event gpioLineEvent = P1_pmicAfAlertLine.event_read();
+
+    if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
+    {
+        std::string ras_err_msg = "P1 DIMM A-F PMIC FATAL Error detected. System will be power off";
+        sd_journal_print(LOG_DEBUG, "Rising Edge: P1 PMIC DIMM A-F Alert received\n");
+        sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                        LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                        "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                        ras_err_msg.c_str(), NULL);
+    }
+
+    P1_pmicAfAlertEvent.async_wait(
+            boost::asio::posix::stream_descriptor::wait_read,
+            [](const boost::system::error_code ec) {
+        if (ec)
+        {
+            sd_journal_print(LOG_ERR, "P1 PMIC DIMM A-F alert handler error: %s\n", ec.message().c_str());
+            return;
+        }
+        P1PmicAfEventHandler();
+    });
+}
+
+static void P1PmicGlEventHandler()
+{
+    gpiod::line_event gpioLineEvent = P1_pmicGlAlertLine.event_read();
+
+    if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
+    {
+        std::string ras_err_msg = "P1 DIMM G-L PMIC FATAL Error detected. System will be power off";
+        sd_journal_print(LOG_DEBUG, "Rising Edge: P1 PMIC DIMM G-L Alert received\n");
+        sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                        LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                        "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                        ras_err_msg.c_str(), NULL);
+    }
+
+    P1_pmicGlAlertEvent.async_wait(
+            boost::asio::posix::stream_descriptor::wait_read,
+            [](const boost::system::error_code ec) {
+        if (ec)
+        {
+            sd_journal_print(LOG_ERR, "P1 PMIC DIMM G-L alert handler error: %s\n", ec.message().c_str());
+            return;
+        }
+        P1PmicGlEventHandler();
     });
 }
 
@@ -856,10 +972,14 @@ int main() {
     conn = std::make_shared<sdbusplus::asio::connection>(io);
 
     requestGPIOEvents("P0_I3C_APML_ALERT_L", P0AlertEventHandler, P0_apmlAlertLine, P0_apmlAlertEvent);
+    requestGPIOEvents("P0_DIMM_AF_ERROR", P0PmicAfEventHandler, P0_pmicAfAlertLine, P0_pmicAfAlertEvent);
+    requestGPIOEvents("P0_DIMM_GL_ERROR", P0PmicGlEventHandler, P0_pmicGlAlertLine, P0_pmicGlAlertEvent);
 
     if (num_of_proc == TWO_SOCKET)
     {
         requestGPIOEvents("P1_I3C_APML_ALERT_L", P1AlertEventHandler, P1_apmlAlertLine, P1_apmlAlertEvent);
+        requestGPIOEvents("P1_DIMM_AF_ERROR", P1PmicAfEventHandler, P1_pmicAfAlertLine, P1_pmicAfAlertEvent);
+        requestGPIOEvents("P1_DIMM_GL_ERROR", P1PmicGlEventHandler, P1_pmicGlAlertLine, P1_pmicGlAlertEvent);
     }
 
     io.run();
