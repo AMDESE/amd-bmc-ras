@@ -940,6 +940,16 @@ void exportCrashdumpToDBus(int num) {
         sd_journal_print(LOG_ERR, "Broken crashdump data\n");
         return;
     }
+    if (num < 0 || num >= MAX_ERROR_FILE) {
+        sd_journal_print(LOG_ERR, "Crashdump only allows index 0~9\n");
+        return;
+    }
+
+    // remove the interface if it exists
+    if (crashdumpInterfaces[num].second != nullptr) {
+        server->remove_interface(crashdumpInterfaces[num].second);
+        crashdumpInterfaces[num].second.reset();
+    }
 
     const std::string filename = getCperFilename(num);
     const std::string fullFilePath = kRasDir.data() + filename;
