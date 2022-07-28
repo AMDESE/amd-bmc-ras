@@ -1,10 +1,11 @@
 [Unit]
-Description=RAS startup script
+Description=Crash dump manager
 
 [Service]
 ExecStart=/usr/bin/amd-ras
 SyslogIdentifier=amd-ras
+Type=dbus
+BusName=com.amd.crashdump
 
 [Install]
 WantedBy=multi-user.target
-

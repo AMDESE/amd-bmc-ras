@@ -786,7 +786,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                 /*if RasStatus[reset_ctrl_err] is set in any of the processors,
                   proceed to cold reset, regardless of the status of the other P */
                 std::string ras_err_msg = "Fatal error detected in the control fabric. "
-                                           "BMC will trigger a cold reset";
+                                          "BMC may trigger a reset based on policy set. ";
 
                 sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
                     LOG_ERR, "REDFISH_MESSAGE_ID=%s",
@@ -800,7 +800,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
             else
             {
                 std::string ras_err_msg = "RAS FATAL Error detected. "
-                                          "System will reset after harvesting MCA data";
+                                          "System may reset after harvesting MCA data based on policy set. ";
 
                 sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
                     LOG_ERR, "REDFISH_MESSAGE_ID=%s",
@@ -851,11 +851,11 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                     kRasDir.data() + getCperFilename(err_count);
                 err_count++;
 
-                if(err_count > MAX_ERROR_FILE)
+                if(err_count >= MAX_ERROR_FILE)
                 {
                     /*The maximum number of error files supported is 10.
                       The counter will be rotated once it reaches max count*/
-                    err_count = 0;
+                    err_count = (err_count % MAX_ERROR_FILE);
                 }
 
                 file = fopen(index_file, "w");
@@ -958,7 +958,7 @@ void exportCrashdumpToDBus(int num) {
     // For example: 2022-07-19T14:13:47Z
     const ERROR_TIME_STAMP& t = rcd->Header.TimeStamp;
     char timestamp[30];
-    sprintf(timestamp, "%d-%d-%dT%d:%d:%dZ", t.Century * 100 + t.Year, t.Month,
+    sprintf(timestamp, "%d-%d-%d T%d:%d:%dZ", (t.Century - 1) * 100 + t.Year, t.Month,
             t.Day, t.Hours, t.Minutes, t.Seconds);
 
     // Create crashdump DBus instance
