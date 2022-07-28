@@ -37,6 +37,7 @@
 
 #define FRU_ID_VALID                    (0x01)
 #define FRU_TEXT_VALID                  (0x02)
+#define FOUR_BYTE_MASK                  (0xFFFFFFFF)
 
 typedef struct {
   unsigned char b[16];
@@ -134,8 +135,8 @@ struct proc_info {
 typedef struct proc_info PROCINFO;
 
 struct df_dump {
-  uint32_t                           dfwdtdump_high;
   uint32_t                           dfwdtdump_low;
+  uint32_t                           dfwdtdump_high;
   uint64_t                           reserved[DF_DUMP_RESERVED];
 }  __attribute__((packed));
 

@@ -40,6 +40,7 @@ extern "C" {
 #define MAX_MCA_BANKS       (32)
 #define TWO_SOCKET          (2)
 #define SHIFT_24            (24)
+#define SHIFT_32            (32)
 
 #define WARM_RESET          ('0')
 #define COLD_RESET          ('1')
@@ -140,6 +141,10 @@ static uint32_t p0_eax , p0_ebx , p0_ecx , p0_edx;
 static uint32_t p1_eax , p1_ebx , p1_ecx , p1_edx;
 std::shared_ptr<CPER_RECORD> rcd;
 
+uint64_t p0_last_transact_addr = 0;
+uint64_t p1_last_transact_addr = 0;
+uint16_t retryCount = MAX_RETRIES;
+
 bool harvest_ras_errors(uint8_t info,std::string alert_name);
 
 bool getPlatformID()
@@ -226,6 +231,28 @@ void getCpuID()
     }
 
 }
+
+void getLastTransAddr()
+{
+    oob_status_t ret;
+
+    ret = read_ras_last_transaction_address(p0_info, &p0_last_transact_addr);
+    if (ret) {
+        sd_journal_print(LOG_ERR, "Failed to get the last transaction address for socket 0\n");
+    }
+
+    if(num_of_proc == TWO_SOCKET)
+    {
+        ret = read_ras_last_transaction_address(p1_info, &p1_last_transact_addr);
+        if (ret) {
+            sd_journal_print(LOG_ERR, "Failed to get the last transaction address for socket 1\n");
+        }
+    }
+    sd_journal_print(LOG_DEBUG, "Last trancation address for P0 = %llu\n",p0_last_transact_addr);
+    sd_journal_print(LOG_DEBUG, "Last trancation address for P1 = %llu\n",p1_last_transact_addr);
+
+}
+
 
 inline std::string getCperFilename(int num) {
     return "ras-error" + std::to_string(num) + ".cper";
@@ -627,16 +654,20 @@ void dump_processor_error_section(uint8_t info)
 
 void dump_context_info(uint16_t numbanks,uint16_t bytespermca,uint8_t info)
 {
-
+    getLastTransAddr();
     if(info == p0_info)
     {
         rcd->P0_ErrorRecord.ContextInfo.RegisterContextType = CTX_OOB_CRASH;
         rcd->P0_ErrorRecord.ContextInfo.RegisterArraySize = numbanks * bytespermca;
+        rcd->P0_ErrorRecord.ContextInfo.dfdumpdata.dfwdtdump_low = p0_last_transact_addr & FOUR_BYTE_MASK;
+        rcd->P0_ErrorRecord.ContextInfo.dfdumpdata.dfwdtdump_high = (p0_last_transact_addr >> SHIFT_32 ) & FOUR_BYTE_MASK;
     }
     else if(info == p1_info)
     {
         rcd->P1_ErrorRecord.ContextInfo.RegisterContextType = CTX_OOB_CRASH;
         rcd->P1_ErrorRecord.ContextInfo.RegisterArraySize = numbanks * bytespermca;
+        rcd->P1_ErrorRecord.ContextInfo.dfdumpdata.dfwdtdump_low = p1_last_transact_addr & FOUR_BYTE_MASK;
+        rcd->P1_ErrorRecord.ContextInfo.dfdumpdata.dfwdtdump_high = (p1_last_transact_addr >> SHIFT_32 ) & FOUR_BYTE_MASK;
     }
 }
 
@@ -648,7 +679,29 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
     uint32_t buffer;
     struct mca_bank mca_dump;
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
-    uint16_t retryCount = MAX_RETRIES;
+
+    char * line = NULL;
+    size_t len = 0;
+    ssize_t read;
+    FILE* fp = fopen(config_file, "r");
+
+    while ((read = getline(&line, &len, fp)) != -1)
+    {
+        if(strstr(line,"APML retries"))
+        {
+            line = line + 13;
+            retryCount = atoi(line);
+            break;
+        } else {
+            continue;
+        }
+    }
+    sd_journal_print(LOG_DEBUG,"Maximum APML retries  = %d\n",retryCount);
+
+    if(fp != NULL) {
+        fclose(fp);
+        fp = NULL;
+    }
 
     dump_cper_header_section(numbanks,bytespermca);
 
@@ -659,8 +712,8 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
     dump_context_info(numbanks,bytespermca,info);
 
     maxOffset32 = ((bytespermca % 4) ? 1 : 0) + (bytespermca >> 2);
-    sd_journal_print(LOG_DEBUG, "Number of Valid MCA bank:%d\n", numbanks);
-    sd_journal_print(LOG_DEBUG, "Number of 32 Bit Words:%d\n", maxOffset32);
+    sd_journal_print(LOG_INFO, "Number of Valid MCA bank:%d\n", numbanks);
+    sd_journal_print(LOG_INFO, "Number of 32 Bit Words:%d\n", maxOffset32);
 
 
     while(n < numbanks)
@@ -671,7 +724,6 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
             memset(&mca_dump, 0, sizeof(mca_dump));
             mca_dump.index  = n;
             mca_dump.offset = offset * 4;
-            retryCount = MAX_RETRIES;
 
             ret = read_bmc_ras_mca_msr_dump(info, mca_dump, &buffer);
 
@@ -697,7 +749,7 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
                 }
                 if (ret != OOB_SUCCESS)
                 {
-                    sd_journal_print(LOG_DEBUG, "Failed to get MCA bank data from Bank:%d, Offset:0x%x\n", n, offset);
+                    sd_journal_print(LOG_ERR, "Failed to get MCA bank data from Bank:%d, Offset:0x%x\n", n, offset);
                     if(info == p0_info) {
                         rcd->P0_ErrorRecord.ContextInfo.CrashDumpData[n].mca_data[offset] = BAD_DATA;
                     } else if(info == p1_info) {
@@ -733,7 +785,7 @@ static bool harvest_mca_validity_check(uint8_t info, uint16_t *numbanks, uint16_
 
         ret = read_bmc_ras_mca_validity_check(info, bytespermca, numbanks);
 
-        if (retries > MAX_RETRIES)
+        if (retries > retryCount)
         {
             sd_journal_print(LOG_ERR, "Failed to get MCA banks with valid status. Error: %d\n", ret);
             break;
@@ -779,7 +831,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
         // check RAS Status Register
         if (buf & 0x0F)
         {
-            sd_journal_print(LOG_DEBUG, "The alert signaled is due to a RAS fatal error\n");
+            sd_journal_print(LOG_INFO, "The alert signaled is due to a RAS fatal error\n");
 
             if (buf & SYS_MGMT_CTRL_ERR)
             {
@@ -892,12 +944,12 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                             if ((buf & SYS_MGMT_CTRL_ERR))
                             {
                                 setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
-                                sd_journal_print(LOG_DEBUG, "COLD RESET triggered\n");
+                                sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
 
                             } else {
 
                                 setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
-                                sd_journal_print(LOG_DEBUG, "WARM RESET triggered\n");
+                                sd_journal_print(LOG_INFO, "WARM RESET triggered\n");
 
                             }
                         }
@@ -905,12 +957,12 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                         {
 
                             setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
-                            sd_journal_print(LOG_DEBUG, "COLD RESET triggered\n");
+                            sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
 
                         }
                         else if(*line == NO_RESET)
                         {
-                            sd_journal_print(LOG_DEBUG, "NO RESET triggered\n");
+                            sd_journal_print(LOG_INFO, "NO RESET triggered\n");
                         }
                         else
                         {
@@ -1024,6 +1076,7 @@ int main() {
 
         if(file != NULL)
         {
+            fprintf(file,"APML retries:10\n");
             fprintf(file,"# 0 ---> warm\n");
             fprintf(file,"# 1 ---> cold\n");
             fprintf(file,"# 2 ---> no reset\n");
