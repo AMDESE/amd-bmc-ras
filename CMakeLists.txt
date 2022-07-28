@@ -13,10 +13,16 @@ include(GNUInstallDirs)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/inc)
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
+set(DBUS_OBJECT_NAME "com/amd/crashdump")
+set(DBUS_ENTRY_NAME "com/amd/crashdump/Entry")
+set(DBUS_INTF_NAME "com.amd.crashdump")
 
+add_definitions(-DDBUS_OBJECT_NAME="/${DBUS_OBJECT_NAME}")
+add_definitions(-DDBUS_ENTRY_NAME="/${DBUS_ENTRY_NAME}")
+add_definitions(-DDBUS_INTF_NAME="${DBUS_INTF_NAME}")
 set(SRC_FILES src/main.cpp )
 set ( SERVICE_FILES
-    service_files/amd-ras.service )
+    service_files/com.amd.crashdump.service )
 
 # import sdbusplus
 find_package(PkgConfig REQUIRED)
