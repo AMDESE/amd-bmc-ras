@@ -24,6 +24,7 @@
 #include <utility>
 #include <regex>
 #include "cper.hpp"
+#include <json.hpp>
 
 extern "C" {
 #include <sys/stat.h>
@@ -42,15 +43,16 @@ extern "C" {
 #define SHIFT_24            (24)
 #define SHIFT_32            (32)
 
-#define WARM_RESET          ('0')
-#define COLD_RESET          ('1')
-#define NO_RESET            ('2')
+#define WARM_RESET          (0)
+#define COLD_RESET          (1)
+#define NO_RESET            (2)
 
 #define MAX_RETRIES 10
 #define RAS_STATUS_REGISTER (0x4C)
 #define index_file  ("/var/lib/amd-ras/current_index")
 #define config_file ("/var/lib/amd-ras/config_file")
 #define BAD_DATA    (0xBAADDA7A)
+#define WIDTH_4    (4)
 
 //#undef LOG_DEBUG
 //#define LOG_DEBUG LOG_ERR
@@ -146,6 +148,8 @@ uint64_t p1_last_transact_addr = 0;
 uint16_t retryCount = MAX_RETRIES;
 
 bool harvest_ras_errors(uint8_t info,std::string alert_name);
+
+using namespace nlohmann;
 
 bool getPlatformID()
 {
@@ -683,30 +687,12 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
     char * line = NULL;
     size_t len = 0;
     ssize_t read;
-    FILE* fp = fopen(config_file, "r");
 
-    while ((read = getline(&line, &len, fp)) != -1)
-    {
-        if(strstr(line,"APML retries"))
-        {
-            std::string retry_string =  std::string(line);
-            std::string retry = std::regex_replace(
-                retry_string,
-                std::regex("[^0-9]*([0-9]+).*"),
-                std::string("$1")
-            );
-            retryCount = std::stoi(retry);
-            break;
-        } else {
-            continue;
-        }
-    }
+    std::ifstream input(config_file);
+    json data = json::parse(input);
+    retryCount = data["APML_RETRIES"];
+
     sd_journal_print(LOG_DEBUG,"Maximum APML retries  = %d\n",retryCount);
-
-    if(fp != NULL) {
-        fclose(fp);
-        fp = NULL;
-    }
 
     dump_cper_header_section(numbanks,bytespermca);
 
@@ -932,50 +918,39 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
 
                 rcd = nullptr;
 
-                FILE* fp = fopen(config_file, "r");
+                std::ifstream input(config_file);
+                json data = json::parse(input);
+                int systemRecovery = data["SYSTEM_RECOVERY"];
 
-                char * line = NULL;
-                size_t len = 0;
-                ssize_t read;
-
-                while ((read = getline(&line, &len, fp)) != -1)
+                if(systemRecovery == WARM_RESET)
                 {
-                    if(*line == '#')
-                        continue;
-                    else
+                    if ((buf & SYS_MGMT_CTRL_ERR))
                     {
-                        if(*line == WARM_RESET)
-                        {
-                            if ((buf & SYS_MGMT_CTRL_ERR))
-                            {
-                                setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
-                                sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
+                        setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+                        sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
 
-                            } else {
+                    } else {
 
-                                setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
-                                sd_journal_print(LOG_INFO, "WARM RESET triggered\n");
+                        setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
+                        sd_journal_print(LOG_INFO, "WARM RESET triggered\n");
 
-                            }
-                        }
-                        else if(*line == COLD_RESET)
-                        {
-
-                            setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
-                            sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
-
-                        }
-                        else if(*line == NO_RESET)
-                        {
-                            sd_journal_print(LOG_INFO, "NO RESET triggered\n");
-                        }
-                        else
-                        {
-                            sd_journal_print(LOG_ERR, "CdumpResetPolicy is not valid\n");
-                        }
                     }
                 }
-                fclose(fp);
+                else if(systemRecovery == COLD_RESET)
+                {
+
+                    setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+                    sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
+
+                }
+                else if(systemRecovery == NO_RESET)
+                {
+                    sd_journal_print(LOG_INFO, "NO RESET triggered\n");
+                }
+                else
+                {
+                    sd_journal_print(LOG_ERR, "CdumpResetPolicy is not valid\n");
+                }
 
                 P0_AlertProcessed = false;
                 P1_AlertProcessed = false;
@@ -1077,17 +1052,14 @@ int main() {
     /*Create Cdump Config file to store the system recovery*/
     if (stat(config_file, &buffer) != 0)
     {
-        file = fopen(config_file, "w");
-
-        if(file != NULL)
+        json object =
         {
-            fprintf(file,"APML retries:10\n");
-            fprintf(file,"# 0 ---> warm\n");
-            fprintf(file,"# 1 ---> cold\n");
-            fprintf(file,"# 2 ---> no reset\n");
-            fprintf(file,"2");
-            fclose(file);
-        }
+            {"//comment","System revovery : 0 - Warm , 1 - Cold , 2- Reset"},
+            {"SYSTEM_RECOVERY", 2},
+            {"APML_RETRIES", 10}
+        };
+        std::ofstream output(config_file);
+        output << std::setw(WIDTH_4) << object << std::endl;
     }
 
     rcd = std::make_shared<CPER_RECORD>();
