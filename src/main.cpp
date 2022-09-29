@@ -129,6 +129,13 @@ constexpr auto TITANITE_3   = 75;   //0x4B
 constexpr auto TITANITE_4   = 76;   //0x4C
 constexpr auto TITANITE_5   = 77;   //0x4D
 constexpr auto TITANITE_6   = 78;   //0x4E
+//SP6 PLATFORMS
+constexpr auto SHALE_1      = 98;   //0x62
+constexpr auto SHALE_2      = 101;  //0x65
+constexpr auto SHALE_3      = 89;   //0x59
+constexpr auto CINNABAR     = 99;   //0x63
+constexpr auto SUNSTONE_1   = 97;   //0x61
+constexpr auto SUNSTONE_2   = 100;  //0x64
 
 std::mutex harvest_in_progress_mtx;           // mutex for critical section
 
@@ -179,6 +186,12 @@ bool getPlatformID()
         case ONYX_1 ... ONYX_3:
         case ONYX_FR4:
         case RUBY_1 ... RUBY_3:
+        case SHALE_1:
+        case SHALE_2:
+        case SHALE_3:
+        case CINNABAR:
+        case SUNSTONE_1:
+        case SUNSTONE_2:
         num_of_proc = 1;
         break;
         case QUARTZ_DAP:
