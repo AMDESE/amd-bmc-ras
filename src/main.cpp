@@ -52,6 +52,8 @@ extern "C" {
 #define config_file ("/var/lib/amd-ras/config_file")
 #define BAD_DATA    (0xBAADDA7A)
 
+#define HPM_FPGA_REGDUMP         "/usr/sbin/hpm-fpga-dump.sh"
+#define HPM_FPGA_REGDUMP_FILE    "/var/lib/amd-ras/fpga_dump.txt"
 //#undef LOG_DEBUG
 //#define LOG_DEBUG LOG_ERR
 
@@ -103,6 +105,9 @@ static boost::asio::posix::stream_descriptor P1_pmicAfAlertEvent(io);
 
 static gpiod::line P1_pmicGlAlertLine;
 static boost::asio::posix::stream_descriptor P1_pmicGlAlertEvent(io);
+
+static gpiod::line HPMFPGALockoutAlertLine;
+static boost::asio::posix::stream_descriptor HPMFPGALockoutAlertEvent(io);
 
 uint8_t p0_info = 0;
 uint8_t p1_info = 1;
@@ -521,6 +526,35 @@ static void P1PmicGlEventHandler()
             return;
         }
         P1PmicGlEventHandler();
+    });
+}
+
+static void HPMFPGALockoutEventHandler()
+{
+    gpiod::line_event gpioLineEvent = HPMFPGALockoutAlertLine.event_read();
+
+    if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
+    {
+        std::string ras_err_msg = "HPM FPGA detected fatal error."
+                                  "FPGA registers dumped to " HPM_FPGA_REGDUMP_FILE
+                                  "A/C power cycle to recover";
+        sd_journal_print(LOG_DEBUG, "Rising Edge: HPM FPGA lockout Alert received\n");
+        sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                        LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                        "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                        ras_err_msg.c_str(), NULL);
+        system("HPM_FPGA_REGDUMP > " HPM_FPGA_REGDUMP_FILE " 2>&1 &");
+    }
+
+    HPMFPGALockoutAlertEvent.async_wait(
+            boost::asio::posix::stream_descriptor::wait_read,
+            [](const boost::system::error_code ec) {
+        if (ec)
+        {
+            sd_journal_print(LOG_ERR, "P1 PMIC DIMM A-F alert handler error: %s\n", ec.message().c_str());
+            return;
+        }
+        HPMFPGALockoutEventHandler();
     });
 }
 
@@ -1195,6 +1229,7 @@ int main() {
     requestGPIOEvents("P0_I3C_APML_ALERT_L", P0AlertEventHandler, P0_apmlAlertLine, P0_apmlAlertEvent);
     requestGPIOEvents("P0_DIMM_AF_ERROR", P0PmicAfEventHandler, P0_pmicAfAlertLine, P0_pmicAfAlertEvent);
     requestGPIOEvents("P0_DIMM_GL_ERROR", P0PmicGlEventHandler, P0_pmicGlAlertLine, P0_pmicGlAlertEvent);
+    requestGPIOEvents("HPM_FPGA_LOCKOUT", HPMFPGALockoutEventHandler, HPMFPGALockoutAlertLine, HPMFPGALockoutAlertEvent);
 
     if (num_of_proc == TWO_SOCKET)
     {
