@@ -13,8 +13,13 @@
 #define GENOA_MCA_BANKS             (32)
 #define MCA_BANK_MAX_OFFSET         (128)
 #define SYS_MGMT_CTRL_ERR           (0x04)
-#define DF_DUMP_RESERVED            (6143)
+#define DF_DUMP_RESERVED            (6128)
 #define MAX_ERROR_FILE              (10)
+#define LAST_TRANS_ADDR_OFFSET      (4)
+#define CCM_COUNT                   (8)
+#define BYTE_4                      (4)
+#define BYTE_2                      (2)
+
 /*
  * CPER section header revision, used in revision field in struct
  * cper_section_descriptor
@@ -64,6 +69,10 @@ typedef struct {
 typedef struct {
   uint32_t mca_data[MCA_BANK_MAX_OFFSET];
 } CRASHDUMP_T;
+
+typedef struct {
+  uint32_t WdtData[LAST_TRANS_ADDR_OFFSET];
+} LAST_TRANS_ADDR;
 
 struct error_time_stamp {
   uint8_t    Seconds;
@@ -135,8 +144,7 @@ struct proc_info {
 typedef struct proc_info PROCINFO;
 
 struct df_dump {
-  uint32_t                           dfwdtdump_low;
-  uint32_t                           dfwdtdump_high;
+  LAST_TRANS_ADDR                    LastTransAddr[CCM_COUNT];
   uint64_t                           reserved[DF_DUMP_RESERVED];
 }  __attribute__((packed));
 
@@ -148,7 +156,7 @@ struct context_info {
   uint32_t                           MSRAddress;
   uint64_t                           MmRegisterAddress;
   CRASHDUMP_T                        CrashDumpData[GENOA_MCA_BANKS];
-  DF_DUMP                            dfdumpdata;
+  DF_DUMP                            DfDumpData;
 } __attribute__((packed));
 
 typedef struct context_info CONTEXT_INFO;
