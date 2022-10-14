@@ -33,6 +33,7 @@ extern "C" {
 #include "esmi_cpuid_msr.h"
 #include "esmi_mailbox.h"
 #include "esmi_rmi.h"
+#include "esmi_mailbox_nda.h"
 }
 
 #define COMMAND_BOARD_ID    ("/sbin/fw_printenv -n board_id")
@@ -250,27 +251,74 @@ void getCpuID()
 
 }
 
-void getLastTransAddr()
+void getLastTransAddr(uint8_t info)
 {
     oob_status_t ret;
+    uint8_t blk_id = 0;
+    uint16_t n = 0;
+    uint16_t maxOffset32;
+    uint32_t data;
+    struct ras_df_err_chk err_chk;
+    union ras_df_err_dump df_err = {0};
 
-    ret = read_ras_last_transaction_address(p0_info, &p0_last_transact_addr);
-    if (ret) {
-        sd_journal_print(LOG_ERR, "Failed to get the last transaction address for socket 0\n");
-    }
+    ret = read_ras_df_err_validity_check(info, blk_id, &err_chk);
 
-    if(num_of_proc == TWO_SOCKET)
+    if (ret)
     {
-        ret = read_ras_last_transaction_address(p1_info, &p1_last_transact_addr);
-        if (ret) {
-            sd_journal_print(LOG_ERR, "Failed to get the last transaction address for socket 1\n");
+        sd_journal_print(LOG_ERR, "Failed to read RAS DF validity check\n");
+    }
+    else
+    {
+        if(err_chk.df_block_instances != 0)
+        {
+            maxOffset32 = ((err_chk.err_log_len % BYTE_4) ? 1 : 0) + (err_chk.err_log_len >> BYTE_2);
+            while(n < err_chk.df_block_instances)
+            {
+                for (int offset = 0; offset < maxOffset32; offset++)
+                {
+                    memset(&data, 0, sizeof(data));
+                    /* Offset */
+                    df_err.input[0] = offset * BYTE_4;
+                    /* DF block ID */
+                    df_err.input[1] = blk_id;
+                    /* DF block ID instance */
+                    df_err.input[2] = n;
+
+                    ret = read_ras_df_err_dump(info, df_err, &data);
+
+                    if(info == p0_info) {
+                        rcd->P0_ErrorRecord.ContextInfo.DfDumpData.LastTransAddr[n].WdtData[offset] = data;
+                    } else if(info == p1_info) {
+                        rcd->P1_ErrorRecord.ContextInfo.DfDumpData.LastTransAddr[n].WdtData[offset] = data;
+                    }
+                }
+                n++;
+            }
         }
     }
-    sd_journal_print(LOG_DEBUG, "Last trancation address for P0 = %llu\n",p0_last_transact_addr);
-    sd_journal_print(LOG_DEBUG, "Last trancation address for P1 = %llu\n",p1_last_transact_addr);
-
 }
 
+void triggerColdReset()
+{
+    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+    boost::system::error_code ec;
+    boost::asio::io_context io;
+    auto conn = std::make_shared<sdbusplus::asio::connection>(io);
+    std::string command = "xyz.openbmc_project.State.Host.Transition.Reboot";
+
+    conn->async_method_call(
+        [](boost::system::error_code ec) {
+            if (ec)
+            {
+                sd_journal_print(LOG_ERR, "Failed to trigger cold reset of the system\n");
+            }
+        },
+        "xyz.openbmc_project.State.Host",
+        "/xyz/openbmc_project/state/host0",
+        "org.freedesktop.DBus.Properties", "Set",
+        "xyz.openbmc_project.State.Host", "RequestedHostTransition",
+        std::variant<std::string>{command});
+}
 
 inline std::string getCperFilename(int num) {
     return "ras-error" + std::to_string(num) + ".cper";
@@ -701,20 +749,16 @@ void dump_processor_error_section(uint8_t info)
 
 void dump_context_info(uint16_t numbanks,uint16_t bytespermca,uint8_t info)
 {
-    getLastTransAddr();
+    getLastTransAddr(info);
     if(info == p0_info)
     {
         rcd->P0_ErrorRecord.ContextInfo.RegisterContextType = CTX_OOB_CRASH;
         rcd->P0_ErrorRecord.ContextInfo.RegisterArraySize = numbanks * bytespermca;
-        rcd->P0_ErrorRecord.ContextInfo.dfdumpdata.dfwdtdump_low = p0_last_transact_addr & FOUR_BYTE_MASK;
-        rcd->P0_ErrorRecord.ContextInfo.dfdumpdata.dfwdtdump_high = (p0_last_transact_addr >> SHIFT_32 ) & FOUR_BYTE_MASK;
     }
     else if(info == p1_info)
     {
         rcd->P1_ErrorRecord.ContextInfo.RegisterContextType = CTX_OOB_CRASH;
         rcd->P1_ErrorRecord.ContextInfo.RegisterArraySize = numbanks * bytespermca;
-        rcd->P1_ErrorRecord.ContextInfo.dfdumpdata.dfwdtdump_low = p1_last_transact_addr & FOUR_BYTE_MASK;
-        rcd->P1_ErrorRecord.ContextInfo.dfdumpdata.dfwdtdump_high = (p1_last_transact_addr >> SHIFT_32 ) & FOUR_BYTE_MASK;
     }
 }
 
@@ -801,7 +845,7 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
                 }
                 if (ret != OOB_SUCCESS)
                 {
-                    sd_journal_print(LOG_ERR, "Failed to get MCA bank data from Bank:%d, Offset:0x%x\n", n, offset);
+                    sd_journal_print(LOG_ERR, "Socket %d : Failed to get MCA bank data from Bank:%d, Offset:0x%x\n", info, n, offset);
                     if(info == p0_info) {
                         rcd->P0_ErrorRecord.ContextInfo.CrashDumpData[n].mca_data[offset] = BAD_DATA;
                     } else if(info == p1_info) {
@@ -839,14 +883,14 @@ static bool harvest_mca_validity_check(uint8_t info, uint16_t *numbanks, uint16_
 
         if (retries > retryCount)
         {
-            sd_journal_print(LOG_ERR, "Failed to get MCA banks with valid status. Error: %d\n", ret);
+            sd_journal_print(LOG_ERR, "Socket %d: Failed to get MCA banks with valid status. Error: %d\n", info, ret);
             break;
         }
 
         if ( (*numbanks == 0) ||
              (*numbanks > MAX_MCA_BANKS) )
         {
-            sd_journal_print(LOG_ERR, "Invalid MCA bank validity status. Retry Count: %d\n", retries);
+            sd_journal_print(LOG_ERR, "Socket %d: Invalid MCA bank validity status. Retry Count: %d\n", info, retries);
             ret = OOB_MAILBOX_CMD_UNKNOWN;
             usleep(1000 * 1000);
             continue;
@@ -870,6 +914,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
 
     uint16_t bytespermca = 0;
     uint16_t numbanks = 0;
+    bool ControlFabricError = false;
 
     uint8_t buf;
     bool ResetReady  = false;
@@ -899,6 +944,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
 
                 P0_AlertProcessed = true;
                 P1_AlertProcessed = true;
+                ControlFabricError = true;
 
             }
             else
@@ -923,12 +969,15 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
 
                 }
             }
-                // RAS MCA Validity Check
-            if ( true == harvest_mca_validity_check(info, &numbanks, &bytespermca) )
+
+            //Do not harvest MCA banks in case of control fabric errors
+            if(ControlFabricError == false)
             {
-
-                harvest_mca_data_banks(info, numbanks, bytespermca);
-
+                // RAS MCA Validity Check
+                if ( true == harvest_mca_validity_check(info, &numbanks, &bytespermca) )
+                {
+                    harvest_mca_data_banks(info, numbanks, bytespermca);
+                }
             }
 
             // Clear RAS status register
@@ -951,30 +1000,34 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
 
             if (ResetReady == true)
             {
-                std::string cperFilePath =
-                    kRasDir.data() + getCperFilename(err_count);
-                err_count++;
 
-                if(err_count >= MAX_ERROR_FILE)
+                if(ControlFabricError == false)
                 {
-                    /*The maximum number of error files supported is 10.
-                      The counter will be rotated once it reaches max count*/
-                    err_count = (err_count % MAX_ERROR_FILE);
-                }
+                    std::string cperFilePath =
+                        kRasDir.data() + getCperFilename(err_count);
+                    err_count++;
 
-                file = fopen(index_file, "w");
+                    if(err_count >= MAX_ERROR_FILE)
+                    {
+                        /*The maximum number of error files supported is 10.
+                          The counter will be rotated once it reaches max count*/
+                        err_count = (err_count % MAX_ERROR_FILE);
+                    }
 
-                if(file != NULL)
-                {
-                    fprintf(file,"%d",err_count);
-                    fclose(file);
-                }
+                    file = fopen(index_file, "w");
 
-                file = fopen(cperFilePath.c_str(), "w");
-                if ((rcd != nullptr) && (file != NULL)) {
-                    sd_journal_print(LOG_DEBUG, "Generating CPER file\n");
-                    fwrite(rcd.get(), sizeof(CPER_RECORD), 1, file);
-                    fclose(file);
+                    if(file != NULL)
+                    {
+                        fprintf(file,"%d",err_count);
+                        fclose(file);
+                    }
+
+                    file = fopen(cperFilePath.c_str(), "w");
+                    if ((rcd != nullptr) && (file != NULL)) {
+                        sd_journal_print(LOG_DEBUG, "Generating CPER file\n");
+                        fwrite(rcd.get(), sizeof(CPER_RECORD), 1, file);
+                        fclose(file);
+                    }
                 }
 
                 rcd = nullptr;
@@ -995,7 +1048,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                         {
                             if ((buf & SYS_MGMT_CTRL_ERR))
                             {
-                                setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+                                triggerColdReset();
                                 sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
 
                             } else {
@@ -1008,7 +1061,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                         else if(*line == COLD_RESET)
                         {
 
-                            setGPIOValue("ASSERT_RST_BTN_L", 0, resetPulseTimeMs);
+                            triggerColdReset();
                             sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
 
                         }
