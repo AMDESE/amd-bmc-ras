@@ -612,7 +612,7 @@ static void HPMFPGALockoutEventHandler()
             [](const boost::system::error_code ec) {
         if (ec)
         {
-            sd_journal_print(LOG_ERR, "P1 PMIC DIMM A-F alert handler error: %s\n", ec.message().c_str());
+            sd_journal_print(LOG_ERR, "HPM FPGA lockout alert handler error: %s\n", ec.message().c_str());
             return;
         }
         HPMFPGALockoutEventHandler();
