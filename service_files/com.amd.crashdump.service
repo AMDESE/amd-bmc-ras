@@ -1,5 +1,6 @@
 [Unit]
 Description=Crash dump manager
+After=xyz.openbmc_project.Chassis.Control.Power.service
 
 [Service]
 ExecStart=/usr/bin/amd-ras
