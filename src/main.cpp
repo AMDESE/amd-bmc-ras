@@ -23,6 +23,7 @@
 #include <string_view>
 #include <utility>
 #include <regex>
+#include <ctype.h>
 #include "cper.hpp"
 
 extern "C" {
@@ -42,6 +43,8 @@ extern "C" {
 #define TWO_SOCKET          (2)
 #define SHIFT_24            (24)
 #define SHIFT_32            (32)
+#define CMD_BUFF_LEN        (256)
+#define BASE_16             (16)
 
 #define WARM_RESET          ('0')
 #define COLD_RESET          ('1')
@@ -82,6 +85,11 @@ constexpr std::string_view crashdumpAssertedMethod = "GenerateAssertedLog";
 // crashdumpOnDemandMethod = "GenerateOnDemandLog"; constexpr std::string_view
 // crashdumpTelemetryInterface = "com.amd.crashdump.Telemetry"; constexpr
 // std::string_view crashdumpTelemetryMethod = "GenerateTelemetryLog";
+
+std::string InventoryService = "xyz.openbmc_project.Inventory.Manager";
+std::string P0_InventoryPath = "/xyz/openbmc_project/inventory/system/processor/P0";
+std::string P1_InventoryPath = "/xyz/openbmc_project/inventory/system/processor/P1";
+constexpr auto CpuInventoryInterface = "xyz.openbmc_project.Inventory.Item.Cpu";
 
 constexpr std::string_view kRasDir = "/var/lib/amd-ras/";
 constexpr int kCrashdumpTimeInSec = 300;
@@ -152,6 +160,10 @@ static uint64_t RecordId = 1;
 unsigned int board_id = 0;
 static uint32_t p0_eax , p0_ebx , p0_ecx , p0_edx;
 static uint32_t p1_eax , p1_ebx , p1_ecx , p1_edx;
+uint32_t p0_ucode = 0;
+uint32_t p1_ucode = 0;
+uint64_t p0_ppin = 0;
+uint64_t p1_ppin = 0;
 std::shared_ptr<CPER_RECORD> rcd;
 
 uint64_t p0_last_transact_addr = 0;
@@ -249,6 +261,91 @@ void getCpuID()
 
     }
 
+}
+
+template <typename T>
+T getProperty(sdbusplus::bus::bus& bus, const char* service, const char* path,
+              const char* interface, const char* propertyName)
+{
+    auto method = bus.new_method_call(service, path,
+                                      "org.freedesktop.DBus.Properties", "Get");
+    method.append(interface, propertyName);
+    std::variant<T> value{};
+    try
+    {
+        auto reply = bus.call(method);
+        reply.read(value);
+        return std::get<T>(value);
+    }
+    catch (const sdbusplus::exception::SdBusError& ex)
+    {
+        sd_journal_print(LOG_ERR, "GetProperty call failed \n");
+    }
+}
+
+void getMicrocodeRev()
+{
+    oob_status_t ret;
+
+    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+    std::string MicroCode = getProperty<std::string>(bus, InventoryService.c_str(),
+                                           P0_InventoryPath.c_str(),
+                                           CpuInventoryInterface, "Microcode");
+
+    if (MicroCode.empty())
+    {
+        sd_journal_print(LOG_ERR,"Failed to read ucode revision for Processor P0\n");
+        p0_ucode = BAD_DATA;
+    }
+    else {
+        p0_ucode = std::stoul(MicroCode, nullptr, BASE_16);
+    }
+
+    if(num_of_proc == TWO_SOCKET)
+    {
+        std::string MicroCode = getProperty<std::string>(bus, InventoryService.c_str(),
+                                           P1_InventoryPath.c_str(),
+                                           CpuInventoryInterface, "Microcode");
+
+        if (MicroCode.empty())
+        {
+            sd_journal_print(LOG_ERR,"Failed to read ucode revision for Processor P1\n");
+            p1_ucode = BAD_DATA;
+        } else {
+            p1_ucode = std::stoul(MicroCode, nullptr, BASE_16);
+        }
+    }
+}
+
+void getPpinFuse()
+{
+    oob_status_t ret;
+
+    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+    std::string Ppin = getProperty<std::string>(bus, InventoryService.c_str(),
+                                           P0_InventoryPath.c_str(),
+                                           CpuInventoryInterface, "PPIN");
+    if (Ppin.empty())
+    {
+        sd_journal_print(LOG_ERR,"Failed to read PPIN for Processor P0\n");
+        p0_ppin = BAD_DATA;
+    } else {
+        p0_ppin = std::stoull(Ppin, nullptr, BASE_16);
+    }
+
+    if(num_of_proc == TWO_SOCKET)
+    {
+        std::string Ppin = getProperty<std::string>(bus, InventoryService.c_str(),
+                                           P1_InventoryPath.c_str(),
+                                           CpuInventoryInterface, "PPIN");
+        if (Ppin.empty())
+        {
+            sd_journal_print(LOG_ERR,"Failed to read Ppin for Processor P1\n");
+            p1_ppin = BAD_DATA;
+        } else {
+            p1_ppin = std::stoull(Ppin, nullptr, BASE_16);
+        }
+    }
 }
 
 void getLastTransAddr(uint8_t info)
@@ -760,6 +857,15 @@ void dump_context_info(uint16_t numbanks,uint16_t bytespermca,uint8_t info)
         rcd->P1_ErrorRecord.ContextInfo.RegisterContextType = CTX_OOB_CRASH;
         rcd->P1_ErrorRecord.ContextInfo.RegisterArraySize = numbanks * bytespermca;
     }
+
+    rcd->P0_ErrorRecord.ContextInfo.MicrocodeVersion = p0_ucode;
+    rcd->P0_ErrorRecord.ContextInfo.Ppin = p0_ppin;
+
+    if(num_of_proc == TWO_SOCKET)
+    {
+        rcd->P1_ErrorRecord.ContextInfo.MicrocodeVersion = p1_ucode;
+        rcd->P1_ErrorRecord.ContextInfo.Ppin = p1_ppin;
+    }
 }
 
 static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t bytespermca)
@@ -1040,8 +1146,9 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
 
                 while ((read = getline(&line, &len, fp)) != -1)
                 {
-                    if(*line == '#')
+                    if (isalpha(*line) || (*line == '#')) {
                         continue;
+                    }
                     else
                     {
                         if(*line == WARM_RESET)
@@ -1181,12 +1288,41 @@ int main() {
 
         if(file != NULL)
         {
+            fprintf(file,"HarvestUcodeVersionEn:1\n");
+            fprintf(file,"HarvestPpinEn:1\n");
             fprintf(file,"APML retries:10\n");
             fprintf(file,"# 0 ---> warm\n");
             fprintf(file,"# 1 ---> cold\n");
             fprintf(file,"# 2 ---> no reset\n");
             fprintf(file,"2");
             fclose(file);
+        }
+    }
+
+    std::ifstream cFile(config_file);
+    if (cFile.is_open())
+    {
+        std::string line;
+        while(getline(cFile, line))
+        {
+            line.erase(std::remove_if(line.begin(), line.end(), isspace),line.end());
+
+            if(line[0] == '#' || line.empty())
+                continue;
+
+            auto delimiterPos = line.find(":");
+            if((line.substr(0, delimiterPos)) == "HarvestUcodeVersionEn")
+            {
+                if((std::stoi(line.substr(delimiterPos + 1))) == 1)
+                    getMicrocodeRev();
+            }
+            else if((line.substr(0, delimiterPos)) == "HarvestPpinEn")
+            {
+                if((std::stoi(line.substr(delimiterPos + 1))) == 1)
+                {
+                    getPpinFuse();
+                }
+            }
         }
     }
 
@@ -1308,4 +1444,3 @@ int main() {
 
     return 0;
 }
-

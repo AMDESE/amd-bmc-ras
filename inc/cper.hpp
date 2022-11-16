@@ -153,8 +153,8 @@ typedef struct df_dump DF_DUMP;
 struct context_info {
   uint16_t                           RegisterContextType;
   uint16_t                           RegisterArraySize;
-  uint32_t                           MSRAddress;
-  uint64_t                           MmRegisterAddress;
+  uint32_t                           MicrocodeVersion;
+  uint64_t                           Ppin;
   CRASHDUMP_T                        CrashDumpData[GENOA_MCA_BANKS];
   DF_DUMP                            DfDumpData;
 } __attribute__((packed));
