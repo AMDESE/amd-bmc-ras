@@ -1324,6 +1324,7 @@ int main() {
                 }
             }
         }
+        cFile.close();
     }
 
     rcd = std::make_shared<CPER_RECORD>();
