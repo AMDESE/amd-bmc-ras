@@ -1025,6 +1025,8 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
     uint8_t buf;
     bool ResetReady  = false;
     FILE *file;
+    oob_status_t ret;
+    uint32_t ack_resp = 0;
 
     // Check if APML ALERT is because of RAS
     if (read_sbrmi_ras_status(info, &buf) == OOB_SUCCESS)
@@ -1159,10 +1161,15 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                                 sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
 
                             } else {
-
-                                setGPIOValue("ASSERT_WARM_RST_BTN_L", 0, resetPulseTimeMs);
-                                sd_journal_print(LOG_INFO, "WARM RESET triggered\n");
-
+                                /* In a 2P config, it is recommended to only send this command to P0
+                                   Hence, sending the Signal only to socket 0*/
+                                ret = reset_on_sync_flood(p0_info, &ack_resp);
+                                if(ret)
+                                {
+                                    sd_journal_print(LOG_ERR, "Failed to request reset after sync flood\n");
+                                } else {
+                                    sd_journal_print(LOG_ERR, "WARM RESET triggered\n");
+                                }
                             }
                         }
                         else if(*line == COLD_RESET)
@@ -1314,13 +1321,22 @@ int main() {
             if((line.substr(0, delimiterPos)) == "HarvestUcodeVersionEn")
             {
                 if((std::stoi(line.substr(delimiterPos + 1))) == 1)
+                {
                     getMicrocodeRev();
+                }
+                else {
+                    p0_ucode = 0;
+                    p1_ucode = 0;
+                }
             }
             else if((line.substr(0, delimiterPos)) == "HarvestPpinEn")
             {
                 if((std::stoi(line.substr(delimiterPos + 1))) == 1)
                 {
                     getPpinFuse();
+                } else {
+                    p0_ppin = 0;
+                    p1_ppin = 0;
                 }
             }
         }
