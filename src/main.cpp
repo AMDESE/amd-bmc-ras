@@ -37,8 +37,8 @@ extern "C" {
 #include "esmi_mailbox_nda.h"
 }
 
-#define COMMAND_BOARD_ID    ("/sbin/fw_printenv -n board_id")
-#define COMMAND_LEN         3
+#define COMMAND_NUM_OF_CPU  ("/sbin/fw_printenv -n num_of_cpu")
+#define COMMAND_LEN         (3)
 #define MAX_MCA_BANKS       (32)
 #define TWO_SOCKET          (2)
 #define SHIFT_24            (24)
@@ -172,16 +172,16 @@ uint16_t retryCount = MAX_RETRIES;
 
 bool harvest_ras_errors(uint8_t info,std::string alert_name);
 
-bool getPlatformID()
+bool getNumberOfCpu()
 {
     FILE *pf;
     char data[COMMAND_LEN];
-    bool PLATID = false;
+    bool ret = false;
     std::stringstream ss;
 
     // Setup pipe for reading and execute to get u-boot environment
-    // variable board_id.
-    pf = popen(COMMAND_BOARD_ID,"r");
+    // variable num_of_cpu.
+    pf = popen(COMMAND_NUM_OF_CPU,"r");
     // Error handling
     if(pf)
     {
@@ -189,42 +189,17 @@ bool getPlatformID()
         if (fgets(data, COMMAND_LEN, pf))
         {
             ss << std::hex << (std::string)data;
-            ss >> board_id;
-            PLATID = true;
-            sd_journal_print(LOG_DEBUG, "Board ID: 0x%x, Board ID String: %s\n", board_id, data);
+            ss >> num_of_proc;
+            ret = true;
+            sd_journal_print(LOG_DEBUG, "Number of Cpu %d\n",num_of_proc);
         }
 
         // the data is now in 'data'
         pclose(pf);
 
-
-        switch (board_id)
-        {
-        case ONYX_SLT:
-        case ONYX_1 ... ONYX_3:
-        case ONYX_FR4:
-        case RUBY_1 ... RUBY_3:
-        case SHALE_1:
-        case SHALE_2:
-        case SHALE_3:
-        case CINNABAR:
-        case SUNSTONE_1:
-        case SUNSTONE_2:
-        num_of_proc = 1;
-        break;
-        case QUARTZ_DAP:
-        case QUARTZ_1 ... QUARTZ_3:
-        case QUARTZ_FR4:
-        case TITANITE_1 ... TITANITE_6:
-        num_of_proc = 2;
-        break;
-        default:
-            num_of_proc = 1;
-            break;
-        }//switch
     }
 
-    return PLATID;
+    return ret;
 }
 
 void getCpuID()
@@ -1168,7 +1143,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                                 {
                                     sd_journal_print(LOG_ERR, "Failed to request reset after sync flood\n");
                                 } else {
-                                    sd_journal_print(LOG_ERR, "WARM RESET triggered\n");
+                                    sd_journal_print(LOG_INFO, "WARM RESET triggered\n");
                                 }
                             }
                         }
@@ -1251,7 +1226,7 @@ int main() {
     struct stat buffer;
     FILE* file;
 
-    if(getPlatformID() == false)
+    if(getNumberOfCpu() == false)
     {
         sd_journal_print(LOG_ERR, "Could not find the board id of the platform\n");
         return false;
