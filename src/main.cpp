@@ -24,6 +24,8 @@
 #include <utility>
 #include <regex>
 #include <ctype.h>
+#include <nlohmann/json.hpp>
+#include <experimental/filesystem>
 #include "cper.hpp"
 
 extern "C" {
@@ -46,9 +48,9 @@ extern "C" {
 #define CMD_BUFF_LEN        (256)
 #define BASE_16             (16)
 
-#define WARM_RESET          ('0')
-#define COLD_RESET          ('1')
-#define NO_RESET            ('2')
+#define WARM_RESET          (0)
+#define COLD_RESET          (1)
+#define NO_RESET            (2)
 
 #define MAX_RETRIES 10
 #define RAS_STATUS_REGISTER (0x4C)
@@ -78,6 +80,8 @@ constexpr std::string_view deleteAllInterface =
 constexpr std::string_view deleteAllMethod = "DeleteAll";
 constexpr std::string_view crashdumpAssertedInterface =
     "com.amd.crashdump.Asserted";
+constexpr std::string_view crashdumpConfigInterface =
+    "com.amd.crashdump.Configuration";
 constexpr std::string_view crashdumpAssertedMethod = "GenerateAssertedLog";
 // These 2 interfaces will be called by bmcweb, not supported now.
 // constexpr std::string_view crashdumpOnDemandInterface =
@@ -124,32 +128,6 @@ uint8_t p1_info = 1;
 static int num_of_proc = 0;
 
 const static constexpr int resetPulseTimeMs = 100;
-constexpr auto ONYX_SLT     = 61;   //0x3D
-constexpr auto ONYX_1       = 64;   //0x40
-constexpr auto ONYX_2       = 65;   //0x41
-constexpr auto ONYX_3       = 66;   //0x42
-constexpr auto ONYX_FR4     = 82;   //0x52
-constexpr auto QUARTZ_DAP   = 62;   //0x3E
-constexpr auto QUARTZ_1     = 67;   //0x43
-constexpr auto QUARTZ_2     = 68;   //0x44
-constexpr auto QUARTZ_3     = 69;   //0x45
-constexpr auto QUARTZ_FR4   = 81;   //0x51
-constexpr auto RUBY_1       = 70;   //0x46
-constexpr auto RUBY_2       = 71;   //0x47
-constexpr auto RUBY_3       = 72;   //0x48
-constexpr auto TITANITE_1   = 73;   //0x49
-constexpr auto TITANITE_2   = 74;   //0x4A
-constexpr auto TITANITE_3   = 75;   //0x4B
-constexpr auto TITANITE_4   = 76;   //0x4C
-constexpr auto TITANITE_5   = 77;   //0x4D
-constexpr auto TITANITE_6   = 78;   //0x4E
-//SP6 PLATFORMS
-constexpr auto SHALE_1      = 98;   //0x62
-constexpr auto SHALE_2      = 101;  //0x65
-constexpr auto SHALE_3      = 89;   //0x59
-constexpr auto CINNABAR     = 99;   //0x63
-constexpr auto SUNSTONE_1   = 97;   //0x61
-constexpr auto SUNSTONE_2   = 100;  //0x64
 
 std::mutex harvest_in_progress_mtx;           // mutex for critical section
 
@@ -168,9 +146,12 @@ std::shared_ptr<CPER_RECORD> rcd;
 
 uint64_t p0_last_transact_addr = 0;
 uint64_t p1_last_transact_addr = 0;
-uint16_t retryCount = MAX_RETRIES;
-
 bool harvest_ras_errors(uint8_t info,std::string alert_name);
+
+uint16_t apmlRetryCount;
+uint16_t systemRecovery;
+bool uCodeVersionFlag = false;
+bool harvestPpinFlag = false;
 
 bool getNumberOfCpu()
 {
@@ -236,6 +217,20 @@ void getCpuID()
 
     }
 
+}
+
+void updateConfigFile(std::string jsonField, int updateData)
+{
+    std::ifstream jsonRead(config_file);
+    nlohmann::json data = nlohmann::json::parse(jsonRead);
+
+    data[jsonField] = updateData;
+
+    std::ofstream jsonWrite(config_file);
+    jsonWrite << data;
+
+    jsonRead.close();
+    jsonWrite.close();
 }
 
 template <typename T>
@@ -852,34 +847,6 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
     struct mca_bank mca_dump;
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
 
-    char * line = NULL;
-    size_t len = 0;
-    ssize_t read;
-    FILE* fp = fopen(config_file, "r");
-
-    while ((read = getline(&line, &len, fp)) != -1)
-    {
-        if(strstr(line,"APML retries"))
-        {
-            std::string retry_string =  std::string(line);
-            std::string retry = std::regex_replace(
-                retry_string,
-                std::regex("[^0-9]*([0-9]+).*"),
-                std::string("$1")
-            );
-            retryCount = std::stoi(retry);
-            break;
-        } else {
-            continue;
-        }
-    }
-    sd_journal_print(LOG_DEBUG,"Maximum APML retries  = %d\n",retryCount);
-
-    if(fp != NULL) {
-        fclose(fp);
-        fp = NULL;
-    }
-
     dump_cper_header_section(numbanks,bytespermca);
 
     dump_error_descriptor_section(numbanks,bytespermca,info);
@@ -891,7 +858,6 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
     maxOffset32 = ((bytespermca % 4) ? 1 : 0) + (bytespermca >> 2);
     sd_journal_print(LOG_INFO, "Number of Valid MCA bank:%d\n", numbanks);
     sd_journal_print(LOG_INFO, "Number of 32 Bit Words:%d\n", maxOffset32);
-
 
     while(n < numbanks)
     {
@@ -907,6 +873,7 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
             if (ret != OOB_SUCCESS)
             {
                 // retry
+                uint16_t retryCount = apmlRetryCount;
                 while(retryCount > 0)
                 {
                     memset(&buffer, 0, sizeof(buffer));
@@ -962,7 +929,7 @@ static bool harvest_mca_validity_check(uint8_t info, uint16_t *numbanks, uint16_
 
         ret = read_bmc_ras_mca_validity_check(info, bytespermca, numbanks);
 
-        if (retries > retryCount)
+        if (retries > apmlRetryCount)
         {
             sd_journal_print(LOG_ERR, "Socket %d: Failed to get MCA banks with valid status. Error: %d\n", info, ret);
             break;
@@ -1115,61 +1082,44 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
 
                 rcd = nullptr;
 
-                FILE* fp = fopen(config_file, "r");
-
-                char * line = NULL;
-                size_t len = 0;
-                ssize_t read;
-
-                while ((read = getline(&line, &len, fp)) != -1)
+                if(systemRecovery == WARM_RESET)
                 {
-                    if (isalpha(*line) || (*line == '#')) {
-                        continue;
-                    }
-                    else
+                    if ((buf & SYS_MGMT_CTRL_ERR))
                     {
-                        if(*line == WARM_RESET)
-                        {
-                            if ((buf & SYS_MGMT_CTRL_ERR))
-                            {
-                                triggerColdReset();
-                                sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
+                        triggerColdReset();
+                        sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
 
-                            } else {
-                                /* In a 2P config, it is recommended to only send this command to P0
-                                   Hence, sending the Signal only to socket 0*/
-                                ret = reset_on_sync_flood(p0_info, &ack_resp);
-                                if(ret)
-                                {
-                                    sd_journal_print(LOG_ERR, "Failed to request reset after sync flood\n");
-                                } else {
-                                    sd_journal_print(LOG_INFO, "WARM RESET triggered\n");
-                                }
-                            }
-                        }
-                        else if(*line == COLD_RESET)
+                    } else {
+                        /* In a 2P config, it is recommended to only send this command to P0
+                           Hence, sending the Signal only to socket 0*/
+                        ret = reset_on_sync_flood(p0_info, &ack_resp);
+                        if(ret)
                         {
-
-                            triggerColdReset();
-                            sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
-
-                        }
-                        else if(*line == NO_RESET)
-                        {
-                            sd_journal_print(LOG_INFO, "NO RESET triggered\n");
-                        }
-                        else
-                        {
-                            sd_journal_print(LOG_ERR, "CdumpResetPolicy is not valid\n");
+                            sd_journal_print(LOG_ERR, "Failed to request reset after sync flood\n");
+                        } else {
+                            sd_journal_print(LOG_ERR, "WARM RESET triggered\n");
                         }
                     }
                 }
-                fclose(fp);
+                else if(systemRecovery == COLD_RESET)
+                {
+                    triggerColdReset();
+                    sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
 
-                P0_AlertProcessed = false;
-                P1_AlertProcessed = false;
-
+                }
+                else if(systemRecovery == NO_RESET)
+                {
+                    sd_journal_print(LOG_INFO, "NO RESET triggered\n");
+                }
+                else
+                {
+                    sd_journal_print(LOG_ERR, "CdumpResetPolicy is not valid\n");
+                }
             }
+
+            P0_AlertProcessed = false;
+            P1_AlertProcessed = false;
+
         }
     }
     else
@@ -1266,56 +1216,34 @@ int main() {
     /*Create Cdump Config file to store the system recovery*/
     if (stat(config_file, &buffer) != 0)
     {
-        file = fopen(config_file, "w");
+        nlohmann::json jsonConfig = {
+            { "apmlRetries" , 10 },
+            { "systemRecovery" , 2 },
+            { "uCodeVersion" , true },
+            { "harvestPpin" , true },
+        };
 
-        if(file != NULL)
-        {
-            fprintf(file,"HarvestUcodeVersionEn:1\n");
-            fprintf(file,"HarvestPpinEn:1\n");
-            fprintf(file,"APML retries:10\n");
-            fprintf(file,"# 0 ---> warm\n");
-            fprintf(file,"# 1 ---> cold\n");
-            fprintf(file,"# 2 ---> no reset\n");
-            fprintf(file,"2");
-            fclose(file);
-        }
+        std::ofstream jsonWrite(config_file);
+        jsonWrite << jsonConfig;
+        jsonWrite.close();
     }
 
-    std::ifstream cFile(config_file);
-    if (cFile.is_open())
+    std::ifstream jsonRead(config_file);
+    nlohmann::json data = nlohmann::json::parse(jsonRead);
+
+    apmlRetryCount = data["apmlRetries"];
+    systemRecovery = data["systemRecovery"];
+    uCodeVersionFlag = data["uCodeVersion"];
+    harvestPpinFlag = data["harvestPpin"];
+    jsonRead.close();
+
+    if(uCodeVersionFlag == 1)
     {
-        std::string line;
-        while(getline(cFile, line))
-        {
-            line.erase(std::remove_if(line.begin(), line.end(), isspace),line.end());
-
-            if(line[0] == '#' || line.empty())
-                continue;
-
-            auto delimiterPos = line.find(":");
-            if((line.substr(0, delimiterPos)) == "HarvestUcodeVersionEn")
-            {
-                if((std::stoi(line.substr(delimiterPos + 1))) == 1)
-                {
-                    getMicrocodeRev();
-                }
-                else {
-                    p0_ucode = 0;
-                    p1_ucode = 0;
-                }
-            }
-            else if((line.substr(0, delimiterPos)) == "HarvestPpinEn")
-            {
-                if((std::stoi(line.substr(delimiterPos + 1))) == 1)
-                {
-                    getPpinFuse();
-                } else {
-                    p0_ppin = 0;
-                    p1_ppin = 0;
-                }
-            }
-        }
-        cFile.close();
+        getMicrocodeRev();
+    }
+    if(harvestPpinFlag == 1)
+    {
+        getPpinFuse();
     }
 
     rcd = std::make_shared<CPER_RECORD>();
@@ -1359,6 +1287,51 @@ int main() {
           return "Log started";
         });
     assertedIface->initialize();
+
+    //Create Configuration interface
+    std::shared_ptr<sdbusplus::asio::dbus_interface> configIface =
+        server->add_interface(crashdumpPath.data(),
+                              crashdumpConfigInterface.data());
+
+    configIface->register_property("apmlRetries", apmlRetryCount,
+        [](const uint16_t& requested, uint16_t& resp)
+        {
+            resp = requested;
+            apmlRetryCount = resp;
+            updateConfigFile("apmlRetries",apmlRetryCount);
+            return 1;
+        });
+
+    configIface->register_property("systemRecovery", systemRecovery,
+        [](const uint16_t& requested, uint16_t& resp)
+        {
+            resp = requested;
+            systemRecovery = resp;
+            updateConfigFile("systemRecovery",systemRecovery);
+            return 1;
+        });
+
+    configIface->register_property("uCodeVersion", uCodeVersionFlag,
+        [](const bool& requested, bool& resp)
+
+        {
+            resp = requested;
+            uCodeVersionFlag = resp;
+            updateConfigFile("uCodeVersion",uCodeVersionFlag);
+            return 1;
+        });
+
+    configIface->register_property("harvestPpin", harvestPpinFlag,
+        [](const bool& requested, bool& resp)
+        {
+            resp = requested;
+            harvestPpinFlag = resp;
+            updateConfigFile("harvestPpin",harvestPpinFlag);
+            return 1;
+        });
+
+
+    configIface->initialize();
 
     // Delete all the generated crashdump
     std::shared_ptr<sdbusplus::asio::dbus_interface> deleteAllIface =
