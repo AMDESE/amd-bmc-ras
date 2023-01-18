@@ -250,12 +250,12 @@ T getProperty(sdbusplus::bus::bus& bus, const char* service, const char* path,
     {
         auto reply = bus.call(method);
         reply.read(value);
-        return std::get<T>(value);
     }
     catch (const sdbusplus::exception::SdBusError& ex)
     {
         sd_journal_print(LOG_ERR, "GetProperty call failed \n");
     }
+    return std::get<T>(value);
 }
 
 void getMicrocodeRev()
@@ -1228,7 +1228,7 @@ int main() {
 
     if(getNumberOfCpu() == false)
     {
-        sd_journal_print(LOG_ERR, "Could not find the board id of the platform\n");
+        sd_journal_print(LOG_ERR, "Could not find the number of CPU's of the platform\n");
         return false;
     }
 
