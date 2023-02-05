@@ -13,6 +13,7 @@
 #define GENOA_MCA_BANKS             (32)
 #define MCA_BANK_MAX_OFFSET         (128)
 #define SYS_MGMT_CTRL_ERR           (0x04)
+#define RESET_HANG_ERR              (0x02)
 #define DF_DUMP_RESERVED            (6128)
 #define MAX_ERROR_FILE              (10)
 #define LAST_TRANS_ADDR_OFFSET      (4)
