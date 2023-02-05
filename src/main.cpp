@@ -963,6 +963,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
     uint16_t bytespermca = 0;
     uint16_t numbanks = 0;
     bool ControlFabricError = false;
+    bool FchHangError = false;
 
     uint8_t buf;
     bool ResetReady  = false;
@@ -996,6 +997,17 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                 P1_AlertProcessed = true;
                 ControlFabricError = true;
 
+            } else if(buf & RESET_HANG_ERR)
+            {
+                std::string ras_err_msg = "System hang while resetting in syncflood."
+                                          "Suggested next step is to do an additional manual immediate reset";
+
+                sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                    LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                    "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                    ras_err_msg.c_str(), NULL);
+
+                FchHangError = true;
             }
             else
             {
@@ -1021,7 +1033,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
             }
 
             //Do not harvest MCA banks in case of control fabric errors
-            if(ControlFabricError == false)
+            if((ControlFabricError == false) && (FchHangError == false))
             {
                 // RAS MCA Validity Check
                 if ( true == harvest_mca_validity_check(info, &numbanks, &bytespermca) )
@@ -1034,6 +1046,11 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
             // 0x4c is a SB-RMI register acting as write to clear
             // check PPR to determine whether potential bug in PPR or in implementation of SMU?
             write_register(info, RAS_STATUS_REGISTER, 1);
+
+            if(FchHangError == true)
+            {
+                return true;
+            }
 
             if (num_of_proc == TWO_SOCKET)
             {
