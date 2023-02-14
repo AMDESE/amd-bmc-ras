@@ -22,10 +22,18 @@
 #define BYTE_2                      (2)
 
 /*
- * CPER section header revision, used in revision field in struct
+ * CPER section descriptor revision, used in revision field in struct
  * cper_section_descriptor
  */
-#define CPER_SEC_REV                (0x0100)
+#define CPER_MINOR_REV                (0x0001)
+
+#define ADDC_GEN_NUMBER_1             (0x01)
+#define ADDC_GEN_NUMBER_2             (0x02)
+#define ADDC_GEN_NUMBER_3             (0x03)
+
+#define EPYC_PROG_SEG_ID              (0x01)
+#define MI_PROG_SEG_ID                (0x02)
+#define NAVI_PROG_SEG_ID              (0x03)
 
 /*
  * Validation bits definition for validation_bits in struct
@@ -44,6 +52,9 @@
 #define FRU_ID_VALID                    (0x01)
 #define FRU_TEXT_VALID                  (0x02)
 #define FOUR_BYTE_MASK                  (0xFFFFFFFF)
+
+#define INT_15                          (0x0F)
+#define SHIFT_4                         (4)
 
 typedef struct {
   unsigned char b[16];
@@ -112,7 +123,8 @@ typedef struct common_error_record_header COMMON_ERROR_RECORD_HEADER;
 struct error_section_descriptor {
   uint32_t                           SectionOffset;
   uint32_t                           SectionLength;
-  uint16_t                           Revision;
+  uint8_t                            RevisionMinor;
+  uint8_t                            RevisionMajor;
   uint8_t                            SecValidMask;
   uint8_t                            Reserved;
   uint32_t                           SectionFlags;
