@@ -763,7 +763,8 @@ void dump_error_descriptor_section(uint16_t numbanks, uint16_t bytespermca,uint8
     rcd->SectionDescriptor[0].SectionOffset = sizeof(COMMON_ERROR_RECORD_HEADER) +
                               (2 * sizeof(ERROR_SECTION_DESCRIPTOR));
     rcd->SectionDescriptor[0].SectionLength = sizeof(ERROR_RECORD);
-    rcd->SectionDescriptor[0].Revision = CPER_SEC_REV;
+    rcd->SectionDescriptor[0].RevisionMinor = CPER_MINOR_REV;
+    rcd->SectionDescriptor[0].RevisionMajor = ((ADDC_GEN_NUMBER_1 & INT_15) << SHIFT_4) | EPYC_PROG_SEG_ID;
     rcd->SectionDescriptor[0].SecValidMask = FRU_ID_VALID | FRU_TEXT_VALID;
     rcd->SectionDescriptor[0].SectionFlags = CPER_PRIMARY;
     rcd->SectionDescriptor[0].SectionType = VENDOR_OOB_CRASHDUMP;
@@ -775,7 +776,8 @@ void dump_error_descriptor_section(uint16_t numbanks, uint16_t bytespermca,uint8
     rcd->SectionDescriptor[1].SectionOffset = sizeof(COMMON_ERROR_RECORD_HEADER) +
                              (2 * sizeof(ERROR_SECTION_DESCRIPTOR)) + sizeof(ERROR_RECORD);
     rcd->SectionDescriptor[1].SectionLength = sizeof(ERROR_RECORD);
-    rcd->SectionDescriptor[1].Revision = CPER_SEC_REV;
+    rcd->SectionDescriptor[1].RevisionMinor = CPER_MINOR_REV;
+    rcd->SectionDescriptor[1].RevisionMajor = ((ADDC_GEN_NUMBER_1 & INT_15) << SHIFT_4) | EPYC_PROG_SEG_ID;
     rcd->SectionDescriptor[1].SecValidMask = FRU_ID_VALID | FRU_TEXT_VALID;
     rcd->SectionDescriptor[1].SectionFlags = CPER_PRIMARY;
     rcd->SectionDescriptor[1].SectionType = VENDOR_OOB_CRASHDUMP;
@@ -1132,10 +1134,10 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                 {
                     sd_journal_print(LOG_ERR, "CdumpResetPolicy is not valid\n");
                 }
-            }
 
-            P0_AlertProcessed = false;
-            P1_AlertProcessed = false;
+                P0_AlertProcessed = false;
+                P1_AlertProcessed = false;
+            }
 
         }
     }
