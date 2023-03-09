@@ -153,6 +153,24 @@ uint16_t systemRecovery;
 bool harvestuCodeVersionFlag = false;
 bool harvestPpinFlag = false;
 
+uint32_t mca_status_lo = 0;
+uint32_t mca_status_hi = 0;
+uint32_t mca_ipid_lo = 0;
+uint32_t mca_ipid_hi = 0;
+uint32_t mca_synd_lo = 0;
+uint32_t mca_synd_hi = 0;
+
+int synd_lo_offset = 0;
+int synd_hi_offset = 0;
+int ipid_lo_offset = 0;
+int ipid_hi_offset = 0;
+int status_lo_offset = 0;
+int status_hi_offset = 0;
+
+bool ValidSignatureID = false;
+
+std::vector<std::string> sigIDOffset = {"0x30","0x34","0x28","0x2c","0x08","0x0c","null","null"};
+
 bool getNumberOfCpu()
 {
     FILE *pf;
@@ -265,7 +283,6 @@ void getMicrocodeRev()
     if (MicroCode.empty())
     {
         sd_journal_print(LOG_ERR,"Failed to read ucode revision for Processor P0\n");
-        p0_ucode = BAD_DATA;
     }
     else {
         p0_ucode = std::stoul(MicroCode, nullptr, BASE_16);
@@ -280,7 +297,6 @@ void getMicrocodeRev()
         if (MicroCode.empty())
         {
             sd_journal_print(LOG_ERR,"Failed to read ucode revision for Processor P1\n");
-            p1_ucode = BAD_DATA;
         } else {
             p1_ucode = std::stoul(MicroCode, nullptr, BASE_16);
         }
@@ -298,7 +314,6 @@ void getPpinFuse()
     if (Ppin.empty())
     {
         sd_journal_print(LOG_ERR,"Failed to read PPIN for Processor P0\n");
-        p0_ppin = BAD_DATA;
     } else {
         p0_ppin = std::stoull(Ppin, nullptr, BASE_16);
     }
@@ -311,7 +326,6 @@ void getPpinFuse()
         if (Ppin.empty())
         {
             sd_journal_print(LOG_ERR,"Failed to read Ppin for Processor P1\n");
-            p1_ppin = BAD_DATA;
         } else {
             p1_ppin = std::stoull(Ppin, nullptr, BASE_16);
         }
@@ -338,18 +352,18 @@ void getLastTransAddr(uint8_t info)
     {
         if(err_chk.df_block_instances != 0)
         {
-            maxOffset32 = ((err_chk.err_log_len % BYTE_4) ? 1 : 0) + (err_chk.err_log_len >> BYTE_2);
+            maxOffset32 = ((err_chk.err_log_len % BYTE_4) ? INDEX_1 : INDEX_0) + (err_chk.err_log_len >> BYTE_2);
             while(n < err_chk.df_block_instances)
             {
                 for (int offset = 0; offset < maxOffset32; offset++)
                 {
                     memset(&data, 0, sizeof(data));
                     /* Offset */
-                    df_err.input[0] = offset * BYTE_4;
+                    df_err.input[INDEX_0] = offset * BYTE_4;
                     /* DF block ID */
-                    df_err.input[1] = blk_id;
+                    df_err.input[INDEX_1] = blk_id;
                     /* DF block ID instance */
-                    df_err.input[2] = n;
+                    df_err.input[INDEX_2] = n;
 
                     ret = read_ras_df_err_dump(info, df_err, &data);
 
@@ -748,7 +762,7 @@ void dump_cper_header_section(uint16_t numbanks, uint16_t bytespermca)
 
     calculate_time_stamp();
 
-    rcd->Header.PlatformId[0] = board_id;
+    rcd->Header.PlatformId[INDEX_0] = board_id;
 
     rcd->Header.CreatorId = CPER_CREATOR_PSTORE;
     rcd->Header.NotifyType = CPER_NOTIFY_MCE;
@@ -760,50 +774,50 @@ void dump_cper_header_section(uint16_t numbanks, uint16_t bytespermca)
 void dump_error_descriptor_section(uint16_t numbanks, uint16_t bytespermca,uint8_t info)
 {
 
-    rcd->SectionDescriptor[0].SectionOffset = sizeof(COMMON_ERROR_RECORD_HEADER) +
-                              (2 * sizeof(ERROR_SECTION_DESCRIPTOR));
-    rcd->SectionDescriptor[0].SectionLength = sizeof(ERROR_RECORD);
-    rcd->SectionDescriptor[0].RevisionMinor = CPER_MINOR_REV;
-    rcd->SectionDescriptor[0].RevisionMajor = ((ADDC_GEN_NUMBER_1 & INT_15) << SHIFT_4) | EPYC_PROG_SEG_ID;
-    rcd->SectionDescriptor[0].SecValidMask = FRU_ID_VALID | FRU_TEXT_VALID;
-    rcd->SectionDescriptor[0].SectionFlags = CPER_PRIMARY;
-    rcd->SectionDescriptor[0].SectionType = VENDOR_OOB_CRASHDUMP;
-    rcd->SectionDescriptor[0].Severity = CPER_SEV_FATAL;
-    rcd->SectionDescriptor[0].FRUText[0] = 'P';
-    rcd->SectionDescriptor[0].FRUText[1] = '0';
+    rcd->SectionDescriptor[INDEX_0].SectionOffset = sizeof(COMMON_ERROR_RECORD_HEADER) +
+                              (INDEX_2 * sizeof(ERROR_SECTION_DESCRIPTOR));
+    rcd->SectionDescriptor[INDEX_0].SectionLength = sizeof(ERROR_RECORD);
+    rcd->SectionDescriptor[INDEX_0].RevisionMinor = CPER_MINOR_REV;
+    rcd->SectionDescriptor[INDEX_0].RevisionMajor = ((ADDC_GEN_NUMBER_1 & INT_15) << SHIFT_4) | EPYC_PROG_SEG_ID;
+    rcd->SectionDescriptor[INDEX_0].SecValidMask = FRU_ID_VALID | FRU_TEXT_VALID;
+    rcd->SectionDescriptor[INDEX_0].SectionFlags = CPER_PRIMARY;
+    rcd->SectionDescriptor[INDEX_0].SectionType = VENDOR_OOB_CRASHDUMP;
+    rcd->SectionDescriptor[INDEX_0].Severity = CPER_SEV_FATAL;
+    rcd->SectionDescriptor[INDEX_0].FRUText[INDEX_0] = 'P';
+    rcd->SectionDescriptor[INDEX_0].FRUText[INDEX_1] = '0';
 
 
-    rcd->SectionDescriptor[1].SectionOffset = sizeof(COMMON_ERROR_RECORD_HEADER) +
-                             (2 * sizeof(ERROR_SECTION_DESCRIPTOR)) + sizeof(ERROR_RECORD);
-    rcd->SectionDescriptor[1].SectionLength = sizeof(ERROR_RECORD);
-    rcd->SectionDescriptor[1].RevisionMinor = CPER_MINOR_REV;
-    rcd->SectionDescriptor[1].RevisionMajor = ((ADDC_GEN_NUMBER_1 & INT_15) << SHIFT_4) | EPYC_PROG_SEG_ID;
-    rcd->SectionDescriptor[1].SecValidMask = FRU_ID_VALID | FRU_TEXT_VALID;
-    rcd->SectionDescriptor[1].SectionFlags = CPER_PRIMARY;
-    rcd->SectionDescriptor[1].SectionType = VENDOR_OOB_CRASHDUMP;
-    rcd->SectionDescriptor[1].Severity = CPER_SEV_FATAL;
-    rcd->SectionDescriptor[1].FRUText[0] = 'P';
-    rcd->SectionDescriptor[1].FRUText[1] = '1';
+    rcd->SectionDescriptor[INDEX_1].SectionOffset = sizeof(COMMON_ERROR_RECORD_HEADER) +
+                             (INDEX_2 * sizeof(ERROR_SECTION_DESCRIPTOR)) + sizeof(ERROR_RECORD);
+    rcd->SectionDescriptor[INDEX_1].SectionLength = sizeof(ERROR_RECORD);
+    rcd->SectionDescriptor[INDEX_1].RevisionMinor = CPER_MINOR_REV;
+    rcd->SectionDescriptor[INDEX_1].RevisionMajor = ((ADDC_GEN_NUMBER_1 & INT_15) << SHIFT_4) | EPYC_PROG_SEG_ID;
+    rcd->SectionDescriptor[INDEX_1].SecValidMask = FRU_ID_VALID | FRU_TEXT_VALID;
+    rcd->SectionDescriptor[INDEX_1].SectionFlags = CPER_PRIMARY;
+    rcd->SectionDescriptor[INDEX_1].SectionType = VENDOR_OOB_CRASHDUMP;
+    rcd->SectionDescriptor[INDEX_1].Severity = CPER_SEV_FATAL;
+    rcd->SectionDescriptor[INDEX_1].FRUText[INDEX_0] = 'P';
+    rcd->SectionDescriptor[INDEX_1].FRUText[INDEX_1] = '1';
 }
 
 void dump_processor_error_section(uint8_t info)
 {
 
     rcd->P0_ErrorRecord.ProcError.ValidBits = CPU_ID_VALID | LOCAL_APIC_ID_VALID;
-    rcd->P0_ErrorRecord.ProcError.CpuId[0] = p0_eax;
-    rcd->P0_ErrorRecord.ProcError.CpuId[1] = p0_ebx;
-    rcd->P0_ErrorRecord.ProcError.CpuId[2] = p0_ecx;
-    rcd->P0_ErrorRecord.ProcError.CpuId[3] = p0_edx;
-    rcd->P0_ErrorRecord.ProcError.CPUAPICId = ((p0_ebx >> SHIFT_24) & 0xff);
+    rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_0] = p0_eax;
+    rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_1] = p0_ebx;
+    rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_2] = p0_ecx;
+    rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_3] = p0_edx;
+    rcd->P0_ErrorRecord.ProcError.CPUAPICId = ((p0_ebx >> SHIFT_24) & INT_255);
 
     if(num_of_proc == TWO_SOCKET)
     {
         rcd->P1_ErrorRecord.ProcError.ValidBits = CPU_ID_VALID | LOCAL_APIC_ID_VALID;
-        rcd->P1_ErrorRecord.ProcError.CpuId[0] = p1_eax;
-        rcd->P1_ErrorRecord.ProcError.CpuId[1] = p1_ebx;
-        rcd->P1_ErrorRecord.ProcError.CpuId[2] = p1_ecx;
-        rcd->P1_ErrorRecord.ProcError.CpuId[3] = p1_edx;
-        rcd->P1_ErrorRecord.ProcError.CPUAPICId = ((p1_ebx >> SHIFT_24) & 0xff);
+        rcd->P1_ErrorRecord.ProcError.CpuId[INDEX_0] = p1_eax;
+        rcd->P1_ErrorRecord.ProcError.CpuId[INDEX_1] = p1_ebx;
+        rcd->P1_ErrorRecord.ProcError.CpuId[INDEX_2] = p1_ecx;
+        rcd->P1_ErrorRecord.ProcError.CpuId[INDEX_3] = p1_edx;
+        rcd->P1_ErrorRecord.ProcError.CPUAPICId = ((p1_ebx >> SHIFT_24) & INT_255);
     }
 
    if(info == p0_info)
@@ -857,7 +871,14 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
 
     dump_context_info(numbanks,bytespermca,info);
 
-    maxOffset32 = ((bytespermca % 4) ? 1 : 0) + (bytespermca >> 2);
+    synd_lo_offset = std::stoul(sigIDOffset[INDEX_0], nullptr, BASE_16);
+    synd_hi_offset = std::stoul(sigIDOffset[INDEX_1], nullptr, BASE_16);
+    ipid_lo_offset = std::stoul(sigIDOffset[INDEX_2], nullptr, BASE_16);
+    ipid_hi_offset = std::stoul(sigIDOffset[INDEX_3], nullptr, BASE_16);
+    status_lo_offset = std::stoul(sigIDOffset[INDEX_4], nullptr, BASE_16);
+    status_hi_offset = std::stoul(sigIDOffset[INDEX_5], nullptr, BASE_16);
+
+    maxOffset32 = ((bytespermca % BYTE_4) ? INDEX_1 : INDEX_0) + (bytespermca >> BYTE_2);
     sd_journal_print(LOG_INFO, "Number of Valid MCA bank:%d\n", numbanks);
     sd_journal_print(LOG_INFO, "Number of 32 Bit Words:%d\n", maxOffset32);
 
@@ -868,7 +889,7 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
             memset(&buffer, 0, sizeof(buffer));
             memset(&mca_dump, 0, sizeof(mca_dump));
             mca_dump.index  = n;
-            mca_dump.offset = offset * 4;
+            mca_dump.offset = offset * BYTE_4;
 
             ret = read_bmc_ras_mca_msr_dump(info, mca_dump, &buffer);
 
@@ -881,7 +902,7 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
                     memset(&buffer, 0, sizeof(buffer));
                     memset(&mca_dump, 0, sizeof(mca_dump));
                     mca_dump.index  = n;
-                    mca_dump.offset = offset * 4;
+                    mca_dump.offset = offset * BYTE_4;
 
                     ret = read_bmc_ras_mca_msr_dump(info, mca_dump, &buffer);
 
@@ -911,8 +932,81 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
             } else if(info == p1_info) {
                 rcd->P1_ErrorRecord.ContextInfo.CrashDumpData[n].mca_data[offset] = buffer;
             }
+
+            if(mca_dump.offset == status_lo_offset)
+            {
+                mca_status_lo = buffer;
+            }
+            if(mca_dump.offset == status_hi_offset)
+            {
+                mca_status_hi = buffer;
+
+                /*Bit 23 and bit 25 of MCA_STATUS_HI
+                  should be set for a valid signature ID*/
+                if ((mca_status_hi & (INDEX_1 << SHIFT_25)) && (mca_status_hi & (INDEX_1 << SHIFT_23)))
+                {
+                    ValidSignatureID = true;
+                }
+                sd_journal_print(LOG_INFO,"ValidSignatureID %d\n",ValidSignatureID);
+
+            }
+            if(mca_dump.offset == ipid_lo_offset)
+            {
+                mca_ipid_lo = buffer;
+            }
+            if(mca_dump.offset == ipid_hi_offset)
+            {
+                mca_ipid_hi = buffer;
+            }
+            if(mca_dump.offset == synd_lo_offset)
+            {
+                mca_synd_lo = buffer;
+            }
+            if(mca_dump.offset == synd_hi_offset)
+            {
+                mca_synd_hi = buffer;
+            }
+
         } // for loop
 
+        if(ValidSignatureID == true)
+        {
+            if(info == p0_info)
+            {
+                rcd->P0_ErrorRecord.ProcError.SignatureID[INDEX_0] = mca_synd_lo;
+                rcd->P0_ErrorRecord.ProcError.SignatureID[INDEX_1] = mca_synd_hi;
+                rcd->P0_ErrorRecord.ProcError.SignatureID[INDEX_2] = mca_ipid_lo;
+                rcd->P0_ErrorRecord.ProcError.SignatureID[INDEX_3] = mca_ipid_hi;
+                rcd->P0_ErrorRecord.ProcError.SignatureID[INDEX_4] = mca_status_lo;
+                rcd->P0_ErrorRecord.ProcError.SignatureID[INDEX_5] = mca_status_hi;
+
+                rcd->P0_ErrorRecord.ProcError.ValidBits = rcd->P0_ErrorRecord.ProcError.ValidBits
+                                                          | FAILURE_SIGNATURE_ID;
+            }
+            if(info == p1_info)
+            {
+                rcd->P1_ErrorRecord.ProcError.SignatureID[INDEX_0] = mca_synd_lo;
+                rcd->P1_ErrorRecord.ProcError.SignatureID[INDEX_1] = mca_synd_hi;
+                rcd->P1_ErrorRecord.ProcError.SignatureID[INDEX_2] = mca_ipid_lo;
+                rcd->P1_ErrorRecord.ProcError.SignatureID[INDEX_3] = mca_ipid_hi;
+                rcd->P1_ErrorRecord.ProcError.SignatureID[INDEX_4] = mca_status_lo;
+                rcd->P1_ErrorRecord.ProcError.SignatureID[INDEX_5] = mca_status_hi;
+
+                rcd->P1_ErrorRecord.ProcError.ValidBits = rcd->P1_ErrorRecord.ProcError.ValidBits
+                                                          | FAILURE_SIGNATURE_ID;
+
+            }
+            ValidSignatureID = false;
+        }
+        else
+        {
+            mca_synd_lo = 0;
+            mca_synd_hi = 0;
+            mca_ipid_lo = 0;
+            mca_ipid_hi = 0;
+            mca_status_lo = 0;
+            mca_status_hi = 0;
+        }
         n++;
     }
 
@@ -979,7 +1073,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
         sd_journal_print(LOG_DEBUG, "Read RAS status register. Value: 0x%x\n", buf);
 
         // check RAS Status Register
-        if (buf & 0x0F)
+        if (buf & INT_15)
         {
             sd_journal_print(LOG_INFO, "The alert signaled is due to a RAS fatal error\n");
 
@@ -1242,6 +1336,8 @@ int main() {
             { "harvestPpin" , true },
         };
 
+        jsonConfig["sigIDOffset"] = sigIDOffset;
+
         std::ofstream jsonWrite(config_file);
         jsonWrite << jsonConfig;
         jsonWrite.close();
@@ -1254,6 +1350,8 @@ int main() {
     systemRecovery = data["systemRecovery"];
     harvestuCodeVersionFlag = data["harvestuCodeVersion"];
     harvestPpinFlag = data["harvestPpin"];
+    sigIDOffset = data.at("sigIDOffset").get<std::vector<std::string>>();
+
     jsonRead.close();
 
     if(harvestuCodeVersionFlag == true)
@@ -1349,6 +1447,14 @@ int main() {
             return 1;
         });
 
+    configIface->register_property("sigIDOffset", sigIDOffset,
+        [](const std::vector<std::string>& requested, std::vector<std::string>& resp)
+        {
+            resp = requested;
+            sigIDOffset = resp;
+            updateConfigFile("sigIDOffset",sigIDOffset);
+            return 1;
+        });
 
     configIface->initialize();
 

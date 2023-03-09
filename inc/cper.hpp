@@ -46,6 +46,8 @@
 
 #define CPU_ID_VALID                    (0x02)
 #define LOCAL_APIC_ID_VALID             (0x01)
+#define FAILURE_SIGNATURE_ID            (0x04)
+
 #define PROC_CONTEXT_STRUCT_VALID       (0x100)
 #define INFO_VALID_CHECK_INFO           (0x01)
 
@@ -54,7 +56,18 @@
 #define FOUR_BYTE_MASK                  (0xFFFFFFFF)
 
 #define INT_15                          (0x0F)
+#define INT_255                         (0xFF)
 #define SHIFT_4                         (4)
+#define SHIFT_23                        (23)
+#define SHIFT_25                        (25)
+#define INDEX_0                         (0)
+#define INDEX_1                         (1)
+#define INDEX_2                         (2)
+#define INDEX_3                         (3)
+#define INDEX_4                         (4)
+#define INDEX_5                         (5)
+#define INDEX_8                         (8)
+#define BASE_16                         (16)
 
 typedef struct {
   unsigned char b[16];
@@ -108,7 +121,7 @@ struct common_error_record_header {
   uint32_t                           ValidationBits;
   uint32_t                           RecordLength;
   ERROR_TIME_STAMP                   TimeStamp;
-  uint64_t                           PlatformId[2];
+  uint64_t                           PlatformId[INDEX_2];
   GUID_T                             PartitionId;
   GUID_T                             CreatorId;
   GUID_T                             NotifyType;
@@ -140,21 +153,11 @@ struct processor_error_section {
   uint64_t                           ValidBits;
   uint64_t                           CPUAPICId;
   uint32_t                           CpuId[12];
+  uint32_t                           SignatureID[INDEX_8];
+  uint32_t                           Reserved[INDEX_8];
 } __attribute__((packed));
 
 typedef struct processor_error_section PROCESSOR_ERROR_SECTION;
-
-struct proc_info {
-  GUID_T                             ErrorStructureType;
-  uint64_t                           ValidBits;
-  uint64_t                           CheckInfo;
-  uint64_t                           TargetId;
-  uint64_t                           RequesterId;
-  uint64_t                           ResponderId;
-  uint64_t                           InstructionPointer;
-} __attribute__((packed));
-
-typedef struct proc_info PROCINFO;
 
 struct df_dump {
   LAST_TRANS_ADDR                    LastTransAddr[CCM_COUNT];
@@ -176,7 +179,6 @@ typedef struct context_info CONTEXT_INFO;
 
 struct error_record {
     PROCESSOR_ERROR_SECTION           ProcError;
-    PROCINFO                          ProcessorInfo;
     CONTEXT_INFO                      ContextInfo;
 } __attribute__((packed));
 
@@ -184,7 +186,7 @@ typedef struct error_record ERROR_RECORD;
 
 struct cper_record {
     COMMON_ERROR_RECORD_HEADER        Header;
-    ERROR_SECTION_DESCRIPTOR          SectionDescriptor[2];
+    ERROR_SECTION_DESCRIPTOR          SectionDescriptor[INDEX_2];
     ERROR_RECORD                      P0_ErrorRecord;
     ERROR_RECORD                      P1_ErrorRecord;
 }  __attribute__((packed));
