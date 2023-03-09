@@ -153,6 +153,24 @@ uint16_t systemRecovery;
 bool harvestuCodeVersionFlag = false;
 bool harvestPpinFlag = false;
 
+uint32_t mca_status_lo = 0;
+uint32_t mca_status_hi = 0;
+uint32_t mca_ipid_lo = 0;
+uint32_t mca_ipid_hi = 0;
+uint32_t mca_synd_lo = 0;
+uint32_t mca_synd_hi = 0;
+
+int synd_lo_offset = 0;
+int synd_hi_offset = 0;
+int ipid_lo_offset = 0;
+int ipid_hi_offset = 0;
+int status_lo_offset = 0;
+int status_hi_offset = 0;
+
+bool ValidSignatureID = false;
+
+std::vector<std::string> sigIDOffset = {"0x30","0x34","0x28","0x2c","0x08","0x0c","null","null"};
+
 bool getNumberOfCpu()
 {
     FILE *pf;
@@ -265,7 +283,6 @@ void getMicrocodeRev()
     if (MicroCode.empty())
     {
         sd_journal_print(LOG_ERR,"Failed to read ucode revision for Processor P0\n");
-        p0_ucode = BAD_DATA;
     }
     else {
         p0_ucode = std::stoul(MicroCode, nullptr, BASE_16);
@@ -280,7 +297,6 @@ void getMicrocodeRev()
         if (MicroCode.empty())
         {
             sd_journal_print(LOG_ERR,"Failed to read ucode revision for Processor P1\n");
-            p1_ucode = BAD_DATA;
         } else {
             p1_ucode = std::stoul(MicroCode, nullptr, BASE_16);
         }
@@ -298,7 +314,6 @@ void getPpinFuse()
     if (Ppin.empty())
     {
         sd_journal_print(LOG_ERR,"Failed to read PPIN for Processor P0\n");
-        p0_ppin = BAD_DATA;
     } else {
         p0_ppin = std::stoull(Ppin, nullptr, BASE_16);
     }
@@ -311,7 +326,6 @@ void getPpinFuse()
         if (Ppin.empty())
         {
             sd_journal_print(LOG_ERR,"Failed to read Ppin for Processor P1\n");
-            p1_ppin = BAD_DATA;
         } else {
             p1_ppin = std::stoull(Ppin, nullptr, BASE_16);
         }
@@ -857,6 +871,13 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
 
     dump_context_info(numbanks,bytespermca,info);
 
+    synd_lo_offset = std::stoul(sigIDOffset[INDEX_0], nullptr, BASE_16);
+    synd_hi_offset = std::stoul(sigIDOffset[INDEX_1], nullptr, BASE_16);
+    ipid_lo_offset = std::stoul(sigIDOffset[INDEX_2], nullptr, BASE_16);
+    ipid_hi_offset = std::stoul(sigIDOffset[INDEX_3], nullptr, BASE_16);
+    status_lo_offset = std::stoul(sigIDOffset[INDEX_4], nullptr, BASE_16);
+    status_hi_offset = std::stoul(sigIDOffset[INDEX_5], nullptr, BASE_16);
+
     maxOffset32 = ((bytespermca % 4) ? 1 : 0) + (bytespermca >> 2);
     sd_journal_print(LOG_INFO, "Number of Valid MCA bank:%d\n", numbanks);
     sd_journal_print(LOG_INFO, "Number of 32 Bit Words:%d\n", maxOffset32);
@@ -911,8 +932,81 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
             } else if(info == p1_info) {
                 rcd->P1_ErrorRecord.ContextInfo.CrashDumpData[n].mca_data[offset] = buffer;
             }
+
+            if(mca_dump.offset == status_lo_offset)
+            {
+                mca_status_lo = buffer;
+            }
+            if(mca_dump.offset == status_hi_offset)
+            {
+                mca_status_hi = buffer;
+
+                /*Bit 23 and bit 25 of MCA_STATUS_HI
+                  should be set for a valid signature ID*/
+                if ((mca_status_hi & (INDEX_1 << 25)) && (mca_status_hi & (INDEX_1 << 23)))
+                {
+                    ValidSignatureID = true;
+                }
+                sd_journal_print(LOG_INFO,"ValidSignatureID %d\n",ValidSignatureID);
+
+            }
+            if(mca_dump.offset == ipid_lo_offset)
+            {
+                mca_ipid_lo = buffer;
+            }
+            if(mca_dump.offset == ipid_hi_offset)
+            {
+                mca_ipid_hi = buffer;
+            }
+            if(mca_dump.offset == synd_lo_offset)
+            {
+                mca_synd_lo = buffer;
+            }
+            if(mca_dump.offset == synd_hi_offset)
+            {
+                mca_synd_hi = buffer;
+            }
+
         } // for loop
 
+        if(ValidSignatureID == true)
+        {
+            if(info == p0_info)
+            {
+                rcd->P0_ErrorRecord.ProcError.SignatureID[INDEX_0] = mca_synd_lo;
+                rcd->P0_ErrorRecord.ProcError.SignatureID[INDEX_1] = mca_synd_hi;
+                rcd->P0_ErrorRecord.ProcError.SignatureID[INDEX_2] = mca_ipid_lo;
+                rcd->P0_ErrorRecord.ProcError.SignatureID[INDEX_3] = mca_ipid_hi;
+                rcd->P0_ErrorRecord.ProcError.SignatureID[INDEX_4] = mca_status_lo;
+                rcd->P0_ErrorRecord.ProcError.SignatureID[INDEX_5] = mca_status_hi;
+
+                rcd->P0_ErrorRecord.ProcError.ValidBits = rcd->P0_ErrorRecord.ProcError.ValidBits
+                                                          | FAILURE_SIGNATURE_ID;
+            }
+            if(info == p1_info)
+            {
+                rcd->P1_ErrorRecord.ProcError.SignatureID[INDEX_0] = mca_synd_lo;
+                rcd->P1_ErrorRecord.ProcError.SignatureID[INDEX_1] = mca_synd_hi;
+                rcd->P1_ErrorRecord.ProcError.SignatureID[INDEX_2] = mca_ipid_lo;
+                rcd->P1_ErrorRecord.ProcError.SignatureID[INDEX_3] = mca_ipid_hi;
+                rcd->P1_ErrorRecord.ProcError.SignatureID[INDEX_4] = mca_status_lo;
+                rcd->P1_ErrorRecord.ProcError.SignatureID[INDEX_5] = mca_status_hi;
+
+                rcd->P1_ErrorRecord.ProcError.ValidBits = rcd->P1_ErrorRecord.ProcError.ValidBits
+                                                          | FAILURE_SIGNATURE_ID;
+
+            }
+            ValidSignatureID = false;
+        }
+        else
+        {
+            mca_synd_lo = 0;
+            mca_synd_hi = 0;
+            mca_ipid_lo = 0;
+            mca_ipid_hi = 0;
+            mca_status_lo = 0;
+            mca_status_hi = 0;
+        }
         n++;
     }
 
@@ -1242,6 +1336,8 @@ int main() {
             { "harvestPpin" , true },
         };
 
+        jsonConfig["sigIDOffset"] = sigIDOffset;
+
         std::ofstream jsonWrite(config_file);
         jsonWrite << jsonConfig;
         jsonWrite.close();
@@ -1254,6 +1350,8 @@ int main() {
     systemRecovery = data["systemRecovery"];
     harvestuCodeVersionFlag = data["harvestuCodeVersion"];
     harvestPpinFlag = data["harvestPpin"];
+    sigIDOffset = data.at("sigIDOffset").get<std::vector<std::string>>();
+
     jsonRead.close();
 
     if(harvestuCodeVersionFlag == true)
@@ -1349,6 +1447,14 @@ int main() {
             return 1;
         });
 
+    configIface->register_property("sigIDOffset", sigIDOffset,
+        [](const std::vector<std::string>& requested, std::vector<std::string>& resp)
+        {
+            resp = requested;
+            sigIDOffset = resp;
+            updateConfigFile("sigIDOffset",sigIDOffset);
+            return 1;
+        });
 
     configIface->initialize();
 
