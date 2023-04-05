@@ -14,9 +14,11 @@
 #define MCA_BANK_MAX_OFFSET         (128)
 #define SYS_MGMT_CTRL_ERR           (0x04)
 #define RESET_HANG_ERR              (0x02)
-#define DF_DUMP_RESERVED            (6128)
+#define DF_DUMP_RESERVED            (11560)
 #define MAX_ERROR_FILE              (10)
 #define LAST_TRANS_ADDR_OFFSET      (4)
+#define PCIE_DUMP_OFFSET            (49)
+#define MAX_PCIE_INSTANCES          (12)
 #define CCM_COUNT                   (8)
 #define BYTE_4                      (4)
 #define BYTE_2                      (2)
@@ -99,6 +101,13 @@ typedef struct {
   uint32_t WdtData[LAST_TRANS_ADDR_OFFSET];
 } LAST_TRANS_ADDR;
 
+typedef struct {
+  uint8_t BlockID;
+  uint8_t ValidLogInstance;
+  uint16_t LogInstanceSize;
+  uint32_t PcieData[PCIE_DUMP_OFFSET];
+} PCIE_DUMP;
+
 struct error_time_stamp {
   uint8_t    Seconds;
   uint8_t    Minutes;
@@ -161,10 +170,15 @@ typedef struct processor_error_section PROCESSOR_ERROR_SECTION;
 
 struct df_dump {
   LAST_TRANS_ADDR                    LastTransAddr[CCM_COUNT];
-  uint64_t                           reserved[DF_DUMP_RESERVED];
 }  __attribute__((packed));
 
 typedef struct df_dump DF_DUMP;
+
+struct pcie_dump {
+  PCIE_DUMP                          PcieDump[MAX_PCIE_INSTANCES];
+}  __attribute__((packed));
+
+typedef struct pcie_dump PCIE_DUMP_DATA;
 
 struct context_info {
   uint16_t                           RegisterContextType;
@@ -173,6 +187,9 @@ struct context_info {
   uint64_t                           Ppin;
   CRASHDUMP_T                        CrashDumpData[GENOA_MCA_BANKS];
   DF_DUMP                            DfDumpData;
+  uint32_t                           Reserved[96];
+  PCIE_DUMP_DATA                     PcieDumpData;
+  uint32_t                           reserved[DF_DUMP_RESERVED];
 } __attribute__((packed));
 
 typedef struct context_info CONTEXT_INFO;

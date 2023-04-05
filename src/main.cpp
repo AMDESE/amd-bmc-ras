@@ -379,6 +379,77 @@ void getLastTransAddr(uint8_t info)
     }
 }
 
+void harvestPcieDump(uint8_t info)
+{
+    oob_status_t ret;
+    uint8_t blk_id = 33;
+    uint16_t n = 0;
+    uint16_t maxOffset32;
+    uint32_t data;
+    struct ras_df_err_chk err_chk;
+    union ras_df_err_dump df_err = {0};
+
+    sd_journal_print(LOG_INFO, "Harvesting PCIE dump\n");
+
+    ret = read_ras_df_err_validity_check(info, blk_id, &err_chk);
+
+    if (ret)
+    {
+        sd_journal_print(LOG_ERR, "Failed to read Pcie dump validity check\n");
+    }
+    else
+    {
+        if(err_chk.df_block_instances != 0)
+        {
+            maxOffset32 = ((err_chk.err_log_len % BYTE_4) ? INDEX_1 : INDEX_0) + (err_chk.err_log_len >> BYTE_2);
+
+            while(n < err_chk.df_block_instances)
+            {
+                if(info == p0_info)
+                {
+                    rcd->P0_ErrorRecord.ContextInfo.PcieDumpData.PcieDump[n].BlockID = blk_id;
+                    rcd->P0_ErrorRecord.ContextInfo.PcieDumpData.PcieDump[n].ValidLogInstance =
+                                                             err_chk.df_block_instances;
+                    rcd->P0_ErrorRecord.ContextInfo.PcieDumpData.PcieDump[n].LogInstanceSize = err_chk.err_log_len;
+                }
+                else if(info == p1_info)
+                {
+                    rcd->P1_ErrorRecord.ContextInfo.PcieDumpData.PcieDump[n].BlockID = blk_id;
+                    rcd->P1_ErrorRecord.ContextInfo.PcieDumpData.PcieDump[n].ValidLogInstance =
+                                                             err_chk.df_block_instances;
+                    rcd->P1_ErrorRecord.ContextInfo.PcieDumpData.PcieDump[n].LogInstanceSize = err_chk.err_log_len;
+                }
+
+                for (int offset = 0; offset < maxOffset32; offset++)
+                {
+                    memset(&data, 0, sizeof(data));
+                    /* Offset */
+                    df_err.input[INDEX_0] = offset * BYTE_4;
+                    /* DF block ID */
+                    df_err.input[INDEX_1] = blk_id;
+                    /* DF block ID instance */
+                    df_err.input[INDEX_2] = n;
+
+                    ret = read_ras_df_err_dump(info, df_err, &data);
+
+                    if (ret != OOB_SUCCESS)
+                    {
+                        sd_journal_print(LOG_ERR, "Failed to read Pcie dump data\n");
+                        data = BAD_DATA;
+                    }
+
+                    if(info == p0_info) {
+                        rcd->P0_ErrorRecord.ContextInfo.PcieDumpData.PcieDump[n].PcieData[offset] = data;
+                    } else if(info == p1_info) {
+                        rcd->P1_ErrorRecord.ContextInfo.PcieDumpData.PcieDump[n].PcieData[offset] = data;
+                    }
+                }
+                n++;
+            }
+        }
+    }
+}
+
 void triggerColdReset()
 {
     sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
@@ -833,6 +904,9 @@ void dump_processor_error_section(uint8_t info)
 void dump_context_info(uint16_t numbanks,uint16_t bytespermca,uint8_t info)
 {
     getLastTransAddr(info);
+
+    harvestPcieDump(info);
+
     if(info == p0_info)
     {
         rcd->P0_ErrorRecord.ContextInfo.RegisterContextType = CTX_OOB_CRASH;
@@ -947,8 +1021,6 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
                 {
                     ValidSignatureID = true;
                 }
-                sd_journal_print(LOG_INFO,"ValidSignatureID %d\n",ValidSignatureID);
-
             }
             if(mca_dump.offset == ipid_lo_offset)
             {
