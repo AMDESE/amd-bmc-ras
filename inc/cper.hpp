@@ -27,7 +27,7 @@
  * CPER section descriptor revision, used in revision field in struct
  * cper_section_descriptor
  */
-#define CPER_MINOR_REV                (0x0001)
+#define CPER_MINOR_REV                (0x0002)
 
 #define ADDC_GEN_NUMBER_1             (0x01)
 #define ADDC_GEN_NUMBER_2             (0x02)
