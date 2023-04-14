@@ -921,9 +921,14 @@ void dump_processor_error_section(uint8_t info)
 
 void dump_context_info(uint16_t numbanks,uint16_t bytespermca,uint8_t info)
 {
-    getLastTransAddr(info);
+    getLastTransAddr(p0_info);
+    harvestPcieDump(p0_info);
 
-    harvestPcieDump(info);
+    if(num_of_proc == TWO_SOCKET)
+    {
+        getLastTransAddr(p1_info);
+        harvestPcieDump(p1_info);
+    }
 
     if(info == p0_info)
     {
