@@ -170,6 +170,7 @@ int status_hi_offset = 0;
 bool ValidSignatureID = false;
 
 std::vector<std::string> sigIDOffset = {"0x30","0x34","0x28","0x2c","0x08","0x0c","null","null"};
+uint8_t ProgId = 0;
 
 bool getNumberOfCpu()
 {
@@ -867,7 +868,7 @@ void dump_error_descriptor_section(uint16_t numbanks, uint16_t bytespermca,uint8
                               (INDEX_2 * sizeof(ERROR_SECTION_DESCRIPTOR));
     rcd->SectionDescriptor[INDEX_0].SectionLength = sizeof(ERROR_RECORD);
     rcd->SectionDescriptor[INDEX_0].RevisionMinor = CPER_MINOR_REV;
-    rcd->SectionDescriptor[INDEX_0].RevisionMajor = ((ADDC_GEN_NUMBER_1 & INT_15) << SHIFT_4) | EPYC_PROG_SEG_ID;
+    rcd->SectionDescriptor[INDEX_0].RevisionMajor = ((ADDC_GEN_NUMBER_1 & INT_15) << SHIFT_4) | ProgId;
     rcd->SectionDescriptor[INDEX_0].SecValidMask = FRU_ID_VALID | FRU_TEXT_VALID;
     rcd->SectionDescriptor[INDEX_0].SectionFlags = CPER_PRIMARY;
     rcd->SectionDescriptor[INDEX_0].SectionType = VENDOR_OOB_CRASHDUMP;
@@ -880,7 +881,7 @@ void dump_error_descriptor_section(uint16_t numbanks, uint16_t bytespermca,uint8
                              (INDEX_2 * sizeof(ERROR_SECTION_DESCRIPTOR)) + sizeof(ERROR_RECORD);
     rcd->SectionDescriptor[INDEX_1].SectionLength = sizeof(ERROR_RECORD);
     rcd->SectionDescriptor[INDEX_1].RevisionMinor = CPER_MINOR_REV;
-    rcd->SectionDescriptor[INDEX_1].RevisionMajor = ((ADDC_GEN_NUMBER_1 & INT_15) << SHIFT_4) | EPYC_PROG_SEG_ID;
+    rcd->SectionDescriptor[INDEX_1].RevisionMajor = ((ADDC_GEN_NUMBER_1 & INT_15) << SHIFT_4) | ProgId;
     rcd->SectionDescriptor[INDEX_1].SecValidMask = FRU_ID_VALID | FRU_TEXT_VALID;
     rcd->SectionDescriptor[INDEX_1].SectionFlags = CPER_PRIMARY;
     rcd->SectionDescriptor[INDEX_1].SectionType = VENDOR_OOB_CRASHDUMP;
@@ -1378,6 +1379,28 @@ void exportCrashdumpToDBus(int num) {
     crashdumpInterfaces[num] = {filename, iface};
 }
 
+void findProgramId()
+{
+    oob_status_t ret;
+    uint8_t soc_num = 0;
+
+    struct processor_info plat_info[INDEX_1];
+
+    ret = esmi_get_processor_info(soc_num, plat_info);
+
+    if(ret == OOB_SUCCESS)
+    {
+        if((plat_info->model == MI300A_MODEL_NUMBER) || (plat_info->model == MI300C_MODEL_NUMBER ))
+        {
+            ProgId = MI_PROG_SEG_ID;
+        }
+        else
+        {
+            ProgId = EPYC_PROG_SEG_ID;
+        }
+    }
+}
+
 int main() {
 
     int dir;
@@ -1399,6 +1422,8 @@ int main() {
             sd_journal_print(LOG_ERR, "ras-errror-logging directory not created\n");
         }
     }
+
+    findProgramId();
 
     memset(&buffer, 0, sizeof(buffer));
     /*Create index file to store error file count */
