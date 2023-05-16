@@ -37,6 +37,9 @@
 #define MI_PROG_SEG_ID                (0x02)
 #define NAVI_PROG_SEG_ID              (0x03)
 
+#define MI300A_MODEL_NUMBER           (0x90)
+#define MI300C_MODEL_NUMBER           (0x80)
+
 /*
  * Validation bits definition for validation_bits in struct
  * cper_record_header. If set, corresponding fields in struct
