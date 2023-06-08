@@ -69,6 +69,7 @@
 #define INDEX_3                         (3)
 #define INDEX_4                         (4)
 #define INDEX_5                         (5)
+#define INDEX_6                         (6)
 #define INDEX_8                         (8)
 #define INDEX_16                        (0x10)
 #define BASE_16                         (16)
