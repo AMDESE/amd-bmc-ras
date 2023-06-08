@@ -205,7 +205,7 @@ void getCpuID()
 {
     uint32_t core_id = 0;
     oob_status_t ret;
-    p0_eax = 0;
+    p0_eax = 1;
     p0_ebx = 0;
     p0_ecx = 0;
     p0_edx = 0;
@@ -220,7 +220,7 @@ void getCpuID()
 
     if(num_of_proc == TWO_SOCKET)
     {
-        p1_eax = 0;
+        p1_eax = 1;
         p1_ebx = 0;
         p1_ecx = 0;
         p1_edx = 0;
@@ -894,18 +894,18 @@ void dump_processor_error_section(uint8_t info)
 
     rcd->P0_ErrorRecord.ProcError.ValidBits = CPU_ID_VALID | LOCAL_APIC_ID_VALID;
     rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_0] = p0_eax;
-    rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_1] = p0_ebx;
-    rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_2] = p0_ecx;
-    rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_3] = p0_edx;
+    rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_2] = p0_ebx;
+    rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_4] = p0_ecx;
+    rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_6] = p0_edx;
     rcd->P0_ErrorRecord.ProcError.CPUAPICId = ((p0_ebx >> SHIFT_24) & INT_255);
 
     if(num_of_proc == TWO_SOCKET)
     {
         rcd->P1_ErrorRecord.ProcError.ValidBits = CPU_ID_VALID | LOCAL_APIC_ID_VALID;
         rcd->P1_ErrorRecord.ProcError.CpuId[INDEX_0] = p1_eax;
-        rcd->P1_ErrorRecord.ProcError.CpuId[INDEX_1] = p1_ebx;
-        rcd->P1_ErrorRecord.ProcError.CpuId[INDEX_2] = p1_ecx;
-        rcd->P1_ErrorRecord.ProcError.CpuId[INDEX_3] = p1_edx;
+        rcd->P1_ErrorRecord.ProcError.CpuId[INDEX_2] = p1_ebx;
+        rcd->P1_ErrorRecord.ProcError.CpuId[INDEX_4] = p1_ecx;
+        rcd->P1_ErrorRecord.ProcError.CpuId[INDEX_6] = p1_edx;
         rcd->P1_ErrorRecord.ProcError.CPUAPICId = ((p1_ebx >> SHIFT_24) & INT_255);
     }
 
