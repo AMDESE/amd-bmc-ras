@@ -1,75 +1,28 @@
-#include <array>
-#include <boost/asio.hpp>
-#include <boost/asio/error.hpp>
-#include <boost/asio/io_service.hpp>
-#include <boost/asio/posix/stream_descriptor.hpp>
-#include <boost/asio/spawn.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/container/flat_map.hpp>
-#include <boost/container/flat_set.hpp>
-#include <boost/date_time/posix_time/posix_time.hpp>
-#include <filesystem>
-#include <fstream>
-#include <future>
-#include <gpiod.hpp>
-#include <iostream>
-#include <mutex>  // std::mutex
-#include <phosphor-logging/log.hpp>
-#include <regex>
-#include <sdbusplus/asio/connection.hpp>
-#include <sdbusplus/asio/object_server.hpp>
-#include <sdbusplus/asio/property.hpp>
-#include <shared_mutex>
-#include <string_view>
-#include <utility>
-#include <regex>
-#include <ctype.h>
-#include <nlohmann/json.hpp>
-#include <experimental/filesystem>
+#include "ras.hpp"
 #include "cper.hpp"
-
-extern "C" {
-#include <sys/stat.h>
-#include "linux/i2c-dev.h"
-#include "i2c/smbus.h"
-#include "apml.h"
-#include "esmi_cpuid_msr.h"
-#include "esmi_mailbox.h"
-#include "esmi_rmi.h"
-#include "esmi_mailbox_nda.h"
-}
-
-#define COMMAND_NUM_OF_CPU  ("/sbin/fw_printenv -n num_of_cpu")
-#define COMMAND_LEN         (3)
-#define MAX_MCA_BANKS       (32)
-#define TWO_SOCKET          (2)
-#define SHIFT_24            (24)
-#define SHIFT_32            (32)
-#define CMD_BUFF_LEN        (256)
-#define BASE_16             (16)
+#include "write_cper_data.hpp"
+#include "cper_runtime.hpp"
 
 #define WARM_RESET          (0)
 #define COLD_RESET          (1)
 #define NO_RESET            (2)
-
-#define MAX_RETRIES 10
-#define RAS_STATUS_REGISTER (0x4C)
-#define index_file  ("/var/lib/amd-ras/current_index")
-#define config_file ("/var/lib/amd-ras/config_file")
-#define BAD_DATA    (0xBAADDA7A)
 
 #define HPM_FPGA_REGDUMP         "/usr/sbin/hpm-fpga-dump.sh"
 #define HPM_FPGA_REGDUMP_FILE    "/var/lib/amd-ras/fpga_dump.txt"
 //#undef LOG_DEBUG
 //#define LOG_DEBUG LOG_ERR
 
-static boost::asio::io_service io;
+boost::asio::io_service io;
 static std::shared_ptr<sdbusplus::asio::connection> conn;
 static std::shared_ptr<sdbusplus::asio::object_server> server;
 static std::array<
     std::pair<std::string, std::shared_ptr<sdbusplus::asio::dbus_interface>>,
     MAX_ERROR_FILE>
     crashdumpInterfaces;
+
+boost::asio::deadline_timer *McaErrorPollingEvent = nullptr;
+boost::asio::deadline_timer *DramCeccErrorPollingEvent = nullptr;
+boost::asio::deadline_timer *PcieAerErrorPollingEvent = nullptr;
 
 constexpr std::string_view crashdumpService = "com.amd.crashdump";
 constexpr std::string_view crashdumpPath = "/com/amd/crashdump";
@@ -95,11 +48,10 @@ std::string P0_InventoryPath = "/xyz/openbmc_project/inventory/system/processor/
 std::string P1_InventoryPath = "/xyz/openbmc_project/inventory/system/processor/P1";
 constexpr auto CpuInventoryInterface = "xyz.openbmc_project.Inventory.Item.Cpu";
 
-constexpr std::string_view kRasDir = "/var/lib/amd-ras/";
 constexpr int kCrashdumpTimeInSec = 300;
 
 static std::string BoardName;
-static uint32_t err_count = 0;
+uint32_t err_count = 0;
 
 static gpiod::line P0_apmlAlertLine;
 static boost::asio::posix::stream_descriptor P0_apmlAlertEvent(io);
@@ -125,7 +77,7 @@ static boost::asio::posix::stream_descriptor HPMFPGALockoutAlertEvent(io);
 uint8_t p0_info = 0;
 uint8_t p1_info = 1;
 
-static int num_of_proc = 0;
+int num_of_proc = 0;
 
 const static constexpr int resetPulseTimeMs = 100;
 
@@ -134,10 +86,10 @@ std::mutex harvest_in_progress_mtx;           // mutex for critical section
 static bool P0_AlertProcessed = false;
 static bool P1_AlertProcessed = false;
 
-static uint64_t RecordId = 1;
+uint64_t RecordId = 1;
 unsigned int board_id = 0;
-static uint32_t p0_eax , p0_ebx , p0_ecx , p0_edx;
-static uint32_t p1_eax , p1_ebx , p1_ecx , p1_edx;
+uint32_t p0_eax = 0, p0_ebx = 0, p0_ecx = 0, p0_edx = 0;
+uint32_t p1_eax = 0, p1_ebx = 0, p1_ecx = 0, p1_edx = 0;
 uint32_t p0_ucode = 0;
 uint32_t p1_ucode = 0;
 uint64_t p0_ppin = 0;
@@ -148,7 +100,8 @@ uint64_t p0_last_transact_addr = 0;
 uint64_t p1_last_transact_addr = 0;
 bool harvest_ras_errors(uint8_t info,std::string alert_name);
 
-uint16_t apmlRetryCount;
+uint16_t DebugLogIdOffset;
+uint16_t apmlRetryCount = 0;
 uint16_t systemRecovery;
 bool harvestuCodeVersionFlag = false;
 bool harvestPpinFlag = false;
@@ -169,8 +122,30 @@ int status_hi_offset = 0;
 
 bool ValidSignatureID = false;
 
-std::vector<std::string> sigIDOffset = {"0x30","0x34","0x28","0x2c","0x08","0x0c","null","null"};
+bool TurinPlatform = false;
+bool GenoaPlatform = false;
+bool McaPollingEn = false;
+bool DramCeccPollingEn = false;
+bool PcieAerPollingEn = false;
+bool McaThresholdEn = false;
+bool DramCeccThresholdEn = false;
+bool PcieAerThresholdEn = false;
 
+uint16_t McaPollingPeriod = 0;
+uint16_t DramCeccPollingPeriod = 0;
+uint16_t PcieAerPollingPeriod = 0;
+uint16_t McaErrCounter = 0;
+uint16_t DramCeccErrCounter = 0;
+uint16_t PcieAerErrCounter = 0;
+
+std::vector<std::string> sigIDOffset = {"0x30","0x34","0x28","0x2c","0x08","0x0c","null","null"};
+std::vector<uint8_t> BlockId;
+
+/**
+ * Check number of CPU's of the current platform.
+ *
+ * @return false if the number of CPU's is not found, otherwise true
+ */
 bool getNumberOfCpu()
 {
     FILE *pf;
@@ -235,6 +210,30 @@ void getCpuID()
 
     }
 
+}
+
+void getBoardID()
+{
+    FILE *pf;
+    char data[COMMAND_LEN];
+    std::stringstream ss;
+
+    // Setup pipe for reading and execute to get u-boot environment
+    // variable board_id.
+    pf = popen(COMMAND_BOARD_ID,"r");
+    // Error handling
+    if(pf)
+    {
+        // Get the data from the process execution
+        if (fgets(data, COMMAND_LEN, pf))
+        {
+            ss << std::hex << (std::string)data;
+            ss >> board_id;
+            sd_journal_print(LOG_DEBUG, "Board ID: 0x%x, Board ID String: %s\n", board_id, data);
+        }
+        // the data is now in 'data'
+        pclose(pf);
+    }
 }
 
 template <typename T> void updateConfigFile(std::string jsonField, T updateData)
@@ -379,87 +378,135 @@ void getLastTransAddr(uint8_t info)
     }
 }
 
-void harvestPcieDump(uint8_t info)
+void harvestDebugLogDump(uint8_t info, uint8_t blk_id)
 {
-    oob_status_t ret;
-    uint8_t blk_id = BLOCK_ID_33;
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
+    uint16_t retries = 0;
     uint16_t n = 0;
     uint16_t maxOffset32;
     uint32_t data;
     struct ras_df_err_chk err_chk;
     union ras_df_err_dump df_err = {0};
 
-    sd_journal_print(LOG_INFO, "Harvesting PCIE dump\n");
-
-    ret = read_ras_df_err_validity_check(info, blk_id, &err_chk);
-
-    if (ret)
+    while (ret != OOB_SUCCESS)
     {
-        sd_journal_print(LOG_ERR, "Failed to read Pcie dump validity check\n");
 
-        /*If 5Bh command fails ,0xBAADDA7A is written thrice in the PCIE dump region*/
-        if(info == p0_info)
+        retries++;
+
+        ret = read_ras_df_err_validity_check(info, blk_id, &err_chk);
+
+        if(ret == OOB_SUCCESS)
         {
-            rcd->P0_ErrorRecord.ContextInfo.PcieDumpData.BlockID = (BAD_DATA & INT_255);
-            rcd->P0_ErrorRecord.ContextInfo.PcieDumpData.ValidLogInstance = (BAD_DATA >> INDEX_8) & INT_255;
-            rcd->P0_ErrorRecord.ContextInfo.PcieDumpData.LogInstanceSize = (BAD_DATA >> INDEX_16) & TWO_BYTE_MASK;
-            rcd->P0_ErrorRecord.ContextInfo.PcieDumpData.PcieDump[INDEX_0].PcieData[INDEX_0] = BAD_DATA;
-            rcd->P0_ErrorRecord.ContextInfo.PcieDumpData.PcieDump[INDEX_0].PcieData[INDEX_1] = BAD_DATA;
+            sd_journal_print(LOG_INFO, "Socket : %d , Debug Log ID : %d , Block Instance = %d, Err Log Length = %d\n",
+                             info,blk_id,err_chk.df_block_instances,err_chk.err_log_len);
+            break;
         }
-        else if(info == p1_info)
+
+        if (retries > apmlRetryCount)
         {
-            rcd->P1_ErrorRecord.ContextInfo.PcieDumpData.BlockID = (BAD_DATA & INT_255);
-            rcd->P1_ErrorRecord.ContextInfo.PcieDumpData.ValidLogInstance = (BAD_DATA >> INDEX_8) & INT_255;
-            rcd->P1_ErrorRecord.ContextInfo.PcieDumpData.LogInstanceSize = (BAD_DATA >> INDEX_16) & TWO_BYTE_MASK;
-            rcd->P1_ErrorRecord.ContextInfo.PcieDumpData.PcieDump[INDEX_0].PcieData[INDEX_0] = BAD_DATA;
-            rcd->P1_ErrorRecord.ContextInfo.PcieDumpData.PcieDump[INDEX_0].PcieData[INDEX_1] = BAD_DATA;
-        }
-    }
-    else
-    {
-        if(err_chk.df_block_instances != 0)
-        {
+            sd_journal_print(LOG_ERR, "Socket %d: Failed to get valid debug log for Dbg Log ID %d . Error: %d\n", info,blk_id, ret);
+
+            /*If 5Bh command fails ,0xBAADDA7A is written thrice in the PCIE dump region*/
             if(info == p0_info)
             {
-                rcd->P0_ErrorRecord.ContextInfo.PcieDumpData.BlockID = blk_id;
-                rcd->P0_ErrorRecord.ContextInfo.PcieDumpData.ValidLogInstance =
-                                                         err_chk.df_block_instances;
-                rcd->P0_ErrorRecord.ContextInfo.PcieDumpData.LogInstanceSize = err_chk.err_log_len;
+                rcd->P0_ErrorRecord.ContextInfo.DebugLogIdData[DebugLogIdOffset++] = blk_id;
+                rcd->P0_ErrorRecord.ContextInfo.DebugLogIdData[DebugLogIdOffset++] = BAD_DATA;
+                rcd->P0_ErrorRecord.ContextInfo.DebugLogIdData[DebugLogIdOffset++] = BAD_DATA;
+                rcd->P0_ErrorRecord.ContextInfo.DebugLogIdData[DebugLogIdOffset++] = BAD_DATA;
             }
             else if(info == p1_info)
             {
-                rcd->P1_ErrorRecord.ContextInfo.PcieDumpData.BlockID = blk_id;
-                rcd->P1_ErrorRecord.ContextInfo.PcieDumpData.ValidLogInstance =
-                                                             err_chk.df_block_instances;
-                rcd->P1_ErrorRecord.ContextInfo.PcieDumpData.LogInstanceSize = err_chk.err_log_len;
+                rcd->P1_ErrorRecord.ContextInfo.DebugLogIdData[DebugLogIdOffset++] = blk_id;
+                rcd->P1_ErrorRecord.ContextInfo.DebugLogIdData[DebugLogIdOffset++] = BAD_DATA;
+                rcd->P1_ErrorRecord.ContextInfo.DebugLogIdData[DebugLogIdOffset++] = BAD_DATA;
+                rcd->P1_ErrorRecord.ContextInfo.DebugLogIdData[DebugLogIdOffset++] = BAD_DATA;
+            }
+            break;
+        }
+    }
+
+    if(ret == OOB_SUCCESS)
+    {
+        if(err_chk.df_block_instances != 0)
+        {
+
+            uint32_t DbgLogIdHeader = (static_cast<uint32_t>(err_chk.err_log_len) << INDEX_16) |
+                          (static_cast<uint32_t>(err_chk.df_block_instances) << INDEX_8) | static_cast<uint32_t>(blk_id);
+
+            if(info == p0_info)
+            {
+                rcd->P0_ErrorRecord.ContextInfo.DebugLogIdData[DebugLogIdOffset++] = DbgLogIdHeader;
+            }
+            else if(info == p1_info)
+            {
+                rcd->P1_ErrorRecord.ContextInfo.DebugLogIdData[DebugLogIdOffset++] = DbgLogIdHeader;
             }
 
             maxOffset32 = ((err_chk.err_log_len % BYTE_4) ? INDEX_1 : INDEX_0) + (err_chk.err_log_len >> BYTE_2);
 
             while(n < err_chk.df_block_instances)
             {
+                bool apmlHang = false;
+
                 for (int offset = 0; offset < maxOffset32; offset++)
                 {
-                    memset(&data, 0, sizeof(data));
-                    /* Offset */
-                    df_err.input[INDEX_0] = offset * BYTE_4;
-                    /* DF block ID */
-                    df_err.input[INDEX_1] = blk_id;
-                    /* DF block ID instance */
-                    df_err.input[INDEX_2] = n;
 
-                    ret = read_ras_df_err_dump(info, df_err, &data);
-
-                    if (ret != OOB_SUCCESS)
+                    if(apmlHang == false)
                     {
-                        sd_journal_print(LOG_ERR, "Failed to read Pcie dump data\n");
-                        data = BAD_DATA;
+                        memset(&data, 0, sizeof(data));
+                        memset(&df_err, 0, sizeof(df_err));
+
+                        /* Offset */
+                        df_err.input[INDEX_0] = offset * BYTE_4;
+                        /* DF block ID */
+                        df_err.input[INDEX_1] = blk_id;
+                        /* DF block ID instance */
+                        df_err.input[INDEX_2] = n;
+
+                        ret = read_ras_df_err_dump(info, df_err, &data);
+
+                        if (ret != OOB_SUCCESS)
+                        {
+                            // retry
+                            uint16_t retryCount = apmlRetryCount;
+                            while(retryCount > 0)
+                            {
+
+                                memset(&data, 0, sizeof(data));
+                                memset(&df_err, 0, sizeof(df_err));
+
+                                /* Offset */
+                                df_err.input[INDEX_0] = offset * BYTE_4;
+                                /* DF block ID */
+                                df_err.input[INDEX_1] = blk_id;
+                                /* DF block ID instance */
+                                df_err.input[INDEX_2] = n;
+
+                                ret = read_ras_df_err_dump(info, df_err, &data);
+
+                                if (ret == OOB_SUCCESS)
+                                {
+                                    break;
+                                }
+                                retryCount--;
+                                usleep(1000 * 1000);
+                            }
+
+                            if(ret != OOB_SUCCESS)
+                            {
+                                sd_journal_print(LOG_ERR, "Failed to read debug log dump for debug log ID : %d\n",blk_id);
+                                data = BAD_DATA;
+                                /*the Dump APML command fails in the middle of the iterative loop,
+                                  then write BAADDA7A for the remaining iterations in the for loop*/
+                                apmlHang = true;
+                            }
+                        }
                     }
 
                     if(info == p0_info) {
-                        rcd->P0_ErrorRecord.ContextInfo.PcieDumpData.PcieDump[n].PcieData[offset] = data;
+                        rcd->P0_ErrorRecord.ContextInfo.DebugLogIdData[DebugLogIdOffset++] = data;
                     } else if(info == p1_info) {
-                        rcd->P1_ErrorRecord.ContextInfo.PcieDumpData.PcieDump[n].PcieData[offset] = data;
+                        rcd->P1_ErrorRecord.ContextInfo.DebugLogIdData[DebugLogIdOffset++] = data;
                     }
                 }
                 n++;
@@ -488,10 +535,6 @@ void triggerColdReset()
         "org.freedesktop.DBus.Properties", "Set",
         "xyz.openbmc_project.State.Host", "RequestedHostTransition",
         std::variant<std::string>{command});
-}
-
-inline std::string getCperFilename(int num) {
-    return "ras-error" + std::to_string(num) + ".cper";
 }
 
 static bool requestGPIOEvents(
@@ -801,94 +844,6 @@ static void write_register(uint8_t info, uint32_t reg, uint32_t value)
     sd_journal_print(LOG_DEBUG, "Write to register 0x%x is successful\n", reg);
 }
 
-void calculate_time_stamp()
-{
-    using namespace std;
-    using namespace std::chrono;
-    typedef duration<int, ratio_multiply<hours::period, ratio<24> >::type> days;
-
-    system_clock::time_point now = system_clock::now();
-    system_clock::duration tp = now.time_since_epoch();
-
-    days d = duration_cast<days>(tp);
-    tp -= d;
-    hours h = duration_cast<hours>(tp);
-    tp -= h;
-    minutes m = duration_cast<minutes>(tp);
-    tp -= m;
-    seconds s = duration_cast<seconds>(tp);
-    tp -= s;
-
-    time_t tt = system_clock::to_time_t(now);
-    tm utc_tm = *gmtime(&tt);
-
-    rcd->Header.TimeStamp.Seconds = utc_tm.tm_sec;
-    rcd->Header.TimeStamp.Minutes = utc_tm.tm_min;
-    rcd->Header.TimeStamp.Hours = utc_tm.tm_hour;
-    rcd->Header.TimeStamp.Flag = 1;
-    rcd->Header.TimeStamp.Day = utc_tm.tm_mday;
-    rcd->Header.TimeStamp.Month = utc_tm.tm_mon + 1;
-    rcd->Header.TimeStamp.Year = utc_tm.tm_year;
-    rcd->Header.TimeStamp.Century = 20 + utc_tm.tm_year/100;
-    rcd->Header.TimeStamp.Year = rcd->Header.TimeStamp.Year % 100;
-}
-
-void dump_cper_header_section(uint16_t numbanks, uint16_t bytespermca)
-{
-    memcpy(rcd->Header.Signature, CPER_SIG_RECORD, CPER_SIG_SIZE);
-    rcd->Header.Revision = CPER_RECORD_REV;
-    rcd->Header.SignatureEnd = CPER_SIG_END;
-    rcd->Header.SectionCount = SECTION_COUNT;
-    rcd->Header.ErrorSeverity = CPER_SEV_FATAL;
-
-    /*Bit 0 = 1 -> PlatformID field contains valid info
-      Bit 1 = 1 -> TimeStamp field contains valid info
-      Bit 2 = 1 -> PartitionID field contains valid info*/
-
-    rcd->Header.ValidationBits = (CPER_VALID_PLATFORM_ID | CPER_VALID_TIMESTAMP);
-
-    rcd->Header.RecordLength = sizeof(CPER_RECORD);
-
-    calculate_time_stamp();
-
-    rcd->Header.PlatformId[INDEX_0] = board_id;
-
-    rcd->Header.CreatorId = CPER_CREATOR_PSTORE;
-    rcd->Header.NotifyType = CPER_NOTIFY_MCE;
-
-    if(rcd->Header.RecordId != RSVD)
-        rcd->Header.RecordId = RecordId++;
-}
-
-void dump_error_descriptor_section(uint16_t numbanks, uint16_t bytespermca,uint8_t info)
-{
-
-    rcd->SectionDescriptor[INDEX_0].SectionOffset = sizeof(COMMON_ERROR_RECORD_HEADER) +
-                              (INDEX_2 * sizeof(ERROR_SECTION_DESCRIPTOR));
-    rcd->SectionDescriptor[INDEX_0].SectionLength = sizeof(ERROR_RECORD);
-    rcd->SectionDescriptor[INDEX_0].RevisionMinor = CPER_MINOR_REV;
-    rcd->SectionDescriptor[INDEX_0].RevisionMajor = ((ADDC_GEN_NUMBER_1 & INT_15) << SHIFT_4) | EPYC_PROG_SEG_ID;
-    rcd->SectionDescriptor[INDEX_0].SecValidMask = FRU_ID_VALID | FRU_TEXT_VALID;
-    rcd->SectionDescriptor[INDEX_0].SectionFlags = CPER_PRIMARY;
-    rcd->SectionDescriptor[INDEX_0].SectionType = VENDOR_OOB_CRASHDUMP;
-    rcd->SectionDescriptor[INDEX_0].Severity = CPER_SEV_FATAL;
-    rcd->SectionDescriptor[INDEX_0].FRUText[INDEX_0] = 'P';
-    rcd->SectionDescriptor[INDEX_0].FRUText[INDEX_1] = '0';
-
-
-    rcd->SectionDescriptor[INDEX_1].SectionOffset = sizeof(COMMON_ERROR_RECORD_HEADER) +
-                             (INDEX_2 * sizeof(ERROR_SECTION_DESCRIPTOR)) + sizeof(ERROR_RECORD);
-    rcd->SectionDescriptor[INDEX_1].SectionLength = sizeof(ERROR_RECORD);
-    rcd->SectionDescriptor[INDEX_1].RevisionMinor = CPER_MINOR_REV;
-    rcd->SectionDescriptor[INDEX_1].RevisionMajor = ((ADDC_GEN_NUMBER_1 & INT_15) << SHIFT_4) | EPYC_PROG_SEG_ID;
-    rcd->SectionDescriptor[INDEX_1].SecValidMask = FRU_ID_VALID | FRU_TEXT_VALID;
-    rcd->SectionDescriptor[INDEX_1].SectionFlags = CPER_PRIMARY;
-    rcd->SectionDescriptor[INDEX_1].SectionType = VENDOR_OOB_CRASHDUMP;
-    rcd->SectionDescriptor[INDEX_1].Severity = CPER_SEV_FATAL;
-    rcd->SectionDescriptor[INDEX_1].FRUText[INDEX_0] = 'P';
-    rcd->SectionDescriptor[INDEX_1].FRUText[INDEX_1] = '1';
-}
-
 void dump_processor_error_section(uint8_t info)
 {
 
@@ -921,13 +876,28 @@ void dump_processor_error_section(uint8_t info)
 
 void dump_context_info(uint16_t numbanks,uint16_t bytespermca,uint8_t info)
 {
+
     getLastTransAddr(p0_info);
-    harvestPcieDump(p0_info);
+
+    uint8_t blk_id;
+
+    DebugLogIdOffset = 0;
+
+    for(blk_id = 0 ; blk_id < BlockId.size() ; blk_id++)
+    {
+        harvestDebugLogDump(p0_info,BlockId[blk_id]);
+    }
 
     if(num_of_proc == TWO_SOCKET)
     {
         getLastTransAddr(p1_info);
-        harvestPcieDump(p1_info);
+
+        DebugLogIdOffset = 0;
+
+        for(blk_id = 0 ; blk_id < BlockId.size() ; blk_id++)
+        {
+            harvestDebugLogDump(p1_info,BlockId[blk_id]);
+        }
     }
 
     if(info == p0_info)
@@ -959,10 +929,11 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks, uint16_t byt
     uint32_t buffer;
     struct mca_bank mca_dump;
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
+    uint32_t Severity;
 
-    dump_cper_header_section(numbanks,bytespermca);
+    dump_cper_header_section(rcd,FATAL_SECTION_COUNT,CPER_SEV_FATAL,FATAL_ERR);
 
-    dump_error_descriptor_section(numbanks,bytespermca,info);
+    dump_error_descriptor_section(rcd,INDEX_2,FATAL_ERR,&Severity);
 
     dump_processor_error_section(info);
 
@@ -1147,6 +1118,71 @@ static bool harvest_mca_validity_check(uint8_t info, uint16_t *numbanks, uint16_
     return mac_validity_check;
 }
 
+void SystemRecovery(uint8_t buf)
+{
+
+    oob_status_t ret;
+    uint32_t ack_resp = 0;
+
+    if(systemRecovery == WARM_RESET)
+    {
+        if ((buf & SYS_MGMT_CTRL_ERR))
+        {
+            triggerColdReset();
+            sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
+
+        } else {
+            /* In a 2P config, it is recommended to only send this command to P0
+            Hence, sending the Signal only to socket 0*/
+            ret = reset_on_sync_flood(p0_info, &ack_resp);
+            if(ret)
+            {
+                sd_journal_print(LOG_ERR, "Failed to request reset after sync flood\n");
+            } else {
+                sd_journal_print(LOG_ERR, "WARM RESET triggered\n");
+            }
+        }
+    }
+    else if(systemRecovery == COLD_RESET)
+    {
+        triggerColdReset();
+        sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
+
+    }
+    else if(systemRecovery == NO_RESET)
+    {
+        sd_journal_print(LOG_INFO, "NO RESET triggered\n");
+    }
+    else
+    {
+        sd_journal_print(LOG_ERR, "CdumpResetPolicy is not valid\n");
+    }
+}
+
+void harvest_pcie_errors()
+{
+
+}
+
+void harvest_dram_cecc_errors()
+{
+
+}
+
+void harvest_mca_errors()
+{
+
+}
+
+void harvest_fatal_errors(uint8_t info, uint16_t numbanks, uint16_t bytespermca)
+{
+    // RAS MCA Validity Check
+    if ( true == harvest_mca_validity_check(info, &numbanks, &bytespermca) )
+    {
+        harvest_mca_data_banks(info, numbanks, bytespermca);
+    }
+}
+
 bool harvest_ras_errors(uint8_t info,std::string alert_name)
 {
     std::unique_lock lock(harvest_in_progress_mtx);
@@ -1176,6 +1212,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
             {
                 /*if RasStatus[reset_ctrl_err] is set in any of the processors,
                   proceed to cold reset, regardless of the status of the other P */
+
                 std::string ras_err_msg = "Fatal error detected in the control fabric. "
                                           "BMC may trigger a reset based on policy set. ";
 
@@ -1188,7 +1225,8 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                 P1_AlertProcessed = true;
                 ControlFabricError = true;
 
-            } else if(buf & RESET_HANG_ERR)
+            }
+            else if(buf & RESET_HANG_ERR)
             {
                 std::string ras_err_msg = "System hang while resetting in syncflood."
                                           "Suggested next step is to do an additional manual immediate reset";
@@ -1200,7 +1238,40 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
 
                 FchHangError = true;
             }
-            else
+            else if(buf & PCIE_ERROR_THRESHOLD)
+            {
+                std::string ras_err_msg = "PCIE error threshold overflow detected in the system";
+
+                sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                    LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                    "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                    ras_err_msg.c_str(), NULL);
+
+                harvest_pcie_errors();
+            }
+            else if(buf & DRAM_CECC_ERROR_THRESHOLD)
+            {
+                std::string ras_err_msg = "DRAM Correctable error counter threshold overflow detected in the system";
+
+                sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                    LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                    "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                    ras_err_msg.c_str(), NULL);
+
+                harvest_dram_cecc_errors();
+            }
+            else if(buf & MCA_ERROR_THRESHOLD)
+            {
+                std::string ras_err_msg = "MCA error counter threshold overflow detected in the system";
+
+                sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                    LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                    "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                    ras_err_msg.c_str(), NULL);
+
+                harvest_mca_errors();
+            }
+            else if(buf & FATAL_ERROR)
             {
                 std::string ras_err_msg = "RAS FATAL Error detected. "
                                           "System may reset after harvesting MCA data based on policy set. ";
@@ -1210,27 +1281,19 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
                     "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
                     ras_err_msg.c_str(), NULL);
 
-                if(alert_name.compare("P0_ALERT") == 0 )
-                {
-                    P0_AlertProcessed = true;
-
-                }
-
-                if(alert_name.compare("P1_ALERT") == 0 )
-                {
-                    P1_AlertProcessed = true;
-
-                }
+                harvest_fatal_errors(info, numbanks, bytespermca);
             }
 
-            //Do not harvest MCA banks in case of control fabric errors
-            if((ControlFabricError == false) && (FchHangError == false))
+            if(alert_name.compare("P0_ALERT") == 0 )
             {
-                // RAS MCA Validity Check
-                if ( true == harvest_mca_validity_check(info, &numbanks, &bytespermca) )
-                {
-                    harvest_mca_data_banks(info, numbanks, bytespermca);
-                }
+                P0_AlertProcessed = true;
+
+            }
+
+            if(alert_name.compare("P1_ALERT") == 0 )
+            {
+                P1_AlertProcessed = true;
+
             }
 
             // Clear RAS status register
@@ -1261,68 +1324,12 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
 
                 if(ControlFabricError == false)
                 {
-                    std::string cperFilePath =
-                        kRasDir.data() + getCperFilename(err_count);
-                    err_count++;
-
-                    if(err_count >= MAX_ERROR_FILE)
-                    {
-                        /*The maximum number of error files supported is 10.
-                          The counter will be rotated once it reaches max count*/
-                        err_count = (err_count % MAX_ERROR_FILE);
-                    }
-
-                    file = fopen(index_file, "w");
-
-                    if(file != NULL)
-                    {
-                        fprintf(file,"%d",err_count);
-                        fclose(file);
-                    }
-
-                    file = fopen(cperFilePath.c_str(), "w");
-                    if ((rcd != nullptr) && (file != NULL)) {
-                        sd_journal_print(LOG_DEBUG, "Generating CPER file\n");
-                        fwrite(rcd.get(), sizeof(CPER_RECORD), 1, file);
-                        fclose(file);
-                    }
+                    write_to_cper_file(rcd, FATAL_ERR, INDEX_2);
                 }
 
                 rcd = nullptr;
 
-                if(systemRecovery == WARM_RESET)
-                {
-                    if ((buf & SYS_MGMT_CTRL_ERR))
-                    {
-                        triggerColdReset();
-                        sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
-
-                    } else {
-                        /* In a 2P config, it is recommended to only send this command to P0
-                           Hence, sending the Signal only to socket 0*/
-                        ret = reset_on_sync_flood(p0_info, &ack_resp);
-                        if(ret)
-                        {
-                            sd_journal_print(LOG_ERR, "Failed to request reset after sync flood\n");
-                        } else {
-                            sd_journal_print(LOG_ERR, "WARM RESET triggered\n");
-                        }
-                    }
-                }
-                else if(systemRecovery == COLD_RESET)
-                {
-                    triggerColdReset();
-                    sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
-
-                }
-                else if(systemRecovery == NO_RESET)
-                {
-                    sd_journal_print(LOG_INFO, "NO RESET triggered\n");
-                }
-                else
-                {
-                    sd_journal_print(LOG_ERR, "CdumpResetPolicy is not valid\n");
-                }
+                SystemRecovery(buf);
 
                 P0_AlertProcessed = false;
                 P1_AlertProcessed = false;
@@ -1378,19 +1385,105 @@ void exportCrashdumpToDBus(int num) {
     crashdumpInterfaces[num] = {filename, iface};
 }
 
-int main() {
+void dump_run_time_error_info(uint8_t soc_num, uint16_t number_of_inst, uint16_t number_of_bytes,uint8_t error_type)
+{
 
+    uint16_t n = 0;
+    uint16_t maxOffset32;
+    struct run_time_err_d_in err_d_in;
+    oob_status_t ret;
+    uint32_t buffer;
+
+    maxOffset32 = ((number_of_bytes % BYTE_4) ? INDEX_1 : INDEX_0) + (number_of_bytes >> BYTE_2);
+    sd_journal_print(LOG_INFO, "Number of Valid error instances :%d\n", number_of_inst);
+    sd_journal_print(LOG_INFO, "Number of 32 Bit Words:%d\n", maxOffset32);
+
+    while(n < number_of_inst)
+    {
+        for (int offset = 0; offset < maxOffset32; offset++)
+        {
+            memset(&buffer, 0, sizeof(buffer));
+            memset(&err_d_in, 0, sizeof(err_d_in));
+            err_d_in.valid_inst_index = n;
+            err_d_in.offset = offset * BYTE_4;
+            err_d_in.category = error_type;
+
+            ret = get_bmc_ras_run_time_error_info(soc_num, err_d_in, &buffer);
+
+            if (ret != OOB_SUCCESS)
+            {
+                // retry
+                uint16_t retryCount = apmlRetryCount;
+                while(retryCount > 0)
+                {
+                    memset(&buffer, 0, sizeof(buffer));
+                    memset(&err_d_in, 0, sizeof(err_d_in));
+                    err_d_in.valid_inst_index  = n;
+                    err_d_in.offset = offset * BYTE_4;
+                    err_d_in.category = error_type;
+
+                    ret = get_bmc_ras_run_time_error_info(soc_num, err_d_in, &buffer);
+
+                    if (ret == OOB_SUCCESS)
+                    {
+                        break;
+                    }
+                    retryCount--;
+                }
+                if (ret != OOB_SUCCESS)
+                {
+                    sd_journal_print(LOG_ERR, "Socket %d : Failed to get run time error from Bank:%d, Offset:0x%x\n", soc_num, n, offset);
+                    /*if(info == p0_info) {
+                        rcd->P0_ErrorRecord.ContextInfo.CrashDumpData[n].mca_data[offset] = BAD_DATA;
+                    } else if(info == p1_info) {
+                       rcd->P1_ErrorRecord.ContextInfo.CrashDumpData[n].mca_data[offset] = BAD_DATA;
+                    }*/
+                    continue;
+                }
+            } // if (ret != OOB_SUCCESS)
+
+            /*if(info == p0_info) {
+                rcd->P0_ErrorRecord.ContextInfo.CrashDumpData[n].mca_data[offset] = buffer;
+            } else if(info == p1_info) {
+                rcd->P1_ErrorRecord.ContextInfo.CrashDumpData[n].mca_data[offset] = buffer;
+            }*/
+        } // for loop
+        n++;
+    }
+}
+
+void SetErrorThreshold(struct run_time_threshold th)
+{
+    oob_status_t ret;
+
+    ret = set_bmc_ras_err_threshold(p0_info, th);
+    if (ret)
+    {
+        sd_journal_print(LOG_ERR,"Failed to set bmc ras error threshold for P0\n");
+    }
+    sd_journal_print(LOG_INFO, "BMC RAS error threshold set successfully for P0\n");
+
+    if(num_of_proc == TWO_SOCKET)
+    {
+
+        ret = set_bmc_ras_err_threshold(p0_info, th);
+        if (ret)
+        {
+            sd_journal_print(LOG_ERR, "Failed to set bmc ras error threshold for P1\n");
+        }
+        sd_journal_print(LOG_INFO, "BMC RAS error threshold set successfully for P1\n");
+    }
+}
+
+/**
+ * Create Index file in /var/lib/amd-ras location
+ * to store the index of the CPER file
+ */
+void CreateIndexFile()
+{
     int dir;
     struct stat buffer;
     FILE* file;
-
-    if(getNumberOfCpu() == false)
-    {
-        sd_journal_print(LOG_ERR, "Could not find number of CPU's of the platform\n");
-        return false;
-    }
-
-    getCpuID();
 
     if (stat(kRasDir.data(), &buffer) != 0) {
         dir = mkdir(kRasDir.data(), 0777);
@@ -1420,6 +1513,12 @@ int main() {
             fclose(file);
         }
     }
+}
+
+void CreateConfigFile()
+{
+
+    struct stat buffer;
 
     /*Create Cdump Config file to store the system recovery*/
     if (stat(config_file, &buffer) != 0)
@@ -1432,6 +1531,24 @@ int main() {
         };
 
         jsonConfig["sigIDOffset"] = sigIDOffset;
+
+        if(TurinPlatform == true)
+        {
+            jsonConfig["McaPollingEn"] = true;
+            jsonConfig["McaPollingPeriod"] = 3;
+            jsonConfig["DramCeccPollingEn"] = true;
+            jsonConfig["DramCeccPollingPeriod"] = DRAM_CECC_POLLING_PERIOD;
+            jsonConfig["PcieAerPollingEn"] = true;
+            jsonConfig["PcieAerPollingPeriod"] = PCIE_AER_POLLING_PERIOD;
+
+            jsonConfig["McaThresholdEn"] = false;
+            jsonConfig["McaErrCounter"] = ERROR_THRESHOLD_VAL;
+            jsonConfig["DramCeccThresholdEn"] = false;
+            jsonConfig["DramCeccErrCounter"] = ERROR_THRESHOLD_VAL;
+            jsonConfig["PcieAerThresholdEn"] = false;
+            jsonConfig["PcieAerErrCounter"] = ERROR_THRESHOLD_VAL;
+
+        }
 
         std::ofstream jsonWrite(config_file);
         jsonWrite << jsonConfig;
@@ -1447,16 +1564,29 @@ int main() {
     harvestPpinFlag = data["harvestPpin"];
     sigIDOffset = data.at("sigIDOffset").get<std::vector<std::string>>();
 
-    jsonRead.close();
+    if(TurinPlatform == true)
+    {
+        McaPollingEn = data["McaPollingEn"];
+        McaPollingPeriod = data["McaPollingPeriod"];
+        DramCeccPollingEn= data["DramCeccPollingEn"];
+        DramCeccPollingPeriod = data["DramCeccPollingPeriod"];
+        PcieAerPollingEn = data["PcieAerPollingEn"];
+        PcieAerPollingPeriod = data["PcieAerPollingPeriod"];
 
-    if(harvestuCodeVersionFlag == true)
-    {
-        getMicrocodeRev();
+        McaThresholdEn = data["McaThresholdEn"];
+        McaErrCounter = data["McaErrCounter"];
+        DramCeccThresholdEn = data["DramCeccThresholdEn"];
+        DramCeccErrCounter = data["DramCeccErrCounter"];
+        PcieAerThresholdEn = data["PcieAerThresholdEn"];
+        PcieAerErrCounter = data["PcieAerErrCounter"];
+
     }
-    if(harvestPpinFlag == true)
-    {
-        getPpinFuse();
-    }
+
+    jsonRead.close();
+}
+
+void CreateDbusInterface()
+{
 
     rcd = std::make_shared<CPER_RECORD>();
 
@@ -1513,7 +1643,6 @@ int main() {
             updateConfigFile("apmlRetries",apmlRetryCount);
             return 1;
         });
-
     configIface->register_property("systemRecovery", systemRecovery,
         [](const uint16_t& requested, uint16_t& resp)
         {
@@ -1550,6 +1679,110 @@ int main() {
             updateConfigFile("sigIDOffset",sigIDOffset);
             return 1;
         });
+
+    if(TurinPlatform == true)
+    {
+        configIface->register_property("McaPollingEn", McaPollingEn,
+        [](const bool& requested, bool& resp)
+            {
+                resp = requested;
+                McaPollingEn = resp;
+                updateConfigFile("McaPollingEn",McaPollingEn);
+                return 1;
+            });
+
+        configIface->register_property("DramCeccPollingEn", DramCeccPollingEn,
+            [](const bool& requested, bool& resp)
+            {
+                resp = requested;
+                DramCeccPollingEn = resp;
+                updateConfigFile("DramCeccPollingEn",DramCeccPollingEn);
+                return 1;
+            });
+
+        configIface->register_property("PcieAerPollingEn", PcieAerPollingEn,
+            [](const bool& requested, bool& resp)
+            {
+                resp = requested;
+                PcieAerPollingEn = resp;
+                updateConfigFile("PcieAerPollingEn",PcieAerPollingEn);
+                return 1;
+            });
+
+        configIface->register_property("McaThresholdEn", McaThresholdEn,
+            [](const bool& requested, bool& resp)
+            {
+                resp = requested;
+                McaThresholdEn = resp;
+                updateConfigFile("McaThresholdEn",McaThresholdEn);
+                return 1;
+            });
+
+        configIface->register_property("DramCeccThresholdEn", DramCeccThresholdEn,
+            [](const bool& requested, bool& resp)
+            {
+                resp = requested;
+                DramCeccThresholdEn = resp;
+                updateConfigFile("DramCeccThresholdEn",DramCeccThresholdEn);
+                return 1;
+            });
+        configIface->register_property("PcieAerThresholdEn", PcieAerThresholdEn,
+            [](const bool& requested, bool& resp)
+            {
+                resp = requested;
+                PcieAerThresholdEn = resp;
+                updateConfigFile("PcieAerThresholdEn",PcieAerThresholdEn);
+                return 1;
+            });
+        configIface->register_property("McaPollingPeriod", McaPollingPeriod,
+            [](const uint16_t& requested, uint16_t& resp)
+            {
+                resp = requested;
+                McaPollingPeriod = resp;
+                updateConfigFile("McaPollingPeriod",McaPollingPeriod);
+                return 1;
+            });
+        configIface->register_property("DramCeccPollingPeriod", DramCeccPollingPeriod,
+            [](const uint16_t& requested, uint16_t& resp)
+            {
+                resp = requested;
+                DramCeccPollingPeriod = resp;
+                updateConfigFile("DramCeccPollingPeriod",DramCeccPollingPeriod);
+                return 1;
+            });
+        configIface->register_property("PcieAerPollingPeriod", PcieAerPollingPeriod,
+            [](const uint16_t& requested, uint16_t& resp)
+            {
+                resp = requested;
+                PcieAerPollingPeriod = resp;
+                updateConfigFile("PcieAerPollingPeriod",PcieAerPollingPeriod);
+                return 1;
+            });
+        configIface->register_property("McaErrCounter", McaErrCounter,
+            [](const uint16_t& requested, uint16_t& resp)
+            {
+                resp = requested;
+                McaErrCounter = resp;
+                updateConfigFile("McaErrCounter",McaErrCounter);
+                return 1;
+            });
+        configIface->register_property("DramCeccErrCounter", DramCeccErrCounter,
+            [](const uint16_t& requested, uint16_t& resp)
+            {
+                resp = requested;
+                DramCeccErrCounter = resp;
+                updateConfigFile("DramCeccErrCounter",DramCeccErrCounter);
+                return 1;
+            });
+        configIface->register_property("PcieAerErrCounter", PcieAerErrCounter,
+            [](const uint16_t& requested, uint16_t& resp)
+            {
+                resp = requested;
+                PcieAerErrCounter = resp;
+                updateConfigFile("PcieAerErrCounter",PcieAerErrCounter);
+                return 1;
+            });
+    }
 
     configIface->initialize();
 
@@ -1612,6 +1845,280 @@ int main() {
             exportCrashdumpToDBus(kNum);
         }
     }
+}
+
+void EnableErrorThreshold()
+{
+    if(TurinPlatform == true)
+    {
+        struct run_time_threshold th;
+
+        if(McaThresholdEn == true)
+        {
+            memset(&th, 0, sizeof(th));
+
+            sd_journal_print(LOG_INFO, "Setting error threshold for MCA error type."
+                            "Error Count threshold = %d\n",McaErrCounter); 
+
+            th.err_type = MCA_ERR;
+            th.err_count_th = McaErrCounter;
+            th.max_intrupt_rate = 0;
+
+            SetErrorThreshold(th);
+        }
+        if(DramCeccThresholdEn == true)
+        {
+            memset(&th, 0, sizeof(th));
+
+            sd_journal_print(LOG_INFO, "Setting error threshold for DRAM CECC error type."
+                            "Error Count threshold = %d\n",DramCeccErrCounter);
+
+            th.err_type = DRAM_CECC_ERR;
+            th.err_count_th = DramCeccErrCounter;
+            th.max_intrupt_rate = 0;
+
+            SetErrorThreshold(th);
+        }
+        if(PcieAerThresholdEn == true)
+        {
+            //memset(&th, 0, sizeof(th));
+
+            //th.err_type = PCIE_UE;
+            th.err_count_th = PcieAerErrCounter;
+            th.max_intrupt_rate = 0;
+
+            sd_journal_print(LOG_INFO, "Setting error threshold for PCIE UE error type."
+                            "Error Count threshold = %d\n", PcieAerErrCounter);
+
+            SetErrorThreshold(th);
+
+            memset(&th, 0, sizeof(th));
+
+            //th.err_type = PCIE_CE;
+            th.err_count_th = PcieAerErrCounter;
+            th.max_intrupt_rate = 0;
+
+            sd_journal_print(LOG_INFO, "Setting error threshold for PCIE CE error type."
+                            "Error Count threshold = %d\n", PcieAerErrCounter);
+
+            SetErrorThreshold(th);
+        }
+    }
+}
+
+oob_status_t read_register(uint8_t info,uint32_t reg,uint8_t *value)
+{
+    oob_status_t ret;
+    uint16_t retryCount = 10;
+
+    while(retryCount > 0)
+    {
+        ret = esmi_oob_read_byte(info, reg, SBRMI, value);
+        if (ret == OOB_SUCCESS) {
+            break;
+        }
+        sd_journal_print(LOG_ERR, "Failed to read register:0x%x Retrying\n", reg); 
+        usleep(1000 * 1000);
+        retryCount--;
+    }
+    if (ret != OOB_SUCCESS) {
+        sd_journal_print(LOG_ERR, "Failed to read register: 0x%x\n", reg);
+    }
+
+    return ret;
+
+}
+
+void clearSbrmiAlertMask()
+{
+
+    oob_status_t ret;
+
+    sd_journal_print(LOG_ERR, "Clear Alert Mask bit of SBRMI Control register \n");
+    uint8_t buffer;
+
+    ret = read_register(p0_info,SBRMI_CONTROL_REGISTER,&buffer);
+
+    if(ret == OOB_SUCCESS)
+    {
+        buffer = buffer & 0xFE;
+        write_register(p0_info, SBRMI_CONTROL_REGISTER, static_cast<uint32_t>(buffer));
+    }
+
+    if (num_of_proc == TWO_SOCKET)
+    {
+        buffer = 0;
+        ret = read_register(p1_info,SBRMI_CONTROL_REGISTER,&buffer);
+        if(ret == OOB_SUCCESS)
+        {
+            buffer = buffer & 0xFE;
+            write_register(p1_info, SBRMI_CONTROL_REGISTER, static_cast<uint32_t>(buffer));
+        }
+    }
+}
+
+static void currentHostStateMonitor()
+{
+    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+    boost::system::error_code ec;
+    auto conn = std::make_shared<sdbusplus::asio::connection>(io);
+
+    static auto match = sdbusplus::bus::match::match(
+        *conn,
+        "type='signal',member='PropertiesChanged', "
+        "interface='org.freedesktop.DBus.Properties', "
+        "arg0='xyz.openbmc_project.State.Host'",
+        [](sdbusplus::message::message& message) {
+            std::string intfName;
+            std::map<std::string, std::variant<std::string>> properties;
+
+            try
+            {
+                message.read(intfName, properties);
+            }
+            catch (std::exception& e)
+            {
+                sd_journal_print(LOG_ERR,"Unable to read host state\n");
+                return;
+            }
+            if (properties.empty())
+            {
+                sd_journal_print(LOG_ERR,"ERROR: Empty PropertiesChanged signal received\n");
+                return;
+            }
+
+            // We only want to check for CurrentHostState
+            if (properties.begin()->first != "CurrentHostState")
+            {
+                return;
+            }
+            std::string* currentHostState =
+                std::get_if<std::string>(&(properties.begin()->second));
+            if (currentHostState == nullptr)
+            {
+                sd_journal_print(LOG_ERR,"property invalid\n");
+                return;
+            }
+
+            if (*currentHostState !=
+                "xyz.openbmc_project.State.Host.HostState.Off")
+            {
+                struct stat buffer;
+
+                while(INDEX_1)
+                {
+                    if (stat(APML_INIT_DONE_FILE, &buffer) == 0)
+                    {
+                        sd_journal_print(LOG_INFO, "APML initialization done \n");
+                        break;
+                    }
+                }
+                clearSbrmiAlertMask();
+                SetOobConfig();
+            }
+
+        });
+}
+
+ /* Check if the ADDC feature is supported for the platform
+ * Supported platform = Stones , Breithorn , MI300
+ * @return true if the module is supported, false otherwise.
+ */
+bool validatePlatformSupport()
+{
+    oob_status_t ret;
+    uint8_t soc_num = 0;
+
+    struct processor_info plat_info[INDEX_1];
+    struct stat buffer;
+    uint16_t retryCount = 10;
+
+    while(INDEX_1)
+    {
+        if (stat(APML_INIT_DONE_FILE, &buffer) == 0)
+        {
+            sd_journal_print(LOG_INFO, "APML initialization done\n");
+            break;
+        }
+    }
+
+    sd_journal_print(LOG_INFO, "Validating platform support \n");
+
+    while(retryCount > 0)
+    {
+        ret = esmi_get_processor_info(soc_num, plat_info);
+
+        if(ret == OOB_SUCCESS)
+        {
+            break;
+        }
+        usleep(1000 * 1000);
+        retryCount--;
+        sd_journal_print(LOG_INFO, "Reading family ID failed. Retry count = %d \n", retryCount);
+
+    }
+    if (plat_info->family == GENOA_FAMILY_ID)
+    {
+        GenoaPlatform = true;
+
+        BlockId = {BLOCK_ID_33};
+    }
+    else if (plat_info->family == TURIN_FAMILY_ID)
+    {
+        TurinPlatform = true;
+
+        clearSbrmiAlertMask();
+
+        currentHostStateMonitor();
+
+        BlockId = {BLOCK_ID_1, BLOCK_ID_2, BLOCK_ID_3, BLOCK_ID_33, BLOCK_ID_36, BLOCK_ID_37,
+                    BLOCK_ID_38,BLOCK_ID_40};
+    }
+    else {
+        sd_journal_print(LOG_ERR, "ADDC is not supported for this platform\n");
+        return false;
+    }
+    return true;
+}
+
+int main()
+{
+
+    struct stat buffer;
+    if(validatePlatformSupport() == false)
+    {
+        return false;
+    }
+
+    TurinPlatform = true;
+    if(getNumberOfCpu() == false)
+    {
+        sd_journal_print(LOG_ERR, "Could not find number of CPU's of the platform\n");
+        return false;
+    }
+
+    getCpuID();
+
+    getBoardID();
+
+    CreateIndexFile();
+
+    CreateConfigFile();
+
+    if(harvestuCodeVersionFlag == true)
+    {
+        getMicrocodeRev();
+    }
+    if(harvestPpinFlag == true)
+    {
+        getPpinFuse();
+    }
+
+    CreateDbusInterface();
+
+    RunTimeErrorPolling();
+
+//    EnableErrorThreshold();
 
     requestGPIOEvents("P0_I3C_APML_ALERT_L", P0AlertEventHandler, P0_apmlAlertLine, P0_apmlAlertEvent);
     requestGPIOEvents("P0_DIMM_AF_ERROR", P0PmicAfEventHandler, P0_pmicAfAlertLine, P0_pmicAfAlertEvent);
@@ -1626,6 +2133,15 @@ int main() {
     }
 
     io.run();
+
+    if(McaErrorPollingEvent != nullptr)
+        delete McaErrorPollingEvent;
+
+    if(DramCeccErrorPollingEvent != nullptr)
+        delete DramCeccErrorPollingEvent;
+
+        if(PcieAerErrorPollingEvent != nullptr)
+            delete PcieAerErrorPollingEvent;
 
     return 0;
 }
