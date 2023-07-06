@@ -14,7 +14,7 @@
 #define MCA_BANK_MAX_OFFSET         (128)
 #define SYS_MGMT_CTRL_ERR           (0x04)
 #define RESET_HANG_ERR              (0x02)
-#define DF_DUMP_RESERVED            (11571)
+#define DF_DUMP_RESERVED            (11535)
 #define MAX_ERROR_FILE              (10)
 #define LAST_TRANS_ADDR_OFFSET      (4)
 #define PCIE_DUMP_OFFSET            (49)
@@ -27,7 +27,7 @@
  * CPER section descriptor revision, used in revision field in struct
  * cper_section_descriptor
  */
-#define CPER_MINOR_REV                (0x0002)
+#define CPER_MINOR_REV                (0x0003)
 
 #define ADDC_GEN_NUMBER_1             (0x01)
 #define ADDC_GEN_NUMBER_2             (0x02)
