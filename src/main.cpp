@@ -40,6 +40,7 @@ extern "C" {
 }
 
 #define COMMAND_NUM_OF_CPU  ("/sbin/fw_printenv -n num_of_cpu")
+#define COMMAND_BOARD_ID    ("/sbin/fw_printenv -n board_id")
 #define COMMAND_LEN         (3)
 #define MAX_MCA_BANKS       (32)
 #define TWO_SOCKET          (2)
@@ -199,6 +200,30 @@ bool getNumberOfCpu()
     }
 
     return ret;
+}
+
+void getBoardID()
+{
+    FILE *pf;
+    char data[COMMAND_LEN];
+    std::stringstream ss;
+
+    // Setup pipe for reading and execute to get u-boot environment
+    // variable board_id.
+    pf = popen(COMMAND_BOARD_ID,"r");
+    // Error handling
+    if(pf)
+    {
+        // Get the data from the process execution
+        if (fgets(data, COMMAND_LEN, pf))
+        {
+            ss << std::hex << (std::string)data;
+            ss >> board_id;
+            sd_journal_print(LOG_DEBUG, "Board ID: 0x%x, Board ID String: %s\n", board_id, data);
+        }
+        // the data is now in 'data'
+        pclose(pf);
+    }
 }
 
 void getCpuID()
@@ -1236,7 +1261,7 @@ bool harvest_ras_errors(uint8_t info,std::string alert_name)
             // Clear RAS status register
             // 0x4c is a SB-RMI register acting as write to clear
             // check PPR to determine whether potential bug in PPR or in implementation of SMU?
-            write_register(info, RAS_STATUS_REGISTER, 1);
+            write_register(info, RAS_STATUS_REGISTER, buf);
 
             if(FchHangError == true)
             {
@@ -1391,6 +1416,7 @@ int main() {
     }
 
     getCpuID();
+    getBoardID();
 
     if (stat(kRasDir.data(), &buffer) != 0) {
         dir = mkdir(kRasDir.data(), 0777);
