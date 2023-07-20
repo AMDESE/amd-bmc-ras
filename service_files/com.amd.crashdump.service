@@ -7,6 +7,9 @@ ExecStart=/usr/bin/amd-ras
 SyslogIdentifier=amd-ras
 Type=dbus
 BusName=com.amd.crashdump
+Restart=always
+TimeoutStartSec=infinity
+ExecStartPre=/bin/sleep 5
 
 [Install]
 WantedBy=multi-user.target
