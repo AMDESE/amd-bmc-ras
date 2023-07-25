@@ -8,7 +8,7 @@
 struct proc_info_section {
     uint64_t               ValidBits;
     uint64_t               CPUAPICId;
-    uint32_t               CpuId[12];
+    uint32_t               CpuId[INDEX_12];
 } __attribute__((packed));
 
 struct processor_error_info {
@@ -62,8 +62,8 @@ struct pcie_error_section {
     device_id              DeviceId;
     uint64_t               DeviceSerialNumber;
     uint32_t               BridgeControlStatus;
-    uint8_t                Capability[60];
-    uint32_t               AerInfo[24];
+    uint8_t                Capability[INDEX_60];
+    uint32_t               AerInfo[INDEX_24];
 }__attribute__((packed));
 
 struct proc_runtime_err_record {

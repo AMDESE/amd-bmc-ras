@@ -23,7 +23,7 @@ add_definitions(-DDBUS_INTF_NAME="${DBUS_INTF_NAME}")
 set(SRC_FILES src/main.cpp 
               src/runtime_errors.cpp 
               src/write_cper_data.cpp 
-              src/dbus.cpp
+              src/dbus_ras.cpp
               src/fatal_error.cpp
               src/Config.cpp )
 
