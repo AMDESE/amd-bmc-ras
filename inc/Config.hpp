@@ -22,6 +22,7 @@ private:
     static std::vector<std::string> sigIDOffset;
 
 public:
+    Configuration();
     static void setApmlRetryCount(uint16_t);
     static uint16_t getApmlRetryCount();
 

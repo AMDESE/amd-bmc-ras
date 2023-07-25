@@ -91,12 +91,15 @@
 #define INDEX_19                        (19)
 #define INDEX_20                        (20)
 #define INDEX_23                        (23)
+#define INDEX_24                        (24)
 #define INDEX_32                        (32)
 #define INDEX_44                        (44)
 #define INDEX_57                        (57)
+#define INDEX_60                        (60)
 #define INDEX_61                        (61)
 #define INDEX_62                        (62)
 #define BASE_16                         (16)
+#define RESERVE_96                      (96)
 
 typedef struct {
   unsigned char b[16];
@@ -189,7 +192,7 @@ struct error_section_descriptor {
   GUID_T                             SectionType;
   uint64_t                           FRUId[INDEX_2];
   uint32_t                           Severity;
-  char                               FRUText[20];
+  char                               FRUText[INDEX_20];
 } __attribute__((packed));
 
 typedef struct error_section_descriptor ERROR_SECTION_DESCRIPTOR;
@@ -197,7 +200,7 @@ typedef struct error_section_descriptor ERROR_SECTION_DESCRIPTOR;
 struct processor_error_section {
   uint64_t                           ValidBits;
   uint64_t                           CPUAPICId;
-  uint32_t                           CpuId[12];
+  uint32_t                           CpuId[INDEX_12];
   uint32_t                           SignatureID[INDEX_8];
   uint32_t                           Reserved[INDEX_8];
 } __attribute__((packed));
@@ -217,7 +220,7 @@ struct context_info {
   uint64_t                           Ppin;
   CRASHDUMP_T                        CrashDumpData[GENOA_MCA_BANKS];
   DF_DUMP                            DfDumpData;
-  uint32_t                           Reserved[96];
+  uint32_t                           Reserved[RESERVE_96];
   uint32_t                           DebugLogIdData[DEUB_LOG_DUMP_REGION];
 } __attribute__((packed));
 
