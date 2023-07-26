@@ -20,7 +20,13 @@ set(DBUS_INTF_NAME "com.amd.crashdump")
 add_definitions(-DDBUS_OBJECT_NAME="/${DBUS_OBJECT_NAME}")
 add_definitions(-DDBUS_ENTRY_NAME="/${DBUS_ENTRY_NAME}")
 add_definitions(-DDBUS_INTF_NAME="${DBUS_INTF_NAME}")
-set(SRC_FILES src/main.cpp )
+set(SRC_FILES src/main.cpp 
+              src/runtime_errors.cpp 
+              src/write_cper_data.cpp 
+              src/dbus_ras.cpp
+              src/fatal_error.cpp
+              src/Config.cpp )
+
 set ( SERVICE_FILES
     service_files/com.amd.crashdump.service )
 
