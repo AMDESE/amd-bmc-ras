@@ -155,8 +155,6 @@ extern boost::asio::deadline_timer *PcieAerErrorPollingEvent;
 extern uint8_t p0_info;
 extern uint8_t p1_info;
 extern int num_of_proc;
-extern bool TurinPlatform;
-extern bool GenoaPlatform;
 
 extern unsigned int board_id;
 extern uint64_t RecordId;
