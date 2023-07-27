@@ -63,9 +63,6 @@ uint64_t p1_ppin = 0;
 uint64_t p0_last_transact_addr = 0;
 uint64_t p1_last_transact_addr = 0;
 
-bool TurinPlatform = false;
-bool GenoaPlatform = false;
-
 std::vector<uint8_t> BlockId;
 uint8_t ProgId = 0;
 bool apmlInitialized = false;
