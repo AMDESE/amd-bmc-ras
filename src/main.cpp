@@ -549,14 +549,14 @@ int main()
 
     struct stat buffer;
 
-    if(PlatformInitialization() == false)
-    {
-        return false;
-    }
-
     if(getNumberOfCpu() == false)
     {
         sd_journal_print(LOG_ERR, "Could not find number of CPU's of the platform\n");
+        return false;
+    }
+
+    if(PlatformInitialization() == false)
+    {
         return false;
     }
 
