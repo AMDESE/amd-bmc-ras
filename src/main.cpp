@@ -300,11 +300,31 @@ void CreateConfigFile()
 
         jsonConfig["sigIDOffset"] = Configuration::getSigIDOffset();
 
+        std::vector<std::pair<std::string, std::string>> P0_DimmLabels =
+                                Configuration::getAllP0_DimmLabels();
+
+        std::vector<std::pair<std::string, std::string>> P1_DimmLabels =
+                                Configuration::getAllP1_DimmLabels();
+
+		nlohmann::json jsonP0_DimmLabel;
+
+        for (const auto& pair : P0_DimmLabels) {
+            jsonP0_DimmLabel[pair.first] = pair.second;
+        }
+        jsonConfig["P0_DIMM_LABELS"] = jsonP0_DimmLabel;
+
+        nlohmann::json jsonP1_DimmLabel;
+
+        for (const auto& pair : P1_DimmLabels) {
+            jsonP1_DimmLabel[pair.first] = pair.second;
+        }
+        jsonConfig["P1_DIMM_LABELS"] = jsonP1_DimmLabel;
+
         jsonConfig["McaPollingEn"] = true;
         jsonConfig["McaPollingPeriod"] = MCA_POLLING_PERIOD;
         jsonConfig["DramCeccPollingEn"] = true;
         jsonConfig["DramCeccPollingPeriod"] = DRAM_CECC_POLLING_PERIOD;
-        jsonConfig["PcieAerPollingEn"] = true;
+        jsonConfig["PcieAerPollingEn"] = false;
         jsonConfig["PcieAerPollingPeriod"] = PCIE_AER_POLLING_PERIOD;
 
         jsonConfig["McaThresholdEn"] = false;
@@ -341,6 +361,28 @@ void CreateConfigFile()
     Configuration::setDramCeccErrCounter(data["DramCeccErrCounter"]);
     Configuration::setPcieAerThresholdEn(data["PcieAerThresholdEn"]);
     Configuration::setPcieAerErrCounter(data["PcieAerErrCounter"]);
+
+    if (data.contains("P0_DIMM_LABELS"))
+    {
+        nlohmann::json P0_DimmlabelsData = data["P0_DIMM_LABELS"];
+        for (nlohmann::json::iterator it = P0_DimmlabelsData.begin(); it != P0_DimmlabelsData.end(); ++it)
+        {
+            std::string key = it.key();
+            std::string value = it.value();
+            Configuration::setP0_DimmLabels(key, value);
+        }
+    }
+
+    if (data.contains("P1_DIMM_LABELS"))
+    {
+        nlohmann::json P1_DimmlabelsData = data["P1_DIMM_LABELS"];
+        for (nlohmann::json::iterator it = P1_DimmlabelsData.begin(); it != P1_DimmlabelsData.end(); ++it)
+        {
+            std::string key = it.key();
+            std::string value = it.value();
+            Configuration::setP1_DimmLabels(key, value);
+        }
+    }
 
     jsonRead.close();
 }
