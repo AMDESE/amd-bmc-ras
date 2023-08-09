@@ -18,6 +18,281 @@ void dump_pcie_error_info_section(const std::shared_ptr<T>& data,
     }
 }
 
+std::string FindDimmFruText(uint8_t soc_num, uint8_t UMCInstance,uint8_t DimmNumber)
+{
+    std::map<int, char> dimmPairSequence = {
+        {0, 'C'},
+        {1, 'E'},
+        {2, 'F'},
+        {3, 'A'},
+        {4, 'B'},
+        {5, 'D'},
+        {6, 'I'},
+        {7, 'K'},
+        {8, 'L'},
+        {9, 'G'},
+        {10,'H'},
+        {11,'J'}
+    };
+
+    char Channel;
+    auto it = dimmPairSequence.find(UMCInstance);
+    if (it != dimmPairSequence.end()) {
+        Channel = it->second;
+    }
+
+    int DimmIdentifier = soc_num * 1000 + (Channel - 'A') * 10 + DimmNumber;
+    std::string FruText = "";
+
+    switch(DimmIdentifier)
+    {
+        /*SOC 0, Channel 'A',DIMM Number 0*/
+        case 0:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_A");
+            break;
+
+        /*SOC 0, Channel 'A',DIMM Number 1*/
+        case 1:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_A1");
+            break;
+
+        /*SOC 0, Channel 'B',DIMM Number 0*/
+        case 10:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_B");
+            break;
+
+        /*SOC 0, Channel 'B',DIMM Number 1*/
+        case 11:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_B1");
+            break;
+
+        /*SOC 0, Channel 'C',DIMM Number 0*/
+        case 20:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_C");
+            break;
+
+        /*SOC 0, Channel 'C',DIMM Number 1*/
+        case 21:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_C1");
+            break;
+
+        /*SOC 0, Channel 'D',DIMM Number 0*/
+        case 30:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_D");
+            break;
+
+        /*SOC 0, Channel 'D',DIMM Number 1*/
+        case 31:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_D1");
+            break;
+
+        /*SOC 0, Channel 'E',DIMM Number 0*/
+        case 40:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_E");
+            break;
+
+        /*SOC 0, Channel 'E',DIMM Number 1*/
+        case 41:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_E1");
+            break;
+
+        /*SOC 0, Channel 'F',DIMM Number 0*/
+        case 50:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_F");
+            break;
+
+        /*SOC 0, Channel 'F',DIMM Number 1*/
+        case 51:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_F1");
+            break;
+
+        /*SOC 0, Channel 'G',DIMM Number 0*/
+        case 60:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_G");
+            break;
+
+        /*SOC 0, Channel 'G',DIMM Number 1*/
+        case 61:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_G1");
+            break;
+
+        /*SOC 0, Channel 'H',DIMM Number 0*/
+        case 70:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_H");
+            break;
+
+        /*SOC 0, Channel 'H',DIMM Number 1*/
+        case 71:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_H1");
+            break;
+
+        /*SOC 0, Channel 'I',DIMM Number 0*/
+        case 80:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_I");
+            break;
+
+        /*SOC 0, Channel 'I',DIMM Number 1*/
+        case 81:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_I1");
+            break;
+
+        /*SOC 0, Channel 'J',DIMM Number 0*/
+        case 90:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_J");
+            break;
+
+        /*SOC 0, Channel 'J',DIMM Number 1*/
+        case 91:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_J1");
+            break;
+
+        /*SOC 0, Channel 'K',DIMM Number 0*/
+        case 100:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_K");
+            break;
+
+        /*SOC 0, Channel 'K',DIMM Number 1*/
+        case 101:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_K1");
+            break;
+
+        /*SOC 0, Channel 'L',DIMM Number 0*/
+        case 110:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_L");
+            break;
+
+        /*SOC 0, Channel 'L',DIMM Number 1*/
+        case 111:
+            FruText = Configuration::getP0_DimmLabels("P0_DIMM_L1");
+            break;
+
+
+        /*SOC 1, Channel 'A',DIMM Number 0*/
+        case 1000:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_A");
+            break;
+
+        /*SOC 1, Channel 'A',DIMM Number 1*/
+        case 1001:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_A1");
+            break;
+
+        /*SOC 1, Channel 'B',DIMM Number 0*/
+        case 1010:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_B");
+            break;
+
+        /*SOC 1, Channel 'B',DIMM Number 1*/
+        case 1011:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_B1");
+            break;
+
+        /*SOC 1, Channel 'C',DIMM Number 0*/
+        case 1020:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_C");
+            break;
+
+        /*SOC 1, Channel 'C',DIMM Number 1*/
+        case 1021:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_C1");
+            break;
+
+        /*SOC 1, Channel 'D',DIMM Number 0*/
+        case 1030:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_D");
+            break;
+
+        /*SOC 1, Channel 'D',DIMM Number 1*/
+        case 1031:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_D1");
+            break;
+
+        /*SOC 1, Channel 'E',DIMM Number 0*/
+        case 1040:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_E");
+            break;
+
+        /*SOC 1, Channel 'E',DIMM Number 1*/
+        case 1041:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_E1");
+            break;
+
+        /*SOC 1, Channel 'F',DIMM Number 0*/
+        case 1050:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_F");
+            break;
+
+        /*SOC 1, Channel 'F',DIMM Number 1*/
+        case 1051:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_F1");
+            break;
+
+        /*SOC 1, Channel 'G',DIMM Number 0*/
+        case 1060:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_G");
+            break;
+
+        /*SOC 1, Channel 'G',DIMM Number 1*/
+        case 1061:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_G1");
+            break;
+
+        /*SOC 1, Channel 'H',DIMM Number 0*/
+        case 1070:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_H");
+            break;
+
+        /*SOC 1, Channel 'H',DIMM Number 1*/
+        case 1071:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_H1");
+            break;
+
+        /*SOC 1, Channel 'I',DIMM Number 0*/
+        case 1080:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_I");
+            break;
+
+        /*SOC 1, Channel 'I',DIMM Number 1*/
+        case 1081:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_I1");
+            break;
+
+        /*SOC 1, Channel 'J',DIMM Number 0*/
+        case 1090:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_J");
+            break;
+
+        /*SOC 1, Channel 'J',DIMM Number 1*/
+        case 1091:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_J1");
+            break;
+
+        /*SOC 1, Channel 'K',DIMM Number 0*/
+        case 1100:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_K");
+            break;
+
+        /*SOC 1, Channel 'K',DIMM Number 1*/
+        case 1101:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_K1");
+            break;
+
+        /*SOC 1, Channel 'L',DIMM Number 0*/
+        case 1110:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_L");
+            break;
+
+        /*SOC 1, Channel 'L',DIMM Number 1*/
+        case 1111:
+            FruText = Configuration::getP1_DimmLabels("P1_DIMM_L1");
+            break;
+
+        default:
+            break;
+    }
+    return FruText;
+}
+
 template<typename T>
 void dump_proc_error_section(const std::shared_ptr<T>& data,uint8_t soc_num,
             struct ras_rt_valid_err_inst inst,uint8_t category,uint16_t Section,uint32_t *Severity,uint64_t *CheckInfo)
@@ -53,6 +328,9 @@ void dump_proc_error_section(const std::shared_ptr<T>& data,uint8_t soc_num,
         }
 
         int DumpIndex = 0;
+        uint32_t mca_ipid_lo_register = 0;
+        uint32_t mca_ipid_hi_register = 0;
+        uint32_t mca_synd_lo_register = 0;
 
         for (; offset < inst.number_bytes; offset = offset+INDEX_4)
         {
@@ -105,10 +383,40 @@ void dump_proc_error_section(const std::shared_ptr<T>& data,uint8_t soc_num,
                 if(d_in.offset == INDEX_8)
                 {
                     mca_status_register = mca_status_register | ((uint64_t) d_out);
-                }
+               }
                 else if(d_in.offset == INDEX_12)
                 {
                     mca_status_register = ((uint64_t)d_out << INDEX_32) | mca_status_register;
+                }
+                if(category == MCA_ERR)
+                {
+                    if(d_in.offset == INDEX_40)
+                    {
+                        mca_ipid_lo_register = d_out;
+                    }
+                    if(d_in.offset == INDEX_44)
+                    {
+                        mca_ipid_hi_register = d_out;
+                    }
+                    if(d_in.offset == INDEX_30)
+                    {
+                        mca_synd_lo_register = d_out;
+                    }
+                }
+                if(category == DRAM_CECC_ERR)
+                {
+                    if(d_in.offset == INDEX_44)
+                    {
+                        mca_ipid_lo_register = d_out;
+                    }
+                    if(d_in.offset == INDEX_48)
+                    {
+                        mca_ipid_hi_register = d_out;
+                    }
+                    if(d_in.offset == INDEX_34)
+                    {
+                        mca_synd_lo_register = d_out;
+                    }
                 }
             } else if(PciePtr)
             {
@@ -132,6 +440,22 @@ void dump_proc_error_section(const std::shared_ptr<T>& data,uint8_t soc_num,
                    ((mca_status_register & (1ULL << INDEX_57)) == 0)) {
                 Severity[Section] = SEV_NON_FATAL_UNCORRECTED;
             }
+
+                /*Calculate HwID from MCA_IPID_HI register*/
+                uint32_t UmcHwId = mca_ipid_hi_register & MASK_11_TO_0;
+
+                if(UmcHwId == TURIN_UMC_HW_ID)
+                {
+                    /*Find UMC Instance*/
+                    uint8_t UMCInstance = static_cast<uint8_t>((mca_ipid_lo_register >> INDEX_20) & MASK_0X0F);
+
+                    uint8_t DimmNumber = static_cast<uint8_t>(mca_ipid_lo_register & INDEX_7);
+
+                    std::string FruText = FindDimmFruText(soc_num,UMCInstance,DimmNumber);
+
+                    strncpy(ProcPtr->SectionDescriptor[Section].FRUText,FruText.c_str(),INDEX_20);
+                }
+
         }
         else if(category = PCIE_ERR)
         {
@@ -225,13 +549,20 @@ void dump_error_descriptor_section(const std::shared_ptr<T>& data,uint16_t Secti
             data->SectionDescriptor[i].SectionType = PROC_ERR_SECTION_TYPE;
             data->SectionDescriptor[i].Severity = Severity[i];
 
-            if(ErrorType == RUNTIME_MCA_ERR)
+            if(strcasecmp(data->SectionDescriptor[i].FRUText,"null") == INDEX_0)
             {
-                std::strcpy(data->SectionDescriptor[i].FRUText,"ProcessorError");
+                std::strcpy(data->SectionDescriptor[i].FRUText,"MemoryError");
             }
-            if(ErrorType == RUNTIME_DRAM_ERR)
+            else if(data->SectionDescriptor[i].FRUText[INDEX_0] == '\0')
             {
-                std::strcpy(data->SectionDescriptor[i].FRUText,"DramCeccError");
+                if(ErrorType == RUNTIME_MCA_ERR)
+                {
+                    std::strcpy(data->SectionDescriptor[i].FRUText,"ProcessorError");
+                }
+                else if(ErrorType == RUNTIME_DRAM_ERR)
+                {
+                    std::strcpy(data->SectionDescriptor[i].FRUText,"DramCeccError");
+                }
             }
         }
         else if(ErrorType == RUNTIME_PCIE_ERR)
@@ -373,6 +704,9 @@ template<typename T>
 void write_to_cper_file(const std::shared_ptr<T>& data,std::string ErrorType,uint16_t SectionCount )
 {
 
+    static std::mutex index_file_mtx;
+    std::unique_lock lock(index_file_mtx);
+
     std::string cperFileName;
     FILE *file;
 
@@ -415,10 +749,43 @@ void write_to_cper_file(const std::shared_ptr<T>& data,std::string ErrorType,uin
         cperFileName = "pcie-runtime-" + cperFileName;
     }
 
-    static std::mutex index_file_mtx;
-    std::unique_lock lock(index_file_mtx);
-
     std::string cperFilePath = kRasDir.data() + cperFileName;
+
+    file = fopen(cperFilePath.c_str(), "w");
+
+    if((ErrorType == RUNTIME_MCA_ERR) || (ErrorType == RUNTIME_DRAM_ERR))
+    {
+        if ((ProcPtr) && (file != NULL)) {
+            sd_journal_print(LOG_INFO, "Generating CPER file\n");
+
+            fwrite(&ProcPtr->Header,sizeof(common_error_record_header),1,file);
+
+            fwrite(ProcPtr->SectionDescriptor,sizeof(error_section_descriptor) * SectionCount,1,file);
+
+            fwrite(ProcPtr->ProcErrorSection,sizeof(proc_error_section) * SectionCount,1,file);
+
+            exportCrashdumpToDBus(err_count,ProcPtr->Header.TimeStamp);
+        }
+    }else if(ErrorType == FATAL_ERR)
+    {
+        if ((FatalPtr) && (file != NULL)) {
+            sd_journal_print(LOG_INFO, "Generating CPER file for the fatal error\n");
+
+            fwrite(FatalPtr.get(), FatalPtr->Header.RecordLength, 1, file);
+
+            exportCrashdumpToDBus(err_count,FatalPtr->Header.TimeStamp);
+        }
+    }
+    else if(ErrorType == RUNTIME_PCIE_ERR)
+    {
+        sd_journal_print(LOG_INFO, "Generating CPER file for the PCIE error\n");
+        fwrite(&PciePtr->Header,sizeof(common_error_record_header),1,file);
+        fwrite(PciePtr->SectionDescriptor,sizeof(error_section_descriptor) * SectionCount,1,file);
+        fwrite(PciePtr->PcieErrorSection,sizeof(pcie_error_section) * SectionCount,1,file);
+        exportCrashdumpToDBus(err_count,PciePtr->Header.TimeStamp);
+    }
+    fclose(file);
+
     err_count++;
 
     if(err_count >= MAX_ERROR_FILE)
@@ -434,42 +801,8 @@ void write_to_cper_file(const std::shared_ptr<T>& data,std::string ErrorType,uin
         fprintf(file,"%d",err_count);
         fclose(file);
     }
+
     lock.unlock();
-
-    file = fopen(cperFilePath.c_str(), "w");
-
-    if((ErrorType == RUNTIME_MCA_ERR) || (ErrorType == RUNTIME_DRAM_ERR))
-    {
-        if ((ProcPtr) && (file != NULL)) {
-            sd_journal_print(LOG_INFO, "Generating CPER file\n");
-
-            fwrite(&ProcPtr->Header,sizeof(common_error_record_header),1,file);
-
-            fwrite(ProcPtr->SectionDescriptor,sizeof(error_section_descriptor) * SectionCount,1,file);
-
-            fwrite(ProcPtr->ProcErrorSection,sizeof(proc_error_section) * SectionCount,1,file);
-
-            exportCrashdumpToDBus(err_count-1,ProcPtr->Header.TimeStamp);
-        }
-    }else if(ErrorType == FATAL_ERR)
-    {
-        if ((FatalPtr) && (file != NULL)) {
-            sd_journal_print(LOG_INFO, "Generating CPER file for the fatal error\n");
-
-            fwrite(FatalPtr.get(), FatalPtr->Header.RecordLength, 1, file);
-
-            exportCrashdumpToDBus(err_count-1,FatalPtr->Header.TimeStamp);
-        }
-    }
-    else if(ErrorType == RUNTIME_PCIE_ERR)
-    {
-        sd_journal_print(LOG_INFO, "Generating CPER file for the PCIE error\n");
-        fwrite(&PciePtr->Header,sizeof(common_error_record_header),1,file);
-        fwrite(PciePtr->SectionDescriptor,sizeof(error_section_descriptor) * SectionCount,1,file);
-        fwrite(PciePtr->PcieErrorSection,sizeof(pcie_error_section) * SectionCount,1,file);
-        exportCrashdumpToDBus(err_count-1,PciePtr->Header.TimeStamp);
-    }
-    fclose(file);
 }
 
 /*explicitly instantiate the template function for each type*/
