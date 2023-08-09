@@ -30,6 +30,8 @@
 #include <nlohmann/json.hpp>
 #include <experimental/filesystem>
 #include <cstdlib>
+#include <algorithm>
+#include <cctype>
 #include "cper.hpp"
 
 extern "C" {
@@ -98,6 +100,9 @@ extern "C" {
 
 #define MI300A_MODEL_NUMBER (0x90)
 #define MI300C_MODEL_NUMBER (0x80)
+#define TURIN_UMC_HW_ID     (0x96)
+#define MASK_11_TO_0        (0xFFF)
+#define MASK_0X0F           (0x0F)
 
 void RunTimeErrorPolling();
 oob_status_t SetOobConfig();
