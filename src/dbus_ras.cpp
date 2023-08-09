@@ -35,7 +35,19 @@ template <typename T> void updateConfigFile(std::string jsonField, T updateData)
     std::ifstream jsonRead(config_file);
     nlohmann::json data = nlohmann::json::parse(jsonRead);
 
-    data[jsonField] = updateData;
+    if constexpr (std::is_same_v<T, std::vector<std::pair<std::string, std::string>>>)
+    {
+        nlohmann::json obj;
+        for (const auto& pair : updateData)
+        {
+            obj[pair.first] = pair.second;
+        }
+        data[jsonField] = obj;
+    }
+    else
+    {
+        data[jsonField] = updateData;
+    }
 
     std::ofstream jsonWrite(config_file);
     jsonWrite << data;
@@ -61,6 +73,7 @@ std::string findCperFilename(int number)
 }
 
 void exportCrashdumpToDBus(int num,const ERROR_TIME_STAMP& TimeStampStr) {
+
     if (num < 0 || num >= MAX_ERROR_FILE) {
         sd_journal_print(LOG_ERR, "Crashdump only allows index 0~9\n");
         return;
@@ -183,6 +196,50 @@ void CreateDbusInterface()
             return 1;
         });
 
+    std::vector<std::pair<std::string, std::string>> P0_DimmLabels = Configuration::getAllP0_DimmLabels();
+    configIface->register_property("P0_DIMM_LABELS", P0_DimmLabels,
+        [](const std::vector<std::pair<std::string, std::string>>& requested,
+                 std::vector<std::pair<std::string, std::string>>& resp)
+        {
+            for (const auto& keyValuePair : requested) {
+                const std::string& key = keyValuePair.first;
+                const std::string& value = keyValuePair.second;
+
+                for (auto& pair : resp) {
+                    if (pair.first == key) {
+                        pair.second = value;
+                        break;
+                    }
+                }
+            }
+
+            Configuration::setAllP0_DimmLabels(resp);
+            updateConfigFile("P0_DIMM_LABELS",resp);
+            return 1;
+        });
+
+    std::vector<std::pair<std::string, std::string>> P1_DimmLabels = Configuration::getAllP1_DimmLabels();
+    configIface->register_property("P1_DIMM_LABELS", P1_DimmLabels,
+        [](const std::vector<std::pair<std::string, std::string>>& requested,
+                 std::vector<std::pair<std::string, std::string>>& resp)
+        {
+            for (const auto& keyValuePair : requested) {
+                const std::string& key = keyValuePair.first;
+                const std::string& value = keyValuePair.second;
+
+                for (auto& pair : resp) {
+                    if (pair.first == key) {
+                        pair.second = value;
+                        break;
+                    }
+                }
+            }
+
+            Configuration::setAllP1_DimmLabels(resp);
+            updateConfigFile("P1_DIMM_LABELS",resp);
+            return 1;
+        });
+
     bool McaPollingEn = Configuration::getMcaPollingEn();
     configIface->register_property("McaPollingEn", McaPollingEn,
     [](const bool& requested, bool& resp)
@@ -244,7 +301,7 @@ void CreateDbusInterface()
         });
 
     uint16_t McaPollingPeriod = Configuration::getMcaPollingPeriod();
-    configIface->register_property("McaPollingPriod", McaPollingPeriod,
+    configIface->register_property("McaPollingPeriod", McaPollingPeriod,
         [](const uint16_t& requested, uint16_t& resp)
         {
             resp = requested;
