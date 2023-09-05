@@ -16,63 +16,28 @@ uint16_t Configuration::PcieAerPollingPeriod;
 uint16_t Configuration::McaErrCounter;
 uint16_t Configuration::DramCeccErrCounter;
 uint16_t Configuration::PcieAerErrCounter;
-std::vector<std::string> Configuration::sigIDOffset = {"0x30","0x34","0x28","0x2c","0x08","0x0c","null","null"};
+std::vector<std::string> Configuration::sigIDOffset = {
+    "0x30", "0x34", "0x28", "0x2c", "0x08", "0x0c", "null", "null"};
 
 std::vector<std::pair<std::string, std::string>> Configuration::P0_DimmLabels =
-{
-    {"P0_DIMM_A", "null"},
-    {"P0_DIMM_A1", "null"},
-    {"P0_DIMM_B", "null"},
-    {"P0_DIMM_B1", "null"},
-    {"P0_DIMM_C", "null"},
-    {"P0_DIMM_C1", "null"},
-    {"P0_DIMM_D", "null"},
-    {"P0_DIMM_D1", "null"},
-    {"P0_DIMM_E", "null"},
-    {"P0_DIMM_E1", "null"},
-    {"P0_DIMM_F", "null"},
-    {"P0_DIMM_F1", "null"},
-    {"P0_DIMM_G", "null"},
-    {"P0_DIMM_G1", "null"},
-    {"P0_DIMM_H", "null"},
-    {"P0_DIMM_H1", "null"},
-    {"P0_DIMM_I", "null"},
-    {"P0_DIMM_I1", "null"},
-    {"P0_DIMM_J", "null"},
-    {"P0_DIMM_J1", "null"},
-    {"P0_DIMM_K", "null"},
-    {"P0_DIMM_K1", "null"},
-    {"P0_DIMM_L", "null"},
-    {"P0_DIMM_L1", "null"}
-};
+    {{"P0_DIMM_A", "null"},  {"P0_DIMM_A1", "null"}, {"P0_DIMM_B", "null"},
+     {"P0_DIMM_B1", "null"}, {"P0_DIMM_C", "null"},  {"P0_DIMM_C1", "null"},
+     {"P0_DIMM_D", "null"},  {"P0_DIMM_D1", "null"}, {"P0_DIMM_E", "null"},
+     {"P0_DIMM_E1", "null"}, {"P0_DIMM_F", "null"},  {"P0_DIMM_F1", "null"},
+     {"P0_DIMM_G", "null"},  {"P0_DIMM_G1", "null"}, {"P0_DIMM_H", "null"},
+     {"P0_DIMM_H1", "null"}, {"P0_DIMM_I", "null"},  {"P0_DIMM_I1", "null"},
+     {"P0_DIMM_J", "null"},  {"P0_DIMM_J1", "null"}, {"P0_DIMM_K", "null"},
+     {"P0_DIMM_K1", "null"}, {"P0_DIMM_L", "null"},  {"P0_DIMM_L1", "null"}};
 
 std::vector<std::pair<std::string, std::string>> Configuration::P1_DimmLabels =
-{
-    {"P1_DIMM_A", "null"},
-    {"P1_DIMM_A1", "null"},
-    {"P1_DIMM_B", "null"},
-    {"P1_DIMM_B1", "null"},
-    {"P1_DIMM_C", "null"},
-    {"P1_DIMM_C1", "null"},
-    {"P1_DIMM_D", "null"},
-    {"P1_DIMM_D1", "null"},
-    {"P1_DIMM_E", "null"},
-    {"P1_DIMM_E1", "null"},
-    {"P1_DIMM_F", "null"},
-    {"P1_DIMM_F1", "null"},
-    {"P1_DIMM_G", "null"},
-    {"P1_DIMM_G1", "null"},
-    {"P1_DIMM_H", "null"},
-    {"P1_DIMM_H1", "null"},
-    {"P1_DIMM_I", "null"},
-    {"P1_DIMM_I1", "null"},
-    {"P1_DIMM_J", "null"},
-    {"P1_DIMM_J1", "null"},
-    {"P1_DIMM_K", "null"},
-    {"P1_DIMM_K1", "null"},
-    {"P1_DIMM_L", "null"},
-    {"P1_DIMM_L1", "null"}
-};
+    {{"P1_DIMM_A", "null"},  {"P1_DIMM_A1", "null"}, {"P1_DIMM_B", "null"},
+     {"P1_DIMM_B1", "null"}, {"P1_DIMM_C", "null"},  {"P1_DIMM_C1", "null"},
+     {"P1_DIMM_D", "null"},  {"P1_DIMM_D1", "null"}, {"P1_DIMM_E", "null"},
+     {"P1_DIMM_E1", "null"}, {"P1_DIMM_F", "null"},  {"P1_DIMM_F1", "null"},
+     {"P1_DIMM_G", "null"},  {"P1_DIMM_G1", "null"}, {"P1_DIMM_H", "null"},
+     {"P1_DIMM_H1", "null"}, {"P1_DIMM_I", "null"},  {"P1_DIMM_I1", "null"},
+     {"P1_DIMM_J", "null"},  {"P1_DIMM_J1", "null"}, {"P1_DIMM_K", "null"},
+     {"P1_DIMM_K1", "null"}, {"P1_DIMM_L", "null"},  {"P1_DIMM_L1", "null"}};
 
 void Configuration::setApmlRetryCount(uint16_t value)
 {
@@ -188,7 +153,7 @@ void Configuration::setPcieAerPollingPeriod(uint16_t value)
 }
 uint16_t Configuration::getPcieAerPollingPeriod()
 {
-   return PcieAerPollingPeriod;
+    return PcieAerPollingPeriod;
 }
 
 void Configuration::setMcaErrCounter(uint16_t value)
@@ -230,8 +195,10 @@ std::vector<std::string> Configuration::getSigIDOffset()
 
 std::string Configuration::getP0_DimmLabels(const std::string& key)
 {
-    for (const auto& pair : P0_DimmLabels) {
-        if (pair.first == key) {
+    for (const auto& pair : P0_DimmLabels)
+    {
+        if (pair.first == key)
+        {
             return pair.second;
         }
     }
@@ -241,8 +208,10 @@ std::string Configuration::getP0_DimmLabels(const std::string& key)
 
 std::string Configuration::getP1_DimmLabels(const std::string& key)
 {
-    for (const auto& pair : P1_DimmLabels) {
-        if (pair.first == key) {
+    for (const auto& pair : P1_DimmLabels)
+    {
+        if (pair.first == key)
+        {
             return pair.second;
         }
     }
@@ -250,42 +219,52 @@ std::string Configuration::getP1_DimmLabels(const std::string& key)
     return "";
 }
 
-void Configuration::setP0_DimmLabels(const std::string& key, const std::string& value)
+void Configuration::setP0_DimmLabels(const std::string& key,
+                                     const std::string& value)
 {
-    for (auto& pair : P0_DimmLabels) {
-        if (pair.first == key) {
+    for (auto& pair : P0_DimmLabels)
+    {
+        if (pair.first == key)
+        {
             pair.second = value;
             return;
         }
     }
 }
 
-void Configuration::setP1_DimmLabels(const std::string& key, const std::string& value)
+void Configuration::setP1_DimmLabels(const std::string& key,
+                                     const std::string& value)
 {
-    for (auto& pair : P1_DimmLabels) {
-        if (pair.first == key) {
+    for (auto& pair : P1_DimmLabels)
+    {
+        if (pair.first == key)
+        {
             pair.second = value;
             return;
         }
     }
 }
 
-std::vector<std::pair<std::string, std::string>> Configuration::getAllP0_DimmLabels()
+std::vector<std::pair<std::string, std::string>>
+    Configuration::getAllP0_DimmLabels()
 {
     return P0_DimmLabels;
 }
 
-std::vector<std::pair<std::string, std::string>> Configuration::getAllP1_DimmLabels()
+std::vector<std::pair<std::string, std::string>>
+    Configuration::getAllP1_DimmLabels()
 {
     return P1_DimmLabels;
 }
 
-void Configuration::setAllP0_DimmLabels(std::vector<std::pair<std::string, std::string>> value)
+void Configuration::setAllP0_DimmLabels(
+    std::vector<std::pair<std::string, std::string>> value)
 {
     P0_DimmLabels = value;
 }
 
-void Configuration::setAllP1_DimmLabels(std::vector<std::pair<std::string, std::string>> value)
+void Configuration::setAllP1_DimmLabels(
+    std::vector<std::pair<std::string, std::string>> value)
 {
     P1_DimmLabels = value;
 }
