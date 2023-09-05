@@ -1,7 +1,7 @@
-#include "ras.hpp"
+#include "Config.hpp"
 #include "cper.hpp"
 #include "cper_runtime.hpp"
-#include "Config.hpp"
+#include "ras.hpp"
 
 std::shared_ptr<PROC_RUNTIME_ERR_RECORD> mca_ptr = nullptr;
 std::shared_ptr<PROC_RUNTIME_ERR_RECORD> dram_ptr = nullptr;
@@ -11,16 +11,20 @@ std::mutex mca_error_harvest_mtx;
 std::mutex dram_error_harvest_mtx;
 std::mutex pcie_error_harvest_mtx;
 
-oob_status_t RunTimeErrValidityCheck(uint8_t soc_num,uint32_t rt_err_category,struct ras_rt_valid_err_inst *inst)
+oob_status_t RunTimeErrValidityCheck(uint8_t soc_num, uint32_t rt_err_category,
+                                     struct ras_rt_valid_err_inst* inst)
 {
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
 
-    if(apmlInitialized == true)
+    if (apmlInitialized == true)
     {
         ret = get_bmc_ras_run_time_err_validity_ck(soc_num, rt_err_category,
-                           inst);
-        if (ret) {
-            sd_journal_print(LOG_DEBUG,"Failed to get bmc ras runtime error validity check\n");
+                                                   inst);
+        if (ret)
+        {
+            sd_journal_print(
+                LOG_DEBUG,
+                "Failed to get bmc ras runtime error validity check\n");
         }
     }
 
@@ -34,20 +38,21 @@ oob_status_t SetOobConfig()
 
     memset(&oob_config, 0, sizeof(oob_config));
 
-    if(Configuration::getMcaPollingEn() == true)
+    if (Configuration::getMcaPollingEn() == true)
     {
         /* Core MCA OOB Error Reporting Enable */
         oob_config.core_mca_err_reporting_en = ENABLE_BIT;
     }
 
-    if(Configuration::getDramCeccPollingEn() == true)
+    if (Configuration::getDramCeccPollingEn() == true)
     {
         /* DRAM CECC OOB Error Counter Mode */
         oob_config.core_mca_err_reporting_en = ENABLE_BIT;
-        oob_config.dram_cecc_oob_ec_mode = ENABLE_BIT; /*Enabled in No leak mode*/
+        oob_config.dram_cecc_oob_ec_mode =
+            ENABLE_BIT; /*Enabled in No leak mode*/
     }
 
-    if(Configuration::getPcieAerPollingEn() == true)
+    if (Configuration::getPcieAerPollingEn() == true)
     {
         /* PCIe OOB Error Reporting Enable */
         oob_config.pcie_err_reporting_en = ENABLE_BIT;
@@ -55,60 +60,68 @@ oob_status_t SetOobConfig()
 
     ret = set_bmc_ras_oob_config(p0_info, oob_config);
 
-    if (ret) {
-        sd_journal_print(LOG_ERR, "Failed to set ras oob configuration for Processor P0\n");
+    if (ret)
+    {
+        sd_journal_print(
+            LOG_ERR, "Failed to set ras oob configuration for Processor P0\n");
     }
 
-    if(num_of_proc == TWO_SOCKET)
+    if (num_of_proc == TWO_SOCKET)
     {
         ret = set_bmc_ras_oob_config(p1_info, oob_config);
 
-        if (ret) {
-            sd_journal_print(LOG_ERR, "Failed to set ras oob configuration for Processor P1\n");
+        if (ret)
+        {
+            sd_journal_print(
+                LOG_ERR,
+                "Failed to set ras oob configuration for Processor P1\n");
         }
     }
     return ret;
 }
 
-/*The function returns the highest severity out of all Section Severity for CPER header
-  Severity Order = Fatal > non-fatal uncorrected > corrected*/
-bool calculate_highest_severity(uint32_t* Severity,uint16_t SectionCount,
-                  uint32_t* HighestSeverity,std::string ErrorType)
+/*The function returns the highest severity out of all Section Severity for CPER
+  header Severity Order = Fatal > non-fatal uncorrected > corrected*/
+bool calculate_highest_severity(uint32_t* Severity, uint16_t SectionCount,
+                                uint32_t* HighestSeverity,
+                                std::string ErrorType)
 {
     bool rc = true;
     *HighestSeverity = SEV_NON_FATAL_CORRECTED;
 
-    for(int i = 0 ; i < SectionCount; i++)
+    for (int i = 0; i < SectionCount; i++)
     {
-        if(Severity[i] == CPER_SEV_FATAL)
+        if (Severity[i] == CPER_SEV_FATAL)
         {
-            if(ErrorType == RUNTIME_PCIE_ERR)
+            if (ErrorType == RUNTIME_PCIE_ERR)
             {
                 *HighestSeverity = CPER_SEV_FATAL;
-                 break;
+                break;
             }
             else
             {
-                sd_journal_print(LOG_ERR, "Error Severity is fatal. This must be captured in Crashdump CPER, not runtime CPER\n");
+                sd_journal_print(
+                    LOG_ERR, "Error Severity is fatal. This must be captured "
+                             "in Crashdump CPER, not runtime CPER\n");
                 rc = false;
             }
         }
-        else if(Severity[i] == SEV_NON_FATAL_UNCORRECTED)
+        else if (Severity[i] == SEV_NON_FATAL_UNCORRECTED)
         {
             *HighestSeverity = SEV_NON_FATAL_UNCORRECTED;
-             break;
+            break;
         }
     }
     return rc;
 }
 
-void harvest_runtime_errors(uint8_t ErrorPollingType, struct ras_rt_valid_err_inst p0_inst,
-                                           struct ras_rt_valid_err_inst p1_inst)
+void harvest_runtime_errors(uint8_t ErrorPollingType,
+                            struct ras_rt_valid_err_inst p0_inst,
+                            struct ras_rt_valid_err_inst p1_inst)
 {
 
-    uint8_t category;
-    uint32_t *Severity = nullptr;
-    uint64_t *CheckInfo = nullptr;
+    uint32_t* Severity = nullptr;
+    uint64_t* CheckInfo = nullptr;
     uint32_t HighestSeverity;
     uint32_t SectionDesSize = 0;
     uint32_t SectionSize = 0;
@@ -118,155 +131,185 @@ void harvest_runtime_errors(uint8_t ErrorPollingType, struct ras_rt_valid_err_in
     Severity = new uint32_t[SectionCount];
     CheckInfo = new uint64_t[SectionCount];
 
-    if(ErrorPollingType == MCA_ERR)
+    if (ErrorPollingType == MCA_ERR)
     {
         std::unique_lock lock(mca_error_harvest_mtx);
 
         mca_ptr->SectionDescriptor = new error_section_descriptor[SectionCount];
         SectionDesSize = sizeof(error_section_descriptor) * SectionCount;
-        memset(mca_ptr->SectionDescriptor, 0 , SectionDesSize);
+        memset(mca_ptr->SectionDescriptor, 0, SectionDesSize);
 
         mca_ptr->ProcErrorSection = new proc_error_section[SectionCount];
         SectionSize = sizeof(proc_error_section) * SectionCount;
-        memset(mca_ptr->ProcErrorSection, 0 , SectionSize);
+        memset(mca_ptr->ProcErrorSection, 0, SectionSize);
 
         uint16_t SectionStart = 0;
 
-        if(p0_inst.number_of_inst != 0)
+        if (p0_inst.number_of_inst != 0)
         {
-            dump_proc_error_section(mca_ptr,p0_info,p0_inst,MCA_ERR,SectionStart,Severity,CheckInfo);
+            dump_proc_error_section(mca_ptr, p0_info, p0_inst, MCA_ERR,
+                                    SectionStart, Severity, CheckInfo);
 
-            dump_proc_error_info_section(mca_ptr,p0_info,p0_inst.number_of_inst,CheckInfo,SectionStart);
+            dump_proc_error_info_section(mca_ptr, p0_info,
+                                         p0_inst.number_of_inst, CheckInfo,
+                                         SectionStart);
         }
-        if(p1_inst.number_of_inst != 0)
+        if (p1_inst.number_of_inst != 0)
         {
             SectionStart = SectionCount - p1_inst.number_of_inst;
 
-            dump_proc_error_section(mca_ptr,p1_info,p1_inst,MCA_ERR,SectionStart,Severity,CheckInfo);
+            dump_proc_error_section(mca_ptr, p1_info, p1_inst, MCA_ERR,
+                                    SectionStart, Severity, CheckInfo);
 
-            dump_proc_error_info_section(mca_ptr,p1_info,SectionCount,CheckInfo,SectionStart);
+            dump_proc_error_info_section(mca_ptr, p1_info, SectionCount,
+                                         CheckInfo, SectionStart);
         }
 
-        calculate_highest_severity(Severity,SectionCount,&HighestSeverity,RUNTIME_MCA_ERR);
+        calculate_highest_severity(Severity, SectionCount, &HighestSeverity,
+                                   RUNTIME_MCA_ERR);
 
-        dump_cper_header_section(mca_ptr, SectionCount, HighestSeverity, RUNTIME_MCA_ERR);
+        dump_cper_header_section(mca_ptr, SectionCount, HighestSeverity,
+                                 RUNTIME_MCA_ERR);
 
-        dump_error_descriptor_section(mca_ptr, SectionCount,RUNTIME_MCA_ERR,Severity);
+        dump_error_descriptor_section(mca_ptr, SectionCount, RUNTIME_MCA_ERR,
+                                      Severity);
 
-        write_to_cper_file(mca_ptr,RUNTIME_MCA_ERR,SectionCount);
+        write_to_cper_file(mca_ptr, RUNTIME_MCA_ERR, SectionCount);
 
-        if(mca_ptr->SectionDescriptor != nullptr) {
+        if (mca_ptr->SectionDescriptor != nullptr)
+        {
             delete[] mca_ptr->SectionDescriptor;
             mca_ptr->SectionDescriptor = nullptr;
         }
 
-        if(mca_ptr->ProcErrorSection != nullptr) {
+        if (mca_ptr->ProcErrorSection != nullptr)
+        {
             delete[] mca_ptr->ProcErrorSection;
             mca_ptr->ProcErrorSection = nullptr;
         }
     }
-    else if(ErrorPollingType == DRAM_CECC_ERR)
+    else if (ErrorPollingType == DRAM_CECC_ERR)
     {
         std::unique_lock lock(dram_error_harvest_mtx);
 
-        dram_ptr->SectionDescriptor = new error_section_descriptor[SectionCount];
+        dram_ptr->SectionDescriptor =
+            new error_section_descriptor[SectionCount];
         SectionDesSize = sizeof(error_section_descriptor) * SectionCount;
-        memset(dram_ptr->SectionDescriptor, 0 , SectionDesSize);
+        memset(dram_ptr->SectionDescriptor, 0, SectionDesSize);
 
         dram_ptr->ProcErrorSection = new proc_error_section[SectionCount];
         SectionSize = sizeof(proc_error_section) * SectionCount;
-        memset(dram_ptr->ProcErrorSection, 0 , SectionSize);
+        memset(dram_ptr->ProcErrorSection, 0, SectionSize);
 
         uint16_t SectionStart = 0;
 
-        if(p0_inst.number_of_inst != 0)
+        if (p0_inst.number_of_inst != 0)
         {
-            dump_proc_error_section(dram_ptr,p0_info,p0_inst,DRAM_CECC_ERR,SectionStart,Severity,CheckInfo);
+            dump_proc_error_section(dram_ptr, p0_info, p0_inst, DRAM_CECC_ERR,
+                                    SectionStart, Severity, CheckInfo);
 
-            dump_proc_error_info_section(dram_ptr,p0_info,p0_inst.number_of_inst,CheckInfo,SectionStart);
+            dump_proc_error_info_section(dram_ptr, p0_info,
+                                         p0_inst.number_of_inst, CheckInfo,
+                                         SectionStart);
         }
-        if(p1_inst.number_of_inst != 0)
+        if (p1_inst.number_of_inst != 0)
         {
             SectionStart = SectionCount - p1_inst.number_of_inst;
 
-            dump_proc_error_section(dram_ptr,p1_info,p1_inst,DRAM_CECC_ERR,SectionStart,Severity,CheckInfo);
+            dump_proc_error_section(dram_ptr, p1_info, p1_inst, DRAM_CECC_ERR,
+                                    SectionStart, Severity, CheckInfo);
 
-            dump_proc_error_info_section(dram_ptr,p1_info,SectionCount,CheckInfo,SectionStart);
+            dump_proc_error_info_section(dram_ptr, p1_info, SectionCount,
+                                         CheckInfo, SectionStart);
         }
 
-        calculate_highest_severity(Severity,SectionCount,&HighestSeverity,RUNTIME_DRAM_ERR);
+        calculate_highest_severity(Severity, SectionCount, &HighestSeverity,
+                                   RUNTIME_DRAM_ERR);
 
-        dump_cper_header_section(dram_ptr, SectionCount, HighestSeverity, RUNTIME_DRAM_ERR);
+        dump_cper_header_section(dram_ptr, SectionCount, HighestSeverity,
+                                 RUNTIME_DRAM_ERR);
 
-        dump_error_descriptor_section(dram_ptr, SectionCount,RUNTIME_DRAM_ERR,Severity);
+        dump_error_descriptor_section(dram_ptr, SectionCount, RUNTIME_DRAM_ERR,
+                                      Severity);
 
-        write_to_cper_file(dram_ptr,RUNTIME_DRAM_ERR,SectionCount);
+        write_to_cper_file(dram_ptr, RUNTIME_DRAM_ERR, SectionCount);
 
-        if(dram_ptr->SectionDescriptor != nullptr) {
+        if (dram_ptr->SectionDescriptor != nullptr)
+        {
             delete[] dram_ptr->SectionDescriptor;
             dram_ptr->SectionDescriptor = nullptr;
         }
 
-        if(dram_ptr->ProcErrorSection != nullptr) {
+        if (dram_ptr->ProcErrorSection != nullptr)
+        {
             delete[] dram_ptr->ProcErrorSection;
             dram_ptr->ProcErrorSection = nullptr;
         }
-
     }
-    else if(ErrorPollingType == PCIE_ERR)
+    else if (ErrorPollingType == PCIE_ERR)
     {
 
         std::unique_lock lock(pcie_error_harvest_mtx);
 
-        pcie_ptr->SectionDescriptor = new error_section_descriptor[SectionCount];
+        pcie_ptr->SectionDescriptor =
+            new error_section_descriptor[SectionCount];
         SectionDesSize = sizeof(error_section_descriptor) * SectionCount;
-        memset(pcie_ptr->SectionDescriptor, 0 , SectionDesSize);
+        memset(pcie_ptr->SectionDescriptor, 0, SectionDesSize);
 
         pcie_ptr->PcieErrorSection = new pcie_error_section[SectionCount];
         SectionSize = sizeof(pcie_error_section) * SectionCount;
-        memset(pcie_ptr->PcieErrorSection, 0 , SectionSize);
+        memset(pcie_ptr->PcieErrorSection, 0, SectionSize);
 
         uint16_t SectionStart = 0;
 
-        if(p0_inst.number_of_inst != 0)
+        if (p0_inst.number_of_inst != 0)
         {
-            dump_proc_error_section(pcie_ptr,p0_info,p0_inst,PCIE_ERR,SectionStart,Severity,CheckInfo);
-            dump_pcie_error_info_section(pcie_ptr,SectionStart,p0_inst.number_of_inst);
+            dump_proc_error_section(pcie_ptr, p0_info, p0_inst, PCIE_ERR,
+                                    SectionStart, Severity, CheckInfo);
+            dump_pcie_error_info_section(pcie_ptr, SectionStart,
+                                         p0_inst.number_of_inst);
         }
-        if(p1_inst.number_of_inst != 0)
+        if (p1_inst.number_of_inst != 0)
         {
             SectionStart = SectionCount - p1_inst.number_of_inst;
 
-            dump_proc_error_section(pcie_ptr,p1_info,p1_inst,PCIE_ERR,SectionStart,Severity,CheckInfo);
-            dump_pcie_error_info_section(pcie_ptr,SectionStart,SectionCount);
+            dump_proc_error_section(pcie_ptr, p1_info, p1_inst, PCIE_ERR,
+                                    SectionStart, Severity, CheckInfo);
+            dump_pcie_error_info_section(pcie_ptr, SectionStart, SectionCount);
         }
 
-        calculate_highest_severity(Severity,SectionCount,&HighestSeverity,RUNTIME_PCIE_ERR);
+        calculate_highest_severity(Severity, SectionCount, &HighestSeverity,
+                                   RUNTIME_PCIE_ERR);
 
-        dump_cper_header_section(pcie_ptr, SectionCount, HighestSeverity, RUNTIME_PCIE_ERR);
+        dump_cper_header_section(pcie_ptr, SectionCount, HighestSeverity,
+                                 RUNTIME_PCIE_ERR);
 
-        dump_error_descriptor_section(pcie_ptr, SectionCount,RUNTIME_PCIE_ERR,Severity);
+        dump_error_descriptor_section(pcie_ptr, SectionCount, RUNTIME_PCIE_ERR,
+                                      Severity);
 
-        write_to_cper_file(pcie_ptr,RUNTIME_PCIE_ERR,SectionCount);
+        write_to_cper_file(pcie_ptr, RUNTIME_PCIE_ERR, SectionCount);
 
-        if(pcie_ptr->SectionDescriptor != nullptr) {
+        if (pcie_ptr->SectionDescriptor != nullptr)
+        {
             delete[] pcie_ptr->SectionDescriptor;
             pcie_ptr->SectionDescriptor = nullptr;
         }
 
-        if(pcie_ptr->PcieErrorSection != nullptr) {
+        if (pcie_ptr->PcieErrorSection != nullptr)
+        {
             delete[] pcie_ptr->PcieErrorSection;
             pcie_ptr->PcieErrorSection = nullptr;
         }
-
     }
 
-    if(CheckInfo != nullptr) {
+    if (CheckInfo != nullptr)
+    {
         delete[] CheckInfo;
         CheckInfo = nullptr;
     }
 
-    if(Severity != nullptr) {
+    if (Severity != nullptr)
+    {
         delete[] Severity;
         Severity = nullptr;
     }
@@ -274,24 +317,25 @@ void harvest_runtime_errors(uint8_t ErrorPollingType, struct ras_rt_valid_err_in
 
 void McaErrorPollingHandler(uint16_t PollingPeriod)
 {
-    struct ras_rt_valid_err_inst p0_inst,p1_inst;
+    struct ras_rt_valid_err_inst p0_inst, p1_inst;
     uint32_t rt_err_category;
-    oob_status_t p0_ret = OOB_MAILBOX_CMD_UNKNOWN ,p1_ret = OOB_MAILBOX_CMD_UNKNOWN;
+    oob_status_t p0_ret = OOB_MAILBOX_CMD_UNKNOWN,
+                 p1_ret = OOB_MAILBOX_CMD_UNKNOWN;
 
-    rt_err_category = 0 ; /*00 = MCA*/
+    rt_err_category = 0; /*00 = MCA*/
     memset(&p0_inst, 0, sizeof(p0_inst));
     memset(&p1_inst, 0, sizeof(p1_inst));
 
-    p0_ret =  RunTimeErrValidityCheck(p0_info,rt_err_category,&p0_inst);
+    p0_ret = RunTimeErrValidityCheck(p0_info, rt_err_category, &p0_inst);
 
-    if(num_of_proc == TWO_SOCKET)
+    if (num_of_proc == TWO_SOCKET)
     {
 
-        p1_ret = RunTimeErrValidityCheck(p1_info,rt_err_category,&p1_inst);
+        p1_ret = RunTimeErrValidityCheck(p1_info, rt_err_category, &p1_inst);
     }
 
-    if(((p0_ret == OOB_SUCCESS) && (p0_inst.number_of_inst > 0)) ||
-            ((p1_ret == OOB_SUCCESS) && (p1_inst.number_of_inst > 0)))
+    if (((p0_ret == OOB_SUCCESS) && (p0_inst.number_of_inst > 0)) ||
+        ((p1_ret == OOB_SUCCESS) && (p1_inst.number_of_inst > 0)))
     {
 
         if (mca_ptr == nullptr)
@@ -299,19 +343,21 @@ void McaErrorPollingHandler(uint16_t PollingPeriod)
             mca_ptr = std::make_shared<PROC_RUNTIME_ERR_RECORD>();
         }
 
-        harvest_runtime_errors(MCA_ERR,p0_inst,p1_inst);
+        harvest_runtime_errors(MCA_ERR, p0_inst, p1_inst);
     }
 
-    if(McaErrorPollingEvent != nullptr)
+    if (McaErrorPollingEvent != nullptr)
         delete McaErrorPollingEvent;
 
-    McaErrorPollingEvent = new boost::asio::deadline_timer(io,boost::posix_time::seconds(PollingPeriod));
+    McaErrorPollingEvent = new boost::asio::deadline_timer(
+        io, boost::posix_time::seconds(PollingPeriod));
 
     McaErrorPollingEvent->async_wait(
         [PollingPeriod](const boost::system::error_code ec) {
             if (ec)
             {
-                sd_journal_print(LOG_ERR, "fd handler error failed: %s \n", ec.message().c_str());
+                sd_journal_print(LOG_ERR, "fd handler error failed: %s \n",
+                                 ec.message().c_str());
                 return;
             }
             McaErrorPollingHandler(PollingPeriod);
@@ -320,40 +366,44 @@ void McaErrorPollingHandler(uint16_t PollingPeriod)
 
 void DramCeccErrorPollingHandler(uint16_t PollingPeriod)
 {
-    struct ras_rt_valid_err_inst p0_inst,p1_inst;
+    struct ras_rt_valid_err_inst p0_inst, p1_inst;
     uint32_t rt_err_category;
-    oob_status_t p0_ret = OOB_MAILBOX_CMD_UNKNOWN ,p1_ret = OOB_MAILBOX_CMD_UNKNOWN;
+    oob_status_t p0_ret = OOB_MAILBOX_CMD_UNKNOWN,
+                 p1_ret = OOB_MAILBOX_CMD_UNKNOWN;
 
-    rt_err_category = ENABLE_BIT ; /*01 = DRAM CECC*/
+    rt_err_category = ENABLE_BIT; /*01 = DRAM CECC*/
     memset(&p0_inst, 0, sizeof(p0_inst));
     memset(&p1_inst, 0, sizeof(p1_inst));
 
-    p0_ret = RunTimeErrValidityCheck(p0_info,rt_err_category,&p0_inst);
+    p0_ret = RunTimeErrValidityCheck(p0_info, rt_err_category, &p0_inst);
 
-    if(num_of_proc == TWO_SOCKET)
+    if (num_of_proc == TWO_SOCKET)
     {
-        p1_ret = RunTimeErrValidityCheck(p1_info,rt_err_category,&p1_inst);
+        p1_ret = RunTimeErrValidityCheck(p1_info, rt_err_category, &p1_inst);
     }
 
-    if(((p0_ret == OOB_SUCCESS) && (p0_inst.number_of_inst > 0)) ||
-            ((p1_ret == OOB_SUCCESS) && (p1_inst.number_of_inst > 0)))
+    if (((p0_ret == OOB_SUCCESS) && (p0_inst.number_of_inst > 0)) ||
+        ((p1_ret == OOB_SUCCESS) && (p1_inst.number_of_inst > 0)))
     {
-        if (dram_ptr == nullptr) {
+        if (dram_ptr == nullptr)
+        {
             dram_ptr = std::make_shared<PROC_RUNTIME_ERR_RECORD>();
         }
-        harvest_runtime_errors(DRAM_CECC_ERR,p0_inst,p1_inst);
+        harvest_runtime_errors(DRAM_CECC_ERR, p0_inst, p1_inst);
     }
 
-    if(DramCeccErrorPollingEvent != nullptr)
+    if (DramCeccErrorPollingEvent != nullptr)
         delete DramCeccErrorPollingEvent;
 
-    DramCeccErrorPollingEvent = new boost::asio::deadline_timer(io,boost::posix_time::seconds(PollingPeriod));
+    DramCeccErrorPollingEvent = new boost::asio::deadline_timer(
+        io, boost::posix_time::seconds(PollingPeriod));
 
     DramCeccErrorPollingEvent->async_wait(
         [PollingPeriod](const boost::system::error_code ec) {
             if (ec)
             {
-                sd_journal_print(LOG_ERR, "fd handler error failed: %s \n", ec.message().c_str());
+                sd_journal_print(LOG_ERR, "fd handler error failed: %s \n",
+                                 ec.message().c_str());
                 return;
             }
             DramCeccErrorPollingHandler(PollingPeriod);
@@ -363,46 +413,49 @@ void DramCeccErrorPollingHandler(uint16_t PollingPeriod)
 void PcieErrorPollingHandler(uint16_t PollingPeriod)
 {
 
-    struct ras_rt_valid_err_inst p0_inst,p1_inst;
+    struct ras_rt_valid_err_inst p0_inst, p1_inst;
     uint32_t rt_err_category;
-    oob_status_t p0_ret = OOB_MAILBOX_CMD_UNKNOWN ,p1_ret = OOB_MAILBOX_CMD_UNKNOWN;
+    oob_status_t p0_ret = OOB_MAILBOX_CMD_UNKNOWN,
+                 p1_ret = OOB_MAILBOX_CMD_UNKNOWN;
 
-    rt_err_category = BYTE_2 ; /*10 = PCIe*/
+    rt_err_category = BYTE_2; /*10 = PCIe*/
     memset(&p0_inst, 0, sizeof(p0_inst));
     memset(&p1_inst, 0, sizeof(p1_inst));
 
-    p0_ret = RunTimeErrValidityCheck(p0_info,rt_err_category,&p0_inst);
+    p0_ret = RunTimeErrValidityCheck(p0_info, rt_err_category, &p0_inst);
 
-    if(num_of_proc == TWO_SOCKET)
+    if (num_of_proc == TWO_SOCKET)
     {
-        p1_ret = RunTimeErrValidityCheck(p1_info,rt_err_category,&p1_inst);
+        p1_ret = RunTimeErrValidityCheck(p1_info, rt_err_category, &p1_inst);
 
-        if(p1_ret != OOB_SUCCESS)
+        if (p1_ret != OOB_SUCCESS)
         {
             memset(&p1_inst, 0, sizeof(p1_inst));
         }
     }
 
-    if(((p0_ret == OOB_SUCCESS) && (p0_inst.number_of_inst > 0)) ||
-            ((p1_ret == OOB_SUCCESS) && (p1_inst.number_of_inst > 0)))
+    if (((p0_ret == OOB_SUCCESS) && (p0_inst.number_of_inst > 0)) ||
+        ((p1_ret == OOB_SUCCESS) && (p1_inst.number_of_inst > 0)))
     {
-        if (pcie_ptr == nullptr) {
+        if (pcie_ptr == nullptr)
+        {
             pcie_ptr = std::make_shared<PCIE_RUNTIME_ERR_RECORD>();
         }
-        harvest_runtime_errors(PCIE_ERR,p0_inst,p1_inst);
-
+        harvest_runtime_errors(PCIE_ERR, p0_inst, p1_inst);
     }
 
-    if(PcieAerErrorPollingEvent != nullptr)
+    if (PcieAerErrorPollingEvent != nullptr)
         delete PcieAerErrorPollingEvent;
 
-    PcieAerErrorPollingEvent = new boost::asio::deadline_timer(io,boost::posix_time::seconds(PollingPeriod));
+    PcieAerErrorPollingEvent = new boost::asio::deadline_timer(
+        io, boost::posix_time::seconds(PollingPeriod));
 
     PcieAerErrorPollingEvent->async_wait(
         [PollingPeriod](const boost::system::error_code ec) {
             if (ec)
             {
-                sd_journal_print(LOG_ERR, "fd handler error failed: %s \n", ec.message().c_str());
+                sd_journal_print(LOG_ERR, "fd handler error failed: %s \n",
+                                 ec.message().c_str());
                 return;
             }
             PcieErrorPollingHandler(PollingPeriod);
@@ -419,22 +472,26 @@ void RunTimeErrorPolling()
     /*SetOobConfig is not supported for Genoa platform.
       Enable run time error polling only if SetOobConfig command
       is supported for the platform*/
-    if(ret != OOB_MAILBOX_CMD_UNKNOWN)
+    if (ret != OOB_MAILBOX_CMD_UNKNOWN)
     {
-        if(Configuration::getMcaPollingEn() == true)
+        if (Configuration::getMcaPollingEn() == true)
         {
             McaErrorPollingHandler(Configuration::getMcaPollingPeriod());
         }
-        if(Configuration::getDramCeccPollingEn() == true)
+        if (Configuration::getDramCeccPollingEn() == true)
         {
-            DramCeccErrorPollingHandler(Configuration::getDramCeccPollingPeriod());
+            DramCeccErrorPollingHandler(
+                Configuration::getDramCeccPollingPeriod());
         }
-        if(Configuration::getPcieAerPollingEn() == true)
+        if (Configuration::getPcieAerPollingEn() == true)
         {
             PcieErrorPollingHandler(Configuration::getPcieAerPollingPeriod());
         }
-    } else
+    }
+    else
     {
-        sd_journal_print(LOG_INFO, "Runtime error polling is not supported for this platform\n");
+        sd_journal_print(
+            LOG_INFO,
+            "Runtime error polling is not supported for this platform\n");
     }
 }

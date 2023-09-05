@@ -2,7 +2,7 @@
 
 class Configuration
 {
-private:
+  private:
     static uint16_t apmlRetryCount;
     static uint16_t systemRecovery;
     static bool harvestuCodeVersionFlag;
@@ -23,7 +23,7 @@ private:
     static std::vector<std::pair<std::string, std::string>> P0_DimmLabels;
     static std::vector<std::pair<std::string, std::string>> P1_DimmLabels;
 
-public:
+  public:
     Configuration();
     static void setApmlRetryCount(uint16_t);
     static uint16_t getApmlRetryCount();
@@ -76,16 +76,19 @@ public:
     static void setSigIDOffset(std::vector<std::string>);
     static std::vector<std::string> getSigIDOffset();
 
-    static std::vector<std::pair<std::string, std::string>> getAllP0_DimmLabels();
-    static std::vector<std::pair<std::string, std::string>> getAllP1_DimmLabels();
+    static std::vector<std::pair<std::string, std::string>>
+        getAllP0_DimmLabels();
+    static std::vector<std::pair<std::string, std::string>>
+        getAllP1_DimmLabels();
 
-    static void setAllP0_DimmLabels(std::vector<std::pair<std::string, std::string>>);
-    static void setAllP1_DimmLabels(std::vector<std::pair<std::string, std::string>>);
+    static void
+        setAllP0_DimmLabels(std::vector<std::pair<std::string, std::string>>);
+    static void
+        setAllP1_DimmLabels(std::vector<std::pair<std::string, std::string>>);
 
-    static std::string getP0_DimmLabels(const std::string& );
-    static std::string getP1_DimmLabels(const std::string& );
+    static std::string getP0_DimmLabels(const std::string&);
+    static std::string getP1_DimmLabels(const std::string&);
 
     static void setP0_DimmLabels(const std::string&, const std::string&);
     static void setP1_DimmLabels(const std::string&, const std::string&);
 };
-
