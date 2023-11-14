@@ -58,23 +58,43 @@ oob_status_t SetOobConfig()
         oob_config.pcie_err_reporting_en = ENABLE_BIT;
     }
 
-    ret = set_bmc_ras_oob_config(p0_info, oob_config);
+    uint16_t retryCount = 30;
 
-    if (ret)
+    while (retryCount > 0)
     {
-        sd_journal_print(
-            LOG_ERR, "Failed to set ras oob configuration for Processor P0\n");
+        ret = set_bmc_ras_oob_config(p0_info, oob_config);
+
+        if (ret == OOB_SUCCESS || ret == OOB_MAILBOX_CMD_UNKNOWN)
+        {
+            break;
+        }
+        else
+        {
+            sd_journal_print(LOG_ERR, "Failed to set ras oob configuration for "
+                                      "Processor P0. Retrying....\n");
+        }
+        sleep(10);
+        retryCount--;
     }
 
     if (num_of_proc == TWO_SOCKET)
     {
-        ret = set_bmc_ras_oob_config(p1_info, oob_config);
-
-        if (ret)
+        retryCount = 30;
+        while (retryCount > 0)
         {
-            sd_journal_print(
-                LOG_ERR,
-                "Failed to set ras oob configuration for Processor P1\n");
+            ret = set_bmc_ras_oob_config(p1_info, oob_config);
+
+            if (ret == OOB_SUCCESS || ret == OOB_MAILBOX_CMD_UNKNOWN)
+            {
+                break;
+            }
+            else
+            {
+                sd_journal_print(LOG_ERR, "Failed to set ras oob configuration "
+                                          "for Processor P1. Retrying....\n");
+            }
+            sleep(10);
+            retryCount--;
         }
     }
     return ret;
