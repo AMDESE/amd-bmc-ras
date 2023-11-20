@@ -73,6 +73,8 @@ extern "C" {
 #define RUNTIME_DRAM_ERR ("RUNTIME_DRAM_ERROR")
 #define FATAL_ERR ("FATAL")
 
+#define RETRY_45 (45)
+#define SLEEP_20 (20)
 #define WARM_RESET (0)
 #define COLD_RESET (1)
 #define NO_RESET (2)
