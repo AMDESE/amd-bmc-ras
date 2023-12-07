@@ -1031,7 +1031,7 @@ void HPMFPGALockoutEventHandler()
                         LOG_ERR, "REDFISH_MESSAGE_ID=%s",
                         "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
                         ras_err_msg.c_str(), NULL);
-        int ret = system("HPM_FPGA_REGDUMP > " HPM_FPGA_REGDUMP_FILE " 2>&1 &");
+        int ret = system(HPM_FPGA_REGDUMP " > " HPM_FPGA_REGDUMP_FILE " 2>&1 &");
 
         if (ret == -1)
         {
