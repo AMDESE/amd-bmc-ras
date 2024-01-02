@@ -569,7 +569,11 @@ bool PlatformInitialization()
     }
     if (plat_info->family == GENOA_FAMILY_ID)
     {
-        BlockId = {BLOCK_ID_33};
+       if ((plat_info->model != MI300A_MODEL_NUMBER) &&
+           (plat_info->model != MI300C_MODEL_NUMBER))
+       {
+           BlockId = {BLOCK_ID_33};
+       }
     }
     else if (plat_info->family == TURIN_FAMILY_ID)
     {
