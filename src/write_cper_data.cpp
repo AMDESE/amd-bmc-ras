@@ -482,12 +482,15 @@ void dump_proc_error_section(const std::shared_ptr<T>& data, uint8_t soc_num,
 
         if ((category == MCA_ERR) || (category == DRAM_CECC_ERR))
         {
-            if ((mca_status_register & (1ULL << INDEX_61)) == 0)
+            if (((mca_status_register & (1ULL << INDEX_61)) == 0) &&
+                ((mca_status_register & (1ULL << INDEX_44)) == 0))
             {
                 Severity[Section] = SEV_NON_FATAL_CORRECTED;
             }
-            else if (((mca_status_register & (1ULL << INDEX_61)) != 0) &&
-                     ((mca_status_register & (1ULL << INDEX_57)) == 0))
+            else if ((((mca_status_register & (1ULL << INDEX_61)) == 0) &&
+                      ((mca_status_register & (1ULL << INDEX_44)) != 0)) ||
+                     (((mca_status_register & (1ULL << INDEX_61)) != 0) &&
+                      ((mca_status_register & (1ULL << INDEX_57)) == 0)))
             {
                 Severity[Section] = SEV_NON_FATAL_UNCORRECTED;
             }

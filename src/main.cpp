@@ -526,6 +526,7 @@ static void currentHostStateMonitor()
                 apmlInitialized = true;
                 clearSbrmiAlertMask();
                 SetOobConfig();
+                SetErrThreshold();
             }
         });
 }
@@ -569,11 +570,7 @@ bool PlatformInitialization()
     }
     if (plat_info->family == GENOA_FAMILY_ID)
     {
-       if ((plat_info->model != MI300A_MODEL_NUMBER) &&
-           (plat_info->model != MI300C_MODEL_NUMBER))
-       {
-           BlockId = {BLOCK_ID_33};
-       }
+        BlockId = {BLOCK_ID_33};
     }
     else if (plat_info->family == TURIN_FAMILY_ID)
     {
