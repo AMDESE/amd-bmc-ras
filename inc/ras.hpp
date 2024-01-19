@@ -33,12 +33,18 @@ extern "C" {
 #define MCA_ERR (0)
 #define DRAM_CECC_ERR (1)
 #define PCIE_ERR (2)
+#define POLLING_MODE (0)
+#define INTERRUPT_MODE (1)
 #define ERROR_THRESHOLD_VAL (1)
 
 #define PCIE_ERROR_THRESHOLD (32)
 #define DRAM_CECC_ERROR_THRESHOLD (16)
 #define MCA_ERROR_THRESHOLD (8)
 #define FATAL_ERROR (1)
+#define MCA_ERR_OVERFLOW (8)
+#define DRAM_CECC_ERR_OVERFLOW (16)
+#define PCIE_ERR_OVERFLOW (32)
+
 #define APML_INIT_DONE_FILE ("/tmp/apml_init_complete")
 #define SBRMI_CONTROL_REGISTER (0x1)
 
@@ -87,6 +93,8 @@ extern "C" {
 
 void RunTimeErrorPolling();
 oob_status_t SetOobConfig();
+oob_status_t SetErrThreshold();
+void RunTimeErrorInfoCheck(uint8_t, uint8_t);
 void write_to_cper_file(std::string);
 void ErrorPollingHandler(uint8_t, uint16_t);
 void CreateDbusInterface();

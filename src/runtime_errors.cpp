@@ -11,7 +11,8 @@ std::mutex mca_error_harvest_mtx;
 std::mutex dram_error_harvest_mtx;
 std::mutex pcie_error_harvest_mtx;
 
-oob_status_t RunTimeErrValidityCheck(uint8_t soc_num, uint32_t rt_err_category,
+oob_status_t RunTimeErrValidityCheck(uint8_t soc_num,
+                                     struct ras_rt_err_req_type rt_err_category,
                                      struct ras_rt_valid_err_inst* inst)
 {
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
@@ -28,6 +29,95 @@ oob_status_t RunTimeErrValidityCheck(uint8_t soc_num, uint32_t rt_err_category,
         }
     }
 
+    return ret;
+}
+
+oob_status_t SetErrThreshold()
+{
+    oob_status_t ret = OOB_NOT_SUPPORTED;
+    struct run_time_threshold th;
+
+    memset(&th, 0, sizeof(th));
+
+    if (Configuration::getMcaThresholdEn() == true)
+    {
+        th.err_type = 0; /*00 = MCA error type*/
+        th.err_count_th = Configuration::getMcaErrCounter();
+        th.max_intrupt_rate = 1;
+
+        ret = set_bmc_ras_err_threshold(p0_info, th);
+
+        if (ret != OOB_SUCCESS)
+        {
+            sd_journal_print(
+                LOG_INFO,
+                "Failed to set MCA error threshold for processor P0\n");
+        }
+        if (num_of_proc == TWO_SOCKET)
+        {
+            ret = set_bmc_ras_err_threshold(p1_info, th);
+
+            if (ret != OOB_SUCCESS)
+            {
+                sd_journal_print(
+                    LOG_INFO,
+                    "Failed to set MCA error threshold for processor P1\n");
+            }
+        }
+    }
+    if (Configuration::getDramCeccThresholdEn() == true)
+    {
+        th.err_type = 1; /*01 = DRAM CECC error type*/
+        th.err_count_th = Configuration::getDramCeccErrCounter();
+        th.max_intrupt_rate = 1;
+
+        ret = set_bmc_ras_err_threshold(p0_info, th);
+
+        if (ret != OOB_SUCCESS)
+        {
+            sd_journal_print(
+                LOG_INFO,
+                "Failed to set DRAM CECC error threshold for processor P0\n");
+        }
+
+        if (num_of_proc == TWO_SOCKET)
+        {
+            ret = set_bmc_ras_err_threshold(p1_info, th);
+
+            if (ret != OOB_SUCCESS)
+            {
+                sd_journal_print(LOG_INFO, "Failed to set DRAM CECC error "
+                                           "threshold for processor P1\n");
+            }
+        }
+    }
+    if (Configuration::getPcieAerThresholdEn() == true)
+    {
+        th.err_type = 2; /*00 = PCIE error type*/
+        th.err_count_th = Configuration::getPcieAerErrCounter();
+        th.max_intrupt_rate = 1;
+
+        ret = set_bmc_ras_err_threshold(p0_info, th);
+
+        if (ret != OOB_SUCCESS)
+        {
+            sd_journal_print(
+                LOG_INFO,
+                "Failed to set PCIE  error threshold for processor P0\n");
+        }
+
+        if (num_of_proc == TWO_SOCKET)
+        {
+            ret = set_bmc_ras_err_threshold(p1_info, th);
+
+            if (ret != OOB_SUCCESS)
+            {
+                sd_journal_print(
+                    LOG_INFO,
+                    "Failed to set PCIE error threshold for processor P1\n");
+            }
+        }
+    }
     return ret;
 }
 
@@ -335,14 +425,18 @@ void harvest_runtime_errors(uint8_t ErrorPollingType,
     }
 }
 
-void McaErrorPollingHandler(uint16_t PollingPeriod)
+void RunTimeErrorInfoCheck(uint8_t ErrType, uint8_t ReqType)
 {
-    struct ras_rt_valid_err_inst p0_inst, p1_inst;
-    uint32_t rt_err_category;
-    oob_status_t p0_ret = OOB_MAILBOX_CMD_UNKNOWN,
-                 p1_ret = OOB_MAILBOX_CMD_UNKNOWN;
 
-    rt_err_category = 0; /*00 = MCA*/
+    struct ras_rt_valid_err_inst p0_inst, p1_inst;
+    struct ras_rt_err_req_type rt_err_category;
+
+    oob_status_t p0_ret = OOB_MAILBOX_CMD_UNKNOWN;
+    oob_status_t p1_ret = OOB_MAILBOX_CMD_UNKNOWN;
+
+    rt_err_category.err_type = ErrType;
+    rt_err_category.req_type = ReqType;
+
     memset(&p0_inst, 0, sizeof(p0_inst));
     memset(&p1_inst, 0, sizeof(p1_inst));
 
@@ -358,12 +452,38 @@ void McaErrorPollingHandler(uint16_t PollingPeriod)
         ((p1_ret == OOB_SUCCESS) && (p1_inst.number_of_inst > 0)))
     {
 
-        if (mca_ptr == nullptr)
+        if (ErrType == MCA_ERR)
         {
-            mca_ptr = std::make_shared<PROC_RUNTIME_ERR_RECORD>();
+            if (mca_ptr == nullptr)
+            {
+                mca_ptr = std::make_shared<PROC_RUNTIME_ERR_RECORD>();
+            }
+        }
+        else if (ErrType == DRAM_CECC_ERR)
+        {
+            if (dram_ptr == nullptr)
+            {
+                dram_ptr = std::make_shared<PROC_RUNTIME_ERR_RECORD>();
+            }
+        }
+        else if (ErrType == PCIE_ERR)
+        {
+            if (pcie_ptr == nullptr)
+            {
+                pcie_ptr = std::make_shared<PCIE_RUNTIME_ERR_RECORD>();
+            }
         }
 
-        harvest_runtime_errors(MCA_ERR, p0_inst, p1_inst);
+        harvest_runtime_errors(ErrType, p0_inst, p1_inst);
+    }
+}
+
+void McaErrorPollingHandler(uint16_t PollingPeriod)
+{
+
+    if (Configuration::getMcaPollingEn() == true)
+    {
+        RunTimeErrorInfoCheck(MCA_ERR, POLLING_MODE);
     }
 
     if (McaErrorPollingEvent != nullptr)
@@ -380,36 +500,16 @@ void McaErrorPollingHandler(uint16_t PollingPeriod)
                                  ec.message().c_str());
                 return;
             }
-            McaErrorPollingHandler(PollingPeriod);
+            McaErrorPollingHandler(Configuration::getMcaPollingPeriod());
         });
 }
 
 void DramCeccErrorPollingHandler(uint16_t PollingPeriod)
 {
-    struct ras_rt_valid_err_inst p0_inst, p1_inst;
-    uint32_t rt_err_category;
-    oob_status_t p0_ret = OOB_MAILBOX_CMD_UNKNOWN,
-                 p1_ret = OOB_MAILBOX_CMD_UNKNOWN;
 
-    rt_err_category = ENABLE_BIT; /*01 = DRAM CECC*/
-    memset(&p0_inst, 0, sizeof(p0_inst));
-    memset(&p1_inst, 0, sizeof(p1_inst));
-
-    p0_ret = RunTimeErrValidityCheck(p0_info, rt_err_category, &p0_inst);
-
-    if (num_of_proc == TWO_SOCKET)
+    if (Configuration::getDramCeccPollingEn() == true)
     {
-        p1_ret = RunTimeErrValidityCheck(p1_info, rt_err_category, &p1_inst);
-    }
-
-    if (((p0_ret == OOB_SUCCESS) && (p0_inst.number_of_inst > 0)) ||
-        ((p1_ret == OOB_SUCCESS) && (p1_inst.number_of_inst > 0)))
-    {
-        if (dram_ptr == nullptr)
-        {
-            dram_ptr = std::make_shared<PROC_RUNTIME_ERR_RECORD>();
-        }
-        harvest_runtime_errors(DRAM_CECC_ERR, p0_inst, p1_inst);
+        RunTimeErrorInfoCheck(DRAM_CECC_ERR, POLLING_MODE);
     }
 
     if (DramCeccErrorPollingEvent != nullptr)
@@ -426,42 +526,17 @@ void DramCeccErrorPollingHandler(uint16_t PollingPeriod)
                                  ec.message().c_str());
                 return;
             }
-            DramCeccErrorPollingHandler(PollingPeriod);
+            DramCeccErrorPollingHandler(
+                Configuration::getDramCeccPollingPeriod());
         });
 }
 
 void PcieErrorPollingHandler(uint16_t PollingPeriod)
 {
 
-    struct ras_rt_valid_err_inst p0_inst, p1_inst;
-    uint32_t rt_err_category;
-    oob_status_t p0_ret = OOB_MAILBOX_CMD_UNKNOWN,
-                 p1_ret = OOB_MAILBOX_CMD_UNKNOWN;
-
-    rt_err_category = BYTE_2; /*10 = PCIe*/
-    memset(&p0_inst, 0, sizeof(p0_inst));
-    memset(&p1_inst, 0, sizeof(p1_inst));
-
-    p0_ret = RunTimeErrValidityCheck(p0_info, rt_err_category, &p0_inst);
-
-    if (num_of_proc == TWO_SOCKET)
+    if (Configuration::getPcieAerPollingEn() == true)
     {
-        p1_ret = RunTimeErrValidityCheck(p1_info, rt_err_category, &p1_inst);
-
-        if (p1_ret != OOB_SUCCESS)
-        {
-            memset(&p1_inst, 0, sizeof(p1_inst));
-        }
-    }
-
-    if (((p0_ret == OOB_SUCCESS) && (p0_inst.number_of_inst > 0)) ||
-        ((p1_ret == OOB_SUCCESS) && (p1_inst.number_of_inst > 0)))
-    {
-        if (pcie_ptr == nullptr)
-        {
-            pcie_ptr = std::make_shared<PCIE_RUNTIME_ERR_RECORD>();
-        }
-        harvest_runtime_errors(PCIE_ERR, p0_inst, p1_inst);
+        RunTimeErrorInfoCheck(PCIE_ERR, POLLING_MODE);
     }
 
     if (PcieAerErrorPollingEvent != nullptr)
@@ -478,13 +553,12 @@ void PcieErrorPollingHandler(uint16_t PollingPeriod)
                                  ec.message().c_str());
                 return;
             }
-            PcieErrorPollingHandler(PollingPeriod);
+            PcieErrorPollingHandler(Configuration::getPcieAerPollingPeriod());
         });
 }
 
 void RunTimeErrorPolling()
 {
-
     oob_status_t ret;
 
     ret = SetOobConfig();
@@ -494,24 +568,25 @@ void RunTimeErrorPolling()
       is supported for the platform*/
     if (ret != OOB_MAILBOX_CMD_UNKNOWN)
     {
-        if (Configuration::getMcaPollingEn() == true)
-        {
-            McaErrorPollingHandler(Configuration::getMcaPollingPeriod());
-        }
-        if (Configuration::getDramCeccPollingEn() == true)
-        {
-            DramCeccErrorPollingHandler(
-                Configuration::getDramCeccPollingPeriod());
-        }
-        if (Configuration::getPcieAerPollingEn() == true)
-        {
-            PcieErrorPollingHandler(Configuration::getPcieAerPollingPeriod());
-        }
+        McaErrorPollingHandler(Configuration::getMcaPollingPeriod());
+
+        DramCeccErrorPollingHandler(Configuration::getDramCeccPollingPeriod());
+
+        PcieErrorPollingHandler(Configuration::getPcieAerPollingPeriod());
     }
     else
     {
         sd_journal_print(
             LOG_INFO,
             "Runtime error polling is not supported for this platform\n");
+    }
+
+    ret = SetErrThreshold();
+
+    if (ret == OOB_MAILBOX_CMD_UNKNOWN)
+    {
+        sd_journal_print(
+            LOG_ERR,
+            "Runtime error threshold is not supported for this platform\n");
     }
 }

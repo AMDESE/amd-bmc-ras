@@ -711,6 +711,7 @@ bool harvest_ras_errors(uint8_t info, std::string alert_name)
     bool FchHangError = false;
     uint8_t buf;
     bool ResetReady = false;
+    bool RuntimeError = false;
 
     // Check if APML ALERT is because of RAS
     if (read_sbrmi_ras_status(info, &buf) == OOB_SUCCESS)
@@ -757,6 +758,53 @@ bool harvest_ras_errors(uint8_t info, std::string alert_name)
 
                 FchHangError = true;
             }
+            else if (buf & MCA_ERR_OVERFLOW)
+            {
+
+                RunTimeErrorInfoCheck(MCA_ERR, INTERRUPT_MODE);
+
+                std::string mca_err_overflow_msg =
+                    "MCA runtime error counter overflow occured";
+
+                sd_journal_send("MESSAGE=%s", mca_err_overflow_msg.c_str(),
+                                "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                                "OpenBMC.0.1.CPUError",
+                                "REDFISH_MESSAGE_ARGS=%s",
+                                mca_err_overflow_msg.c_str(), NULL);
+
+                RuntimeError = true;
+            }
+            else if (buf & DRAM_CECC_ERR_OVERFLOW)
+            {
+                RunTimeErrorInfoCheck(DRAM_CECC_ERR, INTERRUPT_MODE);
+
+                std::string dram_err_overflow_msg =
+                    "DRAM CECC runtime error counter overflow occured";
+
+                sd_journal_send("MESSAGE=%s", dram_err_overflow_msg.c_str(),
+                                "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                                "OpenBMC.0.1.CPUError",
+                                "REDFISH_MESSAGE_ARGS=%s",
+                                dram_err_overflow_msg.c_str(), NULL);
+
+                RuntimeError = true;
+            }
+            else if (buf & PCIE_ERR_OVERFLOW)
+            {
+
+                RunTimeErrorInfoCheck(PCIE_ERR, INTERRUPT_MODE);
+
+                std::string pcie_err_overflow_msg =
+                    "PCIE runtime error counter overflow occured";
+
+                sd_journal_send("MESSAGE=%s", pcie_err_overflow_msg.c_str(),
+                                "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                                "OpenBMC.0.1.CPUError",
+                                "REDFISH_MESSAGE_ARGS=%s",
+                                pcie_err_overflow_msg.c_str(), NULL);
+
+                RuntimeError = true;
+            }
             else if (buf & FATAL_ERROR)
             {
                 std::string ras_err_msg = "RAS FATAL Error detected. "
@@ -787,7 +835,7 @@ bool harvest_ras_errors(uint8_t info, std::string alert_name)
             // implementation of SMU?
             write_register(info, RAS_STATUS_REGISTER, buf);
 
-            if (FchHangError == true)
+            if (FchHangError == true || RuntimeError == true)
             {
                 return true;
             }
