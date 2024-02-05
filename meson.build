@@ -42,11 +42,6 @@ deps = [
 executable(
   'amd-ras',
   'src/main.cpp',
-  'src/runtime_errors.cpp',
-  'src/write_cper_data.cpp',
-  'src/dbus_ras.cpp',
-  'src/fatal_error.cpp',
-  'src/Config.cpp',
   include_directories: include_directories('inc'),
   cpp_args: cpp_args,
   dependencies: deps,
