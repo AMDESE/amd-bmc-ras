@@ -218,9 +218,8 @@ typedef struct error_record ERROR_RECORD;
 struct cper_record
 {
     COMMON_ERROR_RECORD_HEADER Header;
-    ERROR_SECTION_DESCRIPTOR SectionDescriptor[INDEX_2];
-    ERROR_RECORD P0_ErrorRecord;
-    ERROR_RECORD P1_ErrorRecord;
+    ERROR_SECTION_DESCRIPTOR* SectionDescriptor;
+    ERROR_RECORD* ErrorRecord;
 } __attribute__((packed));
 
 typedef struct cper_record CPER_RECORD;
