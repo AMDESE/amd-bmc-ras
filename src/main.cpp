@@ -304,10 +304,9 @@ void CreateConfigFile()
     if (stat(config_file, &buffer) != 0)
     {
         nlohmann::json jsonConfig = {
-            {"apmlRetries", MAX_RETRIES},
-            {"systemRecovery", NO_RESET},
-            {"harvestuCodeVersion", true},
-            {"harvestPpin", true},
+            {"apmlRetries", MAX_RETRIES},  {"systemRecovery", NO_RESET},
+            {"harvestuCodeVersion", true}, {"harvestPpin", true},
+            {"ResetSignal", SYS_RESET},
         };
 
         jsonConfig["sigIDOffset"] = Configuration::getSigIDOffset();
@@ -360,6 +359,7 @@ void CreateConfigFile()
     Configuration::setSystemRecovery(data["systemRecovery"]);
     Configuration::setHarvestuCodeVersionFlag(data["harvestuCodeVersion"]);
     Configuration::setHarvestPpinFlag(data["harvestPpin"]);
+    Configuration::setResetSignal(data["ResetSignal"]);
     Configuration::setSigIDOffset(
         data.at("sigIDOffset").get<std::vector<std::string>>());
 

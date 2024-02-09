@@ -41,7 +41,7 @@
  * CPER section descriptor revision, used in revision field in struct
  * cper_section_descriptor
  */
-#define CPER_MINOR_REV (0x0005)
+#define CPER_MINOR_REV (0x0006)
 
 #define ADDC_GEN_NUMBER_1 (0x01)
 #define ADDC_GEN_NUMBER_2 (0x02)
@@ -100,6 +100,7 @@
 #define INDEX_40 (40)
 #define INDEX_44 (44)
 #define INDEX_48 (48)
+#define INDEX_52 (52)
 #define INDEX_57 (57)
 #define INDEX_60 (60)
 #define INDEX_61 (61)
