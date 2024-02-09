@@ -16,6 +16,7 @@ uint16_t Configuration::PcieAerPollingPeriod;
 uint16_t Configuration::McaErrCounter;
 uint16_t Configuration::DramCeccErrCounter;
 uint16_t Configuration::PcieAerErrCounter;
+std::string ResetSignal;
 std::vector<std::string> Configuration::sigIDOffset = {
     "0x30", "0x34", "0x28", "0x2c", "0x08", "0x0c", "null", "null"};
 
@@ -181,6 +182,16 @@ void Configuration::setPcieAerErrCounter(uint16_t value)
 uint16_t Configuration::getPcieAerErrCounter()
 {
     return PcieAerErrCounter;
+}
+
+void Configuration::setResetSignal(std::string value)
+{
+    ResetSignal = value;
+}
+
+std::string Configuration::getResetSignal()
+{
+    return ResetSignal;
 }
 
 void Configuration::setSigIDOffset(std::vector<std::string> value)

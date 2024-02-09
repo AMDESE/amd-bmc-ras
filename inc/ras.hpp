@@ -91,6 +91,9 @@ extern "C" {
 #define MASK_11_TO_0 (0xFFF)
 #define MASK_0X0F (0x0F)
 
+#define SYS_RESET ("SYS_RST")
+#define RSMRST ("RSMRST")
+
 void RunTimeErrorPolling();
 oob_status_t SetOobConfig();
 oob_status_t SetErrThreshold();

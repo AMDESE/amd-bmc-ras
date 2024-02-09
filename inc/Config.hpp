@@ -73,6 +73,9 @@ class Configuration
     static void setPcieAerErrCounter(uint16_t);
     static uint16_t getPcieAerErrCounter();
 
+    static void setResetSignal(std::string);
+    static std::string getResetSignal();
+
     static void setSigIDOffset(std::vector<std::string>);
     static std::vector<std::string> getSigIDOffset();
 

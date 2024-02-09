@@ -446,7 +446,7 @@ void dump_proc_error_section(const std::shared_ptr<T>& data, uint8_t soc_num,
                     {
                         mca_ipid_hi_register = d_out;
                     }
-                    if (d_in.offset == INDEX_30)
+                    if (d_in.offset == INDEX_48)
                     {
                         mca_synd_lo_register = d_out;
                     }
@@ -461,7 +461,7 @@ void dump_proc_error_section(const std::shared_ptr<T>& data, uint8_t soc_num,
                     {
                         mca_ipid_hi_register = d_out;
                     }
-                    if (d_in.offset == INDEX_34)
+                    if (d_in.offset == INDEX_52)
                     {
                         mca_synd_lo_register = d_out;
                     }
@@ -505,7 +505,8 @@ void dump_proc_error_section(const std::shared_ptr<T>& data, uint8_t soc_num,
                     (mca_ipid_lo_register >> INDEX_20) & MASK_0X0F);
 
                 uint8_t DimmNumber =
-                    static_cast<uint8_t>(mca_synd_lo_register & INDEX_7);
+                    ((static_cast<uint8_t>(mca_synd_lo_register & INDEX_7)) >>
+                     INDEX_1);
 
                 std::string FruText =
                     FindDimmFruText(soc_num, UMCInstance, DimmNumber);

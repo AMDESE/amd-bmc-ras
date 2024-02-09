@@ -272,7 +272,28 @@ T GetProperty(sdbusplus::bus::bus& bus, const char* service, const char* path,
     return std::get<T>(value);
 }
 
-void triggerColdReset()
+void requestHostTransition(std::string command)
+{
+
+    boost::system::error_code ec;
+    boost::asio::io_context io;
+    auto conn = std::make_shared<sdbusplus::asio::connection>(io);
+
+    conn->async_method_call(
+        [](boost::system::error_code ec) {
+            if (ec)
+            {
+                sd_journal_print(
+                    LOG_ERR, "Failed to trigger cold reset of the system\n");
+            }
+        },
+        "xyz.openbmc_project.State.Host", "/xyz/openbmc_project/state/host0",
+        "org.freedesktop.DBus.Properties", "Set",
+        "xyz.openbmc_project.State.Host", "RequestedHostTransition",
+        std::variant<std::string>{command});
+}
+
+void triggerRsmrstReset()
 {
     boost::system::error_code ec;
     boost::asio::io_context io;
@@ -304,20 +325,28 @@ void triggerColdReset()
         std::cout << "Doing host power on" << std::endl;
         std::string command = "xyz.openbmc_project.State.Host.Transition.On";
 
-        conn->async_method_call(
-            [](boost::system::error_code ec) {
-                if (ec)
-                {
-                    sd_journal_print(
-                        LOG_ERR,
-                        "Failed to trigger cold reset of the system\n");
-                }
-            },
-            "xyz.openbmc_project.State.Host",
-            "/xyz/openbmc_project/state/host0",
-            "org.freedesktop.DBus.Properties", "Set",
-            "xyz.openbmc_project.State.Host", "RequestedHostTransition",
-            std::variant<std::string>{command});
+        requestHostTransition(command);
+    }
+}
+
+void triggerSysReset()
+{
+    std::string command = "xyz.openbmc_project.State.Host.Transition.Reboot";
+
+    requestHostTransition(command);
+}
+
+void triggerColdReset()
+{
+    if (Configuration::getResetSignal() == RSMRST)
+    {
+        sd_journal_print(LOG_INFO, "RSMRST RESET triggered\n");
+        triggerRsmrstReset();
+    }
+    else if (Configuration::getResetSignal() == SYS_RESET)
+    {
+        sd_journal_print(LOG_INFO, "SYS RESET triggered\n");
+        triggerSysReset();
     }
 }
 
@@ -659,7 +688,6 @@ void SystemRecovery(uint8_t buf)
         if ((buf & SYS_MGMT_CTRL_ERR))
         {
             triggerColdReset();
-            sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
         }
         else
         {
@@ -680,7 +708,6 @@ void SystemRecovery(uint8_t buf)
     else if (Configuration::getSystemRecovery() == COLD_RESET)
     {
         triggerColdReset();
-        sd_journal_print(LOG_INFO, "COLD RESET triggered\n");
     }
     else if (Configuration::getSystemRecovery() == NO_RESET)
     {

@@ -192,6 +192,16 @@ void CreateDbusInterface()
                                        return 1;
                                    });
 
+    std::string ResetSignal = Configuration::getResetSignal();
+    configIface->register_property(
+        "ResetSignal", ResetSignal,
+        [](const std::string& requested, std::string& resp) {
+            resp = requested;
+            Configuration::setResetSignal(resp);
+            updateConfigFile("ResetSignal", resp);
+            return 1;
+        });
+
     std::vector<std::string> sigIDOffset = Configuration::getSigIDOffset();
     configIface->register_property("sigIDOffset", sigIDOffset,
                                    [](const std::vector<std::string>& requested,
