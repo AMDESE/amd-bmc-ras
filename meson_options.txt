@@ -1,0 +1,10 @@
+option(
+    'systemd-target',
+    description: 'Target for starting this service.',
+    type: 'string'
+)
+
+option('host-interface', type : 'string',
+        value : 'apml',
+        description : 'To specify the host dump transport protocol')
+
