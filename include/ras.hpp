@@ -1,24 +1,26 @@
 #pragma once
 
+#include <filesystem>
+#include <fstream>
+#include <phosphor-logging/log.hpp>
 #include <sys/stat.h>
-
+#include <nlohmann/json.hpp>
+#include <gpiod.hpp>
 #include <boost/asio.hpp>
 #include <boost/asio/io_service.hpp>
 #include <boost/asio/posix/stream_descriptor.hpp>
-#include <cstdint>
-#include <filesystem>
-#include <fstream>
-#include <gpiod.hpp>
-#include <nlohmann/json.hpp>
-#include <phosphor-logging/log.hpp>
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/object_server.hpp>
+#include <phosphor-logging/lg2.hpp>
+#include <cstdint>
 
 #define GENOA_MCA_BANKS (32)
+#define MAX_MCA_BANKS (32)
 #define CCM_COUNT (8)
 #define MCA_BANK_MAX_OFFSET (128)
 #define LAST_TRANS_ADDR_OFFSET (4)
 #define DEUB_LOG_DUMP_REGION (12124)
+#define FAILURE_SIGNATURE_ID (0x04)
 #define CPER_SIG_SIZE (4)
 #define INDEX_0 (0)
 #define INDEX_1 (1)
@@ -35,10 +37,13 @@
 #define INDEX_24 (24)
 #define INDEX_60 (60)
 #define RESERVE_96 (96)
+#define BYTE_4 (4)
+#define BYTE_2 (2)
 
 #define RAS_DIR ("/var/lib/amd-ras/")
 #define INDEX_FILE ("/var/lib/amd-ras/current_index")
-#define CONFIG_FILE ("/var/lib/amd-ras/config_file")
+#define CONFIG_FILE ("/var/lib/amd-ras/ras-config.json") 
+#define SRC_CONFIG_FILE ("/usr/share/amd-ras/ras-config.json")
 #define MAX_RETRIES (10)
 #define NO_RESET ("NO_RESET")
 #define COLD_RESET ("COLD_RESET")
@@ -48,6 +53,7 @@
 #define INVENTORY_SERVICE ("xyz.openbmc_project.Inventory.Manager")
 #define CPU_INVENTORY_INTERFACE ("xyz.openbmc_project.Inventory.Item.Cpu")
 #define COMMAND_LEN (3)
+#define BAD_DATA (0xBAADDA7A)
 #define TWO_SOCKET (2)
 #define MI300A_MODEL_NUMBER (0x90)
 #define MI300C_MODEL_NUMBER (0x80)
@@ -96,6 +102,7 @@
 #define FATAL_ERR ("FATAL")
 #define SEV_NON_FATAL_UNCORRECTED (0)
 #define SEV_NON_FATAL_CORRECTED (2)
+#define MAX_ERROR_FILE (10)
 #define CPER_SEV_FATAL (1)
 #define CPER_MINOR_REV (0x0006)
 #define FRU_ID_VALID (0x01)
@@ -104,10 +111,16 @@
 #define ADDC_GEN_NUMBER_1 (0x01)
 #define ADDC_GEN_NUMBER_2 (0x02)
 #define ADDC_GEN_NUMBER_3 (0x03)
+#define CPU_ID_VALID (0x02)
+#define LOCAL_APIC_ID_VALID (0x01)
+#define PROC_CONTEXT_STRUCT_VALID (0x100)
+#define CTX_OOB_CRASH (0x01)
 #define SHIFT_4 (4)
 #define SOCKET_0 (0)
 #define SOCKET_1 (1)
-
+#define SHIFT_23 (23)
+#define SHIFT_24 (24)
+#define SHIFT_25 (25)
 #define BLOCK_ID_1 (1)
 #define BLOCK_ID_2 (2)
 #define BLOCK_ID_3 (3)
@@ -119,8 +132,18 @@
 #define BLOCK_ID_39 (39)
 #define BLOCK_ID_40 (40)
 
-enum ErrorType
-{
+#define DBUS_SERVICE_NAME  ("com.amd.crashdump")
+#define DBUS_OBJECT_NAME   ("/com/amd/crashdump")
+
+enum ErrorType {
     ERROR_TYPE_FATAL,
     ERROR_TYPE_NON_FATAL
+};
+
+struct CpuId
+{
+    uint32_t eax;
+    uint32_t ebx;
+    uint32_t ecx;
+    uint32_t edx;
 };

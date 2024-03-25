@@ -47,3 +47,4 @@ if systemd.found()
     'service_files/com.amd.crashdump.service',
     install_dir: systemd.get_variable('systemdsystemunitdir'))
 endif
+

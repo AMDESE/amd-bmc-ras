@@ -82,7 +82,7 @@ struct ContextInfo
 {
     uint16_t registerContextType;
     uint16_t registerArraySize;
-    uint32_t ricrocodeVersion;
+    uint32_t microcodeVersion;
     uint64_t ppin;
     CRASHDUMP_T crashDumpData[GENOA_MCA_BANKS];
     DfDump dfDumpData;
