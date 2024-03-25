@@ -9,12 +9,12 @@ typedef struct
 
 typedef struct
 {
-    uint32_t mcaData[MCA_BANK_MAX_OFFSET];
+    uint32_t mcaData[MCA_BANK_MAX_OFFSET] = {0};
 } CRASHDUMP_T;
 
 typedef struct
 {
-    uint32_t wdtData[LAST_TRANS_ADDR_OFFSET];
+    uint32_t wdtData[LAST_TRANS_ADDR_OFFSET] = {0};
 } LAST_TRANS_ADDR;
 
 struct TimeStamp
@@ -75,19 +75,19 @@ struct ProcessorErrorSection
 
 struct DfDump
 {
-    LAST_TRANS_ADDR lastTransAddr[CCM_COUNT];
+    LAST_TRANS_ADDR lastTransAddr[CCM_COUNT] = {0};
 } __attribute__((packed));
 
 struct ContextInfo
 {
     uint16_t registerContextType;
     uint16_t registerArraySize;
-    uint32_t ricrocodeVersion;
+    uint32_t microcodeVersion;
     uint64_t ppin;
-    CRASHDUMP_T crashDumpData[GENOA_MCA_BANKS];
+    CRASHDUMP_T crashDumpData[GENOA_MCA_BANKS] = {0};
     DfDump dfDumpData;
-    uint32_t reserved[RESERVE_96];
-    uint32_t debugLogIdData[DEUB_LOG_DUMP_REGION];
+    uint32_t reserved[RESERVE_96] = {0};
+    uint32_t debugLogIdData[DEUB_LOG_DUMP_REGION] = {0};
 } __attribute__((packed));
 
 struct ErrorRecord

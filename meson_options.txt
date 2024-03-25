@@ -4,7 +4,7 @@ option(
     type: 'string'
 )
 
-option('host-interface', type : 'string',
-        value : 'apml',
+option('host-transport', type : 'string',
+        value : 'default',
         description : 'To specify the host dump transport protocol')
 
