@@ -871,12 +871,17 @@ void write_to_cper_file(const std::shared_ptr<T>& data, std::string ErrorType,
     {
         if ((FatalPtr) && (file != NULL))
         {
-            sd_journal_print(LOG_INFO,
-                             "Generating CPER file for the fatal error\n");
-
             fwrite(FatalPtr.get(), FatalPtr->Header.RecordLength, 1, file);
 
             exportCrashdumpToDBus(err_count, FatalPtr->Header.TimeStamp);
+
+            std::string ras_err_msg =
+                "CPER file generated for fatal error";
+
+            sd_journal_send(
+                "MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i", LOG_ERR,
+                "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.AtScaleDebugConnected",
+                "REDFISH_MESSAGE_ARGS=%s", ras_err_msg.c_str(), NULL);
         }
     }
     else if (ErrorType == RUNTIME_PCIE_ERR)

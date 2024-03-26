@@ -26,22 +26,11 @@
 #define BYTE_2 (2)
 #define ENABLE_BIT (1)
 
-#define BLOCK_ID_1 (1)
-#define BLOCK_ID_2 (2)
-#define BLOCK_ID_3 (3)
-#define BLOCK_ID_24 (24)
-#define BLOCK_ID_33 (33)
-#define BLOCK_ID_36 (36)
-#define BLOCK_ID_37 (37)
-#define BLOCK_ID_38 (38)
-#define BLOCK_ID_39 (39)
-#define BLOCK_ID_40 (40)
-
 /*
  * CPER section descriptor revision, used in revision field in struct
  * cper_section_descriptor
  */
-#define CPER_MINOR_REV (0x0006)
+#define CPER_MINOR_REV (0x0007)
 
 #define ADDC_GEN_NUMBER_1 (0x01)
 #define ADDC_GEN_NUMBER_2 (0x02)

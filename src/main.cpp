@@ -526,7 +526,7 @@ static void currentHostStateMonitor()
                 apmlInitialized = true;
                 clearSbrmiAlertMask();
                 SetOobConfig();
-                SetErrThreshold();
+                ErrThresholdEnable();
             }
         });
 }

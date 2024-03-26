@@ -51,6 +51,7 @@ extern "C" {
 #define BLOCK_ID_1 (1)
 #define BLOCK_ID_2 (2)
 #define BLOCK_ID_3 (3)
+#define BLOCK_ID_23 (23)
 #define BLOCK_ID_24 (24)
 #define BLOCK_ID_33 (33)
 #define BLOCK_ID_36 (36)
@@ -96,7 +97,7 @@ extern "C" {
 
 void RunTimeErrorPolling();
 oob_status_t SetOobConfig();
-oob_status_t SetErrThreshold();
+oob_status_t ErrThresholdEnable();
 void RunTimeErrorInfoCheck(uint8_t, uint8_t);
 void write_to_cper_file(std::string);
 void ErrorPollingHandler(uint8_t, uint16_t);
