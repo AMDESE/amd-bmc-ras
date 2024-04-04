@@ -32,28 +32,34 @@ oob_status_t RunTimeErrValidityCheck(uint8_t soc_num,
     return ret;
 }
 
-oob_status_t SetErrThreshold()
+oob_status_t RasErrThresholdSet(struct run_time_threshold th)
 {
-    oob_status_t ret = OOB_NOT_SUPPORTED;
-    struct run_time_threshold th;
 
-    memset(&th, 0, sizeof(th));
+    oob_status_t ret;
 
-    if (Configuration::getMcaThresholdEn() == true)
+    uint16_t retryCount = INDEX_20;
+
+    while (retryCount > 0)
     {
-        th.err_type = 0; /*00 = MCA error type*/
-        th.err_count_th = Configuration::getMcaErrCounter();
-        th.max_intrupt_rate = 1;
 
         ret = set_bmc_ras_err_threshold(p0_info, th);
 
         if (ret != OOB_SUCCESS)
         {
             sd_journal_print(
-                LOG_INFO,
-                "Failed to set MCA error threshold for processor P0\n");
+                LOG_INFO, "Failed to set MCA error threshold for processor P0\n");
         }
-        if (num_of_proc == TWO_SOCKET)
+        usleep(1000 * 1000);
+        retryCount--;
+    }
+
+    if (num_of_proc == TWO_SOCKET)
+    {
+
+        retryCount = INDEX_20;
+        ret = OOB_MAILBOX_CMD_UNKNOWN;
+
+        if(ret != OOB_SUCCESS)
         {
             ret = set_bmc_ras_err_threshold(p1_info, th);
 
@@ -63,90 +69,17 @@ oob_status_t SetErrThreshold()
                     LOG_INFO,
                     "Failed to set MCA error threshold for processor P1\n");
             }
-        }
-    }
-    if (Configuration::getDramCeccThresholdEn() == true)
-    {
-        th.err_type = 1; /*01 = DRAM CECC error type*/
-        th.err_count_th = Configuration::getDramCeccErrCounter();
-        th.max_intrupt_rate = 1;
-
-        ret = set_bmc_ras_err_threshold(p0_info, th);
-
-        if (ret != OOB_SUCCESS)
-        {
-            sd_journal_print(
-                LOG_INFO,
-                "Failed to set DRAM CECC error threshold for processor P0\n");
-        }
-
-        if (num_of_proc == TWO_SOCKET)
-        {
-            ret = set_bmc_ras_err_threshold(p1_info, th);
-
-            if (ret != OOB_SUCCESS)
-            {
-                sd_journal_print(LOG_INFO, "Failed to set DRAM CECC error "
-                                           "threshold for processor P1\n");
-            }
-        }
-    }
-    if (Configuration::getPcieAerThresholdEn() == true)
-    {
-        th.err_type = 2; /*00 = PCIE error type*/
-        th.err_count_th = Configuration::getPcieAerErrCounter();
-        th.max_intrupt_rate = 1;
-
-        ret = set_bmc_ras_err_threshold(p0_info, th);
-
-        if (ret != OOB_SUCCESS)
-        {
-            sd_journal_print(
-                LOG_INFO,
-                "Failed to set PCIE  error threshold for processor P0\n");
-        }
-
-        if (num_of_proc == TWO_SOCKET)
-        {
-            ret = set_bmc_ras_err_threshold(p1_info, th);
-
-            if (ret != OOB_SUCCESS)
-            {
-                sd_journal_print(
-                    LOG_INFO,
-                    "Failed to set PCIE error threshold for processor P1\n");
-            }
+            usleep(1000 * 1000);
+            retryCount--;
         }
     }
     return ret;
 }
 
-oob_status_t SetOobConfig()
+oob_status_t BmcRasOobConfig(struct oob_config_d_in oob_config)
 {
+
     oob_status_t ret;
-    struct oob_config_d_in oob_config;
-
-    memset(&oob_config, 0, sizeof(oob_config));
-
-    if (Configuration::getMcaPollingEn() == true)
-    {
-        /* Core MCA OOB Error Reporting Enable */
-        oob_config.core_mca_err_reporting_en = ENABLE_BIT;
-    }
-
-    if (Configuration::getDramCeccPollingEn() == true)
-    {
-        /* DRAM CECC OOB Error Counter Mode */
-        oob_config.core_mca_err_reporting_en = ENABLE_BIT;
-        oob_config.dram_cecc_oob_ec_mode =
-            ENABLE_BIT; /*Enabled in No leak mode*/
-    }
-
-    if (Configuration::getPcieAerPollingEn() == true)
-    {
-        /* PCIe OOB Error Reporting Enable */
-        oob_config.pcie_err_reporting_en = ENABLE_BIT;
-    }
 
     uint16_t retryCount = RETRY_45;
 
@@ -187,6 +120,82 @@ oob_status_t SetOobConfig()
             retryCount--;
         }
     }
+    return ret;
+}
+
+oob_status_t ErrThresholdEnable()
+{
+    oob_status_t ret = OOB_NOT_SUPPORTED;
+    struct run_time_threshold th;
+
+    memset(&th, 0, sizeof(th));
+
+    if (Configuration::getMcaThresholdEn() == true)
+    {
+        th.err_type = 0; /*00 = MCA error type*/
+        th.err_count_th = Configuration::getMcaErrCounter();
+        th.max_intrupt_rate = 1;
+
+        ret = RasErrThresholdSet(th);
+    }
+    if (Configuration::getDramCeccThresholdEn() == true)
+    {
+        th.err_type = 1; /*01 = DRAM CECC error type*/
+        th.err_count_th = Configuration::getDramCeccErrCounter();
+        th.max_intrupt_rate = 1;
+
+        ret = RasErrThresholdSet(th);
+    }
+    if (Configuration::getPcieAerThresholdEn() == true)
+    {
+
+        struct oob_config_d_in oob_config;
+
+        memset(&oob_config, 0, sizeof(oob_config));
+
+        /* PCIe OOB Error Reporting Enable */
+        oob_config.pcie_err_reporting_en = ENABLE_BIT;
+
+        BmcRasOobConfig(oob_config);
+
+        th.err_type = 2; /*00 = PCIE error type*/
+        th.err_count_th = Configuration::getPcieAerErrCounter();
+        th.max_intrupt_rate = 1;
+
+        ret = RasErrThresholdSet(th);
+    }
+    return ret;
+}
+
+oob_status_t SetOobConfig()
+{
+    oob_status_t ret;
+    struct oob_config_d_in oob_config;
+
+    memset(&oob_config, 0, sizeof(oob_config));
+
+    if (Configuration::getMcaPollingEn() == true)
+    {
+        /* Core MCA OOB Error Reporting Enable */
+        oob_config.core_mca_err_reporting_en = ENABLE_BIT;
+    }
+
+    if (Configuration::getDramCeccPollingEn() == true)
+    {
+        /* DRAM CECC OOB Error Counter Mode */
+        oob_config.core_mca_err_reporting_en = ENABLE_BIT;
+        oob_config.dram_cecc_oob_ec_mode =
+            ENABLE_BIT; /*Enabled in No leak mode*/
+    }
+
+    if (Configuration::getPcieAerPollingEn() == true)
+    {
+        /* PCIe OOB Error Reporting Enable */
+        oob_config.pcie_err_reporting_en = ENABLE_BIT;
+    }
+
+    ret = BmcRasOobConfig(oob_config);
+
     return ret;
 }
 
@@ -581,7 +590,7 @@ void RunTimeErrorPolling()
             "Runtime error polling is not supported for this platform\n");
     }
 
-    ret = SetErrThreshold();
+    ret = ErrThresholdEnable();
 
     if (ret == OOB_MAILBOX_CMD_UNKNOWN)
     {
