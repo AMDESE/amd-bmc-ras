@@ -1,0 +1,10 @@
+[Unit]
+Description=Crash dump manager
+After=xyz.openbmc_project.Chassis.Control.Power.service
+
+[Service]
+Restart=always
+ExecStart=/usr/bin/amd-bmc-ras
+
+[Install]
+WantedBy=multi-user.target

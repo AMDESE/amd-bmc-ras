@@ -1,0 +1,10 @@
+option(
+    'systemd-target',
+    description: 'Target for starting this service.',
+    type: 'string'
+)
+
+option('host-transport', type : 'string',
+        value : 'default',
+        description : 'To specify the host dump transport protocol')
+
