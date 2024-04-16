@@ -1,0 +1,39 @@
+{
+    "Configuration": [
+        {
+            "apmlRetries": {
+                "Description": "Number of APML retry count",
+                "Value": 10,
+                "MaxBoundLimit": "50"
+            }
+        },
+        {
+            "SystemRecovery": {
+                "Description": "System recovery mode",
+                "Value": "NO_RESET",
+                "MaxBoundLimit": "No specific limit"
+            }
+        },
+        {
+            "HarvestMicrocode": {
+                "Description": "Harvest microcode version",
+                "Value": true,
+                "MaxBoundLimit": ""
+            }
+        },
+        {
+            "HarvestPPIN": {
+                "Description": "Harvest PPIN",
+                "Value": true,
+                "MaxBoundLimit": ""
+            }
+        },
+        {
+            "Reset Signal": {
+                "Description": "Reset Signal Type",
+                "Value": "SYS_RST",
+                "MaxBoundLimit": ""
+            }
+        }
+    ]
+}
