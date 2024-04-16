@@ -1,6 +1,0 @@
-option(
-    'systemd-target',
-    description: 'Target for starting this service.',
-    type: 'string'
-)
-
