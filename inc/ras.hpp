@@ -137,7 +137,9 @@ void dump_proc_error_info_section(const std::shared_ptr<T>&, uint8_t, uint16_t,
                                   uint64_t*, uint32_t);
 void exportCrashdumpToDBus(int, const ERROR_TIME_STAMP&);
 void write_register(uint8_t, uint32_t, uint32_t);
-
+template <typename T>
+T getProperty(sdbusplus::bus::bus& bus, const char* service, const char* path,
+              const char* interface, const char* propertyName);
 extern boost::asio::io_service io;
 extern std::vector<uint8_t> BlockId;
 

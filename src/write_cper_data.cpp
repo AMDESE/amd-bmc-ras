@@ -875,8 +875,7 @@ void write_to_cper_file(const std::shared_ptr<T>& data, std::string ErrorType,
 
             exportCrashdumpToDBus(err_count, FatalPtr->Header.TimeStamp);
 
-            std::string ras_err_msg =
-                "CPER file generated for fatal error";
+            std::string ras_err_msg = "CPER file generated for fatal error";
 
             sd_journal_send(
                 "MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i", LOG_ERR,

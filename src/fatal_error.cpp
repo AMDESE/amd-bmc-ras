@@ -252,26 +252,6 @@ void harvestDebugLogDump(uint8_t info, uint8_t blk_id)
     }
 }
 
-template <typename T>
-T GetProperty(sdbusplus::bus::bus& bus, const char* service, const char* path,
-              const char* interface, const char* propertyName)
-{
-    auto method = bus.new_method_call(service, path,
-                                      "org.freedesktop.DBus.Properties", "Get");
-    method.append(interface, propertyName);
-    std::variant<T> value{};
-    try
-    {
-        auto reply = bus.call(method);
-        reply.read(value);
-    }
-    catch (const sdbusplus::exception::SdBusError& ex)
-    {
-        sd_journal_print(LOG_ERR, "GetProperty call failed \n");
-    }
-    return std::get<T>(value);
-}
-
 void requestHostTransition(std::string command)
 {
 
@@ -313,7 +293,7 @@ void triggerRsmrstReset()
 
     sleep(1);
     sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
-    std::string CurrentHostState = GetProperty<std::string>(
+    std::string CurrentHostState = getProperty<std::string>(
         bus, "xyz.openbmc_project.State.Host",
         "/xyz/openbmc_project/state/host0", "xyz.openbmc_project.State.Host",
         "CurrentHostState");

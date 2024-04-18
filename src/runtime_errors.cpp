@@ -28,7 +28,6 @@ oob_status_t RunTimeErrValidityCheck(uint8_t soc_num,
                 "Failed to get bmc ras runtime error validity check\n");
         }
     }
-
     return ret;
 }
 
@@ -47,7 +46,8 @@ oob_status_t RasErrThresholdSet(struct run_time_threshold th)
         if (ret != OOB_SUCCESS)
         {
             sd_journal_print(
-                LOG_INFO, "Failed to set MCA error threshold for processor P0\n");
+                LOG_INFO,
+                "Failed to set MCA error threshold for processor P0\n");
         }
         usleep(1000 * 1000);
         retryCount--;
@@ -59,7 +59,7 @@ oob_status_t RasErrThresholdSet(struct run_time_threshold th)
         retryCount = INDEX_20;
         ret = OOB_MAILBOX_CMD_UNKNOWN;
 
-        if(ret != OOB_SUCCESS)
+        if (ret != OOB_SUCCESS)
         {
             ret = set_bmc_ras_err_threshold(p1_info, th);
 

@@ -528,6 +528,10 @@ static void currentHostStateMonitor()
                 SetOobConfig();
                 ErrThresholdEnable();
             }
+            else
+            {
+                apmlInitialized = false;
+            }
         });
 }
 
@@ -584,9 +588,9 @@ bool PlatformInitialization()
 
         currentHostStateMonitor();
 
-        BlockId = {BLOCK_ID_1,  BLOCK_ID_2,  BLOCK_ID_3,
-                   BLOCK_ID_24, BLOCK_ID_33, BLOCK_ID_36,
-                   BLOCK_ID_37, BLOCK_ID_38, BLOCK_ID_40};
+        BlockId = {BLOCK_ID_1,  BLOCK_ID_2,  BLOCK_ID_3,  BLOCK_ID_23,
+                   BLOCK_ID_24, BLOCK_ID_33, BLOCK_ID_36, BLOCK_ID_37,
+                   BLOCK_ID_38, BLOCK_ID_40};
     }
     else
     {
