@@ -37,7 +37,7 @@ oob_status_t RasErrThresholdSet(struct run_time_threshold th)
 
     oob_status_t ret;
 
-    uint16_t retryCount = INDEX_20;
+    uint16_t retryCount = MAX_RETRIES;
 
     while (retryCount > 0)
     {
@@ -47,19 +47,20 @@ oob_status_t RasErrThresholdSet(struct run_time_threshold th)
         if (ret != OOB_SUCCESS)
         {
             sd_journal_print(
-                LOG_INFO, "Failed to set MCA error threshold for processor P0\n");
+                LOG_INFO,
+                "Failed to set MCA error threshold for processor P0\n");
         }
-        usleep(1000 * 1000);
+        sleep(INDEX_1);
         retryCount--;
     }
 
     if (num_of_proc == TWO_SOCKET)
     {
 
-        retryCount = INDEX_20;
+        retryCount = MAX_RETRIES;
         ret = OOB_MAILBOX_CMD_UNKNOWN;
 
-        if(ret != OOB_SUCCESS)
+        if (ret != OOB_SUCCESS)
         {
             ret = set_bmc_ras_err_threshold(p1_info, th);
 
@@ -69,7 +70,8 @@ oob_status_t RasErrThresholdSet(struct run_time_threshold th)
                     LOG_INFO,
                     "Failed to set MCA error threshold for processor P1\n");
             }
-            usleep(1000 * 1000);
+            sleep(INDEX_1);
+
             retryCount--;
         }
     }
@@ -81,7 +83,7 @@ oob_status_t BmcRasOobConfig(struct oob_config_d_in oob_config)
 
     oob_status_t ret;
 
-    uint16_t retryCount = RETRY_45;
+    uint16_t retryCount = MAX_RETRIES;
 
     while (retryCount > 0)
     {
@@ -96,13 +98,19 @@ oob_status_t BmcRasOobConfig(struct oob_config_d_in oob_config)
             sd_journal_print(LOG_ERR, "Failed to set ras oob configuration for "
                                       "Processor P0. Retrying....\n");
         }
-        sleep(SLEEP_20);
+        sleep(INDEX_1);
         retryCount--;
     }
 
+    if (ret == OOB_SUCCESS)
+    {
+        sd_journal_print(LOG_INFO,
+                         "BMC RAS oob configuration set successfully for P0\n");
+    }
     if (num_of_proc == TWO_SOCKET)
     {
-        retryCount = RETRY_45;
+        retryCount = MAX_RETRIES;
+
         while (retryCount > 0)
         {
             ret = set_bmc_ras_oob_config(p1_info, oob_config);
@@ -116,10 +124,18 @@ oob_status_t BmcRasOobConfig(struct oob_config_d_in oob_config)
                 sd_journal_print(LOG_ERR, "Failed to set ras oob configuration "
                                           "for Processor P1. Retrying....\n");
             }
-            sleep(SLEEP_20);
+            sleep(INDEX_1);
             retryCount--;
         }
+
+        if (ret == OOB_SUCCESS)
+        {
+            sd_journal_print(
+                LOG_INFO,
+                "BMC RAS oob configuration set successfully for P1\n");
+        }
     }
+
     return ret;
 }
 
@@ -150,8 +166,22 @@ oob_status_t ErrThresholdEnable()
     {
 
         struct oob_config_d_in oob_config;
+        uint32_t d_out = 0;
 
         memset(&oob_config, 0, sizeof(oob_config));
+
+        ret = get_bmc_ras_oob_config(INDEX_0, &d_out);
+
+        if (ret)
+        {
+            sd_journal_print(LOG_INFO,
+                             "Failed to get ras oob configuration \n");
+        }
+
+        oob_config.core_mca_err_reporting_en =
+            (d_out >> CORE_MCA_ERR_REPORT_EN & BIT_MASK);
+        oob_config.dram_cecc_oob_ec_mode =
+            (d_out >> DRAM_CECC_OOB_EC_MODE & TRIBBLE_BITS);
 
         /* PCIe OOB Error Reporting Enable */
         oob_config.pcie_err_reporting_en = ENABLE_BIT;
@@ -577,6 +607,10 @@ void RunTimeErrorPolling()
       is supported for the platform*/
     if (ret != OOB_MAILBOX_CMD_UNKNOWN)
     {
+
+        sd_journal_print(LOG_INFO,
+                         "Starting seprate threads to perform runtime error "
+                         "polling as per user settings\n");
         McaErrorPollingHandler(Configuration::getMcaPollingPeriod());
 
         DramCeccErrorPollingHandler(Configuration::getDramCeccPollingPeriod());
