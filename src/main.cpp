@@ -7,7 +7,6 @@
 //#define LOG_DEBUG LOG_ERR
 
 boost::asio::io_service io;
-static std::shared_ptr<sdbusplus::asio::connection> conn;
 static std::shared_ptr<sdbusplus::asio::object_server> server;
 static std::array<
     std::pair<std::string, std::shared_ptr<sdbusplus::asio::dbus_interface>>,
@@ -68,6 +67,8 @@ uint64_t p1_last_transact_addr = 0;
 std::vector<uint8_t> BlockId;
 uint8_t ProgId = 0;
 bool apmlInitialized = false;
+bool platformInitialized = false;
+bool runtimeErrPollingSupported = false;
 
 /**
  * Check number of CPU's of the current platform.
@@ -295,6 +296,48 @@ void CreateIndexFile()
     }
 }
 
+void CreateDramEccErrorFile()
+{
+    if (!std::filesystem::exists(dramCeccErrorFile.data()))
+    {
+        nlohmann::json j;
+
+        for (const auto& pair : P0_DimmEccCount)
+        {
+            j[pair.first] = pair.second;
+        }
+        for (const auto& pair : P1_DimmEccCount)
+        {
+            j[pair.first] = pair.second;
+        }
+
+        std::ofstream file(dramCeccErrorFile.data());
+        file << std::setw(INDEX_4) << j << std::endl;
+    }
+    else
+    {
+        nlohmann::json j;
+        std::ifstream file(dramCeccErrorFile.data());
+        file >> j;
+
+        for (auto& pair : P0_DimmEccCount)
+        {
+            if (j.contains(pair.first))
+            {
+                pair.second = j[pair.first];
+            }
+        }
+
+        for (auto& pair : P1_DimmEccCount)
+        {
+            if (j.contains(pair.first))
+            {
+                pair.second = j[pair.first];
+            }
+        }
+    }
+}
+
 void CreateConfigFile()
 {
 
@@ -335,7 +378,7 @@ void CreateConfigFile()
 
         jsonConfig["McaPollingEn"] = true;
         jsonConfig["McaPollingPeriod"] = MCA_POLLING_PERIOD;
-        jsonConfig["DramCeccPollingEn"] = true;
+        jsonConfig["DramCeccPollingEn"] = false;
         jsonConfig["DramCeccPollingPeriod"] = DRAM_CECC_POLLING_PERIOD;
         jsonConfig["PcieAerPollingEn"] = true;
         jsonConfig["PcieAerPollingPeriod"] = PCIE_AER_POLLING_PERIOD;
@@ -418,7 +461,8 @@ oob_status_t read_register(uint8_t info, uint32_t reg, uint8_t* value)
         }
         sd_journal_print(LOG_ERR, "Failed to read register:0x%x Retrying\n",
                          reg);
-        usleep(1000 * 1000);
+
+        sleep(INDEX_1);
         retryCount--;
     }
     if (ret != OOB_SUCCESS)
@@ -464,10 +508,9 @@ static void currentHostStateMonitor()
 {
     sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
     boost::system::error_code ec;
-    auto conn = std::make_shared<sdbusplus::asio::connection>(io);
 
     static auto match = sdbusplus::bus::match::match(
-        *conn,
+        bus,
         "type='signal',member='PropertiesChanged', "
         "interface='org.freedesktop.DBus.Properties', "
         "arg0='xyz.openbmc_project.State.Host'",
@@ -505,53 +548,38 @@ static void currentHostStateMonitor()
                 return;
             }
 
-            if (*currentHostState !=
-                "xyz.openbmc_project.State.Host.HostState.Off")
+            apmlInitialized = false;
+
+            if (std::filesystem::exists(dramCeccErrorFile.data()))
             {
+                nlohmann::json j;
+                std::ifstream file(dramCeccErrorFile.data());
+                file >> j;
 
-                apmlInitialized = false;
-                struct stat buffer;
-
-                while (INDEX_1)
+                for (auto& pair : P0_DimmEccCount)
                 {
-                    if (stat(APML_INIT_DONE_FILE, &buffer) == 0)
-                    {
-                        sd_journal_print(LOG_INFO,
-                                         "APML initialization done \n");
-                        break;
-                    }
+                    pair.second = 0;
+                    j[pair.first] = pair.second;
                 }
 
-                sleep(180);
-                apmlInitialized = true;
-                clearSbrmiAlertMask();
-                SetOobConfig();
-                ErrThresholdEnable();
+                for (auto& pair : P1_DimmEccCount)
+                {
+                    pair.second = 0;
+                    j[pair.first] = pair.second;
+                }
+
+                std::ofstream outFile(dramCeccErrorFile.data());
+                outFile << std::setw(INDEX_4) << j << std::endl;
             }
         });
 }
 
-/* Check if the ADDC feature is supported for the platform
- * Supported platform = Stones , Breithorn , MI300
- * @return true if the module is supported, false otherwise.
- */
-bool PlatformInitialization()
+void performPlatformInitialization()
 {
     oob_status_t ret;
     uint8_t soc_num = 0;
-
     struct processor_info plat_info[INDEX_1];
-    struct stat buffer;
     uint16_t retryCount = 10;
-
-    while (INDEX_1)
-    {
-        if (stat(APML_INIT_DONE_FILE, &buffer) == 0)
-        {
-            sd_journal_print(LOG_INFO, "APML initialization done\n");
-            break;
-        }
-    }
 
     while (retryCount > 0)
     {
@@ -562,38 +590,102 @@ bool PlatformInitialization()
             FamilyId = plat_info->family;
             break;
         }
-        usleep(1000 * 1000);
+        sleep(INDEX_1);
         retryCount--;
-        sd_journal_print(LOG_INFO,
-                         "Reading family ID failed. Retry count = %d \n",
-                         retryCount);
     }
-    if (plat_info->family == GENOA_FAMILY_ID)
+
+    if (ret == OOB_SUCCESS)
     {
-        if ((plat_info->model != MI300A_MODEL_NUMBER) &&
-            (plat_info->model != MI300C_MODEL_NUMBER))
+        if (plat_info->family == GENOA_FAMILY_ID)
         {
-            BlockId = {BLOCK_ID_33};
+            if ((plat_info->model != MI300A_MODEL_NUMBER) &&
+                (plat_info->model != MI300C_MODEL_NUMBER))
+            {
+                BlockId = {BLOCK_ID_33};
+            }
         }
-    }
-    else if (plat_info->family == TURIN_FAMILY_ID)
-    {
+        else if (plat_info->family == TURIN_FAMILY_ID)
+        {
+            currentHostStateMonitor();
 
+            clearSbrmiAlertMask();
+
+            BlockId = {BLOCK_ID_1,  BLOCK_ID_2,  BLOCK_ID_3,  BLOCK_ID_23,
+                       BLOCK_ID_24, BLOCK_ID_33, BLOCK_ID_36, BLOCK_ID_37,
+                       BLOCK_ID_38, BLOCK_ID_40};
+
+            RunTimeErrorPolling();
+
+            runtimeErrPollingSupported = true;
+        }
+        platformInitialized = true;
         apmlInitialized = true;
-        clearSbrmiAlertMask();
-
-        currentHostStateMonitor();
-
-        BlockId = {BLOCK_ID_1,  BLOCK_ID_2,  BLOCK_ID_3,
-                   BLOCK_ID_24, BLOCK_ID_33, BLOCK_ID_36,
-                   BLOCK_ID_37, BLOCK_ID_38, BLOCK_ID_40};
     }
     else
     {
-        sd_journal_print(LOG_ERR, "ADDC is not supported for this platform\n");
-        return false;
+        sd_journal_print(LOG_ERR,
+                         "Failed to perform platform initialization\n");
     }
-    return true;
+}
+
+void apmlActiveMonitor()
+{
+    uint8_t rev;
+    oob_status_t ret;
+    uint8_t soc_num = INDEX_0;
+    uint16_t retryCount = 10;
+
+    while (retryCount > 0)
+    {
+        ret = read_sbrmi_revision(soc_num, &rev);
+        if (ret == OOB_SUCCESS)
+        {
+            performPlatformInitialization();
+            break;
+        }
+        sleep(INDEX_1);
+        retryCount--;
+    }
+
+    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+    boost::system::error_code ec;
+
+    static auto match = sdbusplus::bus::match::match(
+        bus,
+        "type='signal',member='apmlActive', "
+        "interface='com.amd.crashdump.ApmlActive'",
+        [](sdbusplus::message::message& message) {
+            std::string apmlActive;
+            try
+            {
+                message.read(apmlActive);
+                sd_journal_print(LOG_INFO, "APML active signal received %s\n",
+                                 apmlActive.c_str());
+                if (apmlActive == "true")
+                {
+                    if (platformInitialized == false)
+                    {
+                        performPlatformInitialization();
+                    }
+                    else
+                    {
+                        apmlInitialized = true;
+                        clearSbrmiAlertMask();
+                        if (runtimeErrPollingSupported == true)
+                        {
+                            SetOobConfig();
+                            ErrThresholdEnable();
+                        }
+                    }
+                }
+            }
+            catch (std::exception& e)
+            {
+                sd_journal_print(LOG_ERR,
+                                 "Unable to read apmlActive D-bus signal\n");
+                return;
+            }
+        });
 }
 
 void findProgramId()
@@ -628,18 +720,19 @@ int main()
         return false;
     }
 
-    if (PlatformInitialization() == false)
-    {
-        return false;
-    }
+    CreateIndexFile();
+
+    CreateConfigFile();
+
+    CreateDbusInterface();
+
+    apmlActiveMonitor();
+
+    CreateDramEccErrorFile();
 
     getCpuID();
 
     getBoardID();
-
-    CreateIndexFile();
-
-    CreateConfigFile();
 
     findProgramId();
 
@@ -651,10 +744,6 @@ int main()
     {
         getPpinFuse();
     }
-
-    CreateDbusInterface();
-
-    RunTimeErrorPolling();
 
     requestGPIOEvents("P0_I3C_APML_ALERT_L", P0AlertEventHandler,
                       P0_apmlAlertLine, P0_apmlAlertEvent);

@@ -80,8 +80,6 @@ extern "C" {
 #define RUNTIME_DRAM_ERR ("RUNTIME_DRAM_ERROR")
 #define FATAL_ERR ("FATAL")
 
-#define RETRY_45 (45)
-#define SLEEP_20 (20)
 #define WARM_RESET (0)
 #define COLD_RESET (1)
 #define NO_RESET (2)
@@ -94,6 +92,7 @@ extern "C" {
 
 #define SYS_RESET ("SYS_RST")
 #define RSMRST ("RSMRST")
+#define BIT_MASK (1)
 
 void RunTimeErrorPolling();
 oob_status_t SetOobConfig();
@@ -137,6 +136,9 @@ void dump_proc_error_info_section(const std::shared_ptr<T>&, uint8_t, uint16_t,
                                   uint64_t*, uint32_t);
 void exportCrashdumpToDBus(int, const ERROR_TIME_STAMP&);
 void write_register(uint8_t, uint32_t, uint32_t);
+template <typename T>
+T getProperty(sdbusplus::bus::bus& bus, const char* service, const char* path,
+              const char* interface, const char* propertyName);
 
 extern boost::asio::io_service io;
 extern std::vector<uint8_t> BlockId;
@@ -180,4 +182,10 @@ extern uint8_t ProgId;
 extern uint32_t FamilyId;
 extern bool apmlInitialized;
 constexpr std::string_view kRasDir = "/var/lib/amd-ras/";
+constexpr std::string_view dramCeccErrorFile =
+    "/var/lib/amd-ras/dram_cecc_error.json";
+
+extern std::vector<std::pair<std::string, uint64_t>> P0_DimmEccCount;
+extern std::vector<std::pair<std::string, uint64_t>> P1_DimmEccCount;
+
 #endif

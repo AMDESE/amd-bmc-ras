@@ -12,6 +12,7 @@ static std::array<
 constexpr std::string_view crashdumpService = "com.amd.crashdump";
 constexpr std::string_view crashdumpPath = "/com/amd/crashdump";
 constexpr std::string_view crashdumpInterface = "com.amd.crashdump";
+constexpr std::string_view dimmEccPath = "/com/amd/crashdump/dramEccPath";
 
 constexpr std::string_view deleteAllInterface =
     "xyz.openbmc_project.Collection.DeleteAll";
@@ -20,6 +21,10 @@ constexpr std::string_view crashdumpAssertedInterface =
     "com.amd.crashdump.Asserted";
 constexpr std::string_view crashdumpConfigInterface =
     "com.amd.crashdump.Configuration";
+constexpr std::string_view apmlActiveInterface = "com.amd.crashdump.ApmlActive";
+constexpr std::string_view dimmEccInterface =
+    "com.amd.crashdump.DimmEcc.ErrorCount";
+
 constexpr std::string_view crashdumpAssertedMethod = "GenerateAssertedLog";
 // These 2 interfaces will be called by bmcweb, not supported now.
 // constexpr std::string_view crashdumpOnDemandInterface =
@@ -29,6 +34,22 @@ constexpr std::string_view crashdumpAssertedMethod = "GenerateAssertedLog";
 // std::string_view crashdumpTelemetryMethod = "GenerateTelemetryLog";
 
 constexpr int kCrashdumpTimeInSec = 300;
+
+std::vector<std::pair<std::string, uint64_t>> P0_DimmEccCount = {
+    {"P0_DIMM_A", 0}, {"P0_DIMM_A1", 0}, {"P0_DIMM_B", 0}, {"P0_DIMM_B1", 0},
+    {"P0_DIMM_C", 0}, {"P0_DIMM_C1", 0}, {"P0_DIMM_D", 0}, {"P0_DIMM_D1", 0},
+    {"P0_DIMM_E", 0}, {"P0_DIMM_E1", 0}, {"P0_DIMM_F", 0}, {"P0_DIMM_F1", 0},
+    {"P0_DIMM_G", 0}, {"P0_DIMM_G1", 0}, {"P0_DIMM_H", 0}, {"P0_DIMM_H1", 0},
+    {"P0_DIMM_I", 0}, {"P0_DIMM_I1", 0}, {"P0_DIMM_J", 0}, {"P0_DIMM_J1", 0},
+    {"P0_DIMM_K", 0}, {"P0_DIMM_K1", 0}, {"P0_DIMM_L", 0}, {"P0_DIMM_L1", 0}};
+
+std::vector<std::pair<std::string, uint64_t>> P1_DimmEccCount = {
+    {"P1_DIMM_A", 0}, {"P1_DIMM_A1", 0}, {"P1_DIMM_B", 0}, {"P1_DIMM_B1", 0},
+    {"P1_DIMM_C", 0}, {"P1_DIMM_C1", 0}, {"P1_DIMM_D", 0}, {"P1_DIMM_D1", 0},
+    {"P1_DIMM_E", 0}, {"P1_DIMM_E1", 0}, {"P1_DIMM_F", 0}, {"P1_DIMM_F1", 0},
+    {"P1_DIMM_G", 0}, {"P1_DIMM_G1", 0}, {"P1_DIMM_H", 0}, {"P1_DIMM_H1", 0},
+    {"P1_DIMM_I", 0}, {"P1_DIMM_I1", 0}, {"P1_DIMM_J", 0}, {"P1_DIMM_J1", 0},
+    {"P1_DIMM_K", 0}, {"P1_DIMM_K1", 0}, {"P1_DIMM_L", 0}, {"P1_DIMM_L1", 0}};
 
 template <typename T>
 void updateConfigFile(std::string jsonField, T updateData)
@@ -122,6 +143,12 @@ void CreateDbusInterface()
     conn->request_name(crashdumpService.data());
     server = std::make_shared<sdbusplus::asio::object_server>(conn);
 
+    std::shared_ptr<sdbusplus::asio::dbus_interface> apmlIface =
+        server->add_interface(crashdumpPath.data(), apmlActiveInterface.data());
+
+    // Set the signal handler using a lambda function
+    apmlIface->register_signal<std::string>("apmlActive");
+    apmlIface->initialize();
     // This DBus interface/method should be triggered by
     // host-error-monitor(https://github.com/openbmc/host-error-monitor).
     // However `amd-ras` monitors the alert pin by itself instead of asking
@@ -145,6 +172,23 @@ void CreateDbusInterface()
             return "Log started";
         });
     assertedIface->initialize();
+
+    std::shared_ptr<sdbusplus::asio::dbus_interface> dimmEccIface =
+        server->add_interface(dimmEccPath.data(), dimmEccInterface.data());
+
+    dimmEccIface
+        ->register_property_r<std::vector<std::pair<std::string, uint64_t>>>(
+            "P0_DIMM_ECC_COUNT", P0_DimmEccCount,
+            sdbusplus::vtable::property_::emits_change,
+            [](const auto&) { return P0_DimmEccCount; });
+
+    dimmEccIface
+        ->register_property_r<std::vector<std::pair<std::string, uint64_t>>>(
+            "P1_DIMM_ECC_COUNT", P1_DimmEccCount,
+            sdbusplus::vtable::property_::emits_change,
+            [](const auto&) { return P1_DimmEccCount; });
+
+    dimmEccIface->initialize();
 
     // Create Configuration interface
     std::shared_ptr<sdbusplus::asio::dbus_interface> configIface =
