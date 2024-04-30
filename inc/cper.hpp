@@ -25,12 +25,14 @@
 #define BYTE_4 (4)
 #define BYTE_2 (2)
 #define ENABLE_BIT (1)
+#define CHIP_SEL_NUM_POS (21)
+#define NIBBLE_MASK (0xF)
 
 /*
  * CPER section descriptor revision, used in revision field in struct
  * cper_section_descriptor
  */
-#define CPER_MINOR_REV (0x0007)
+#define CPER_MINOR_REV (0x0008)
 
 #define ADDC_GEN_NUMBER_1 (0x01)
 #define ADDC_GEN_NUMBER_2 (0x02)

@@ -37,7 +37,7 @@ oob_status_t RasErrThresholdSet(struct run_time_threshold th)
 
     oob_status_t ret;
 
-    uint16_t retryCount = INDEX_20;
+    uint16_t retryCount = MAX_RETRIES;
 
     while (retryCount > 0)
     {
@@ -47,19 +47,20 @@ oob_status_t RasErrThresholdSet(struct run_time_threshold th)
         if (ret != OOB_SUCCESS)
         {
             sd_journal_print(
-                LOG_INFO, "Failed to set MCA error threshold for processor P0\n");
+                LOG_INFO,
+                "Failed to set MCA error threshold for processor P0\n");
         }
-        usleep(1000 * 1000);
+        sleep(INDEX_1);
         retryCount--;
     }
 
     if (num_of_proc == TWO_SOCKET)
     {
 
-        retryCount = INDEX_20;
+        retryCount = MAX_RETRIES;
         ret = OOB_MAILBOX_CMD_UNKNOWN;
 
-        if(ret != OOB_SUCCESS)
+        if (ret != OOB_SUCCESS)
         {
             ret = set_bmc_ras_err_threshold(p1_info, th);
 
@@ -69,7 +70,7 @@ oob_status_t RasErrThresholdSet(struct run_time_threshold th)
                     LOG_INFO,
                     "Failed to set MCA error threshold for processor P1\n");
             }
-            usleep(1000 * 1000);
+            sleep(INDEX_1);
             retryCount--;
         }
     }
@@ -78,34 +79,16 @@ oob_status_t RasErrThresholdSet(struct run_time_threshold th)
 
 oob_status_t BmcRasOobConfig(struct oob_config_d_in oob_config)
 {
-
+    uint16_t retryCount = 0;
     oob_status_t ret;
 
-    uint16_t retryCount = RETRY_45;
-
-    while (retryCount > 0)
+    for(int i = 0 ; i < num_of_proc; i++)
     {
-        ret = set_bmc_ras_oob_config(p0_info, oob_config);
+        retryCount = MAX_RETRIES;
 
-        if (ret == OOB_SUCCESS || ret == OOB_MAILBOX_CMD_UNKNOWN)
-        {
-            break;
-        }
-        else
-        {
-            sd_journal_print(LOG_ERR, "Failed to set ras oob configuration for "
-                                      "Processor P0. Retrying....\n");
-        }
-        sleep(SLEEP_20);
-        retryCount--;
-    }
-
-    if (num_of_proc == TWO_SOCKET)
-    {
-        retryCount = RETRY_45;
         while (retryCount > 0)
         {
-            ret = set_bmc_ras_oob_config(p1_info, oob_config);
+            ret = set_bmc_ras_oob_config(i, oob_config);
 
             if (ret == OOB_SUCCESS || ret == OOB_MAILBOX_CMD_UNKNOWN)
             {
@@ -114,12 +97,22 @@ oob_status_t BmcRasOobConfig(struct oob_config_d_in oob_config)
             else
             {
                 sd_journal_print(LOG_ERR, "Failed to set ras oob configuration "
-                                          "for Processor P1. Retrying....\n");
+                                          "for Processor P%d. Retrying....\n",i);
             }
-            sleep(SLEEP_20);
+            sleep(INDEX_1);
             retryCount--;
         }
+
+        if (ret == OOB_SUCCESS)
+        {
+            sd_journal_print(
+                LOG_INFO,
+                "BMC RAS oob configuration set successfully for the processor P%d\n",i);
+        } else {
+            break;
+        }
     }
+
     return ret;
 }
 
@@ -150,8 +143,21 @@ oob_status_t ErrThresholdEnable()
     {
 
         struct oob_config_d_in oob_config;
+        uint32_t d_out = 0;
 
         memset(&oob_config, 0, sizeof(oob_config));
+
+        ret = get_bmc_ras_oob_config(INDEX_0, &d_out);
+        if (ret)
+        {
+            sd_journal_print(LOG_INFO,
+                             "Failed to get ras oob configuration \n");
+        }
+
+        oob_config.core_mca_err_reporting_en =
+            (d_out >> CORE_MCA_ERR_REPORT_EN & BIT_MASK);
+        oob_config.dram_cecc_oob_ec_mode =
+            (d_out >> DRAM_CECC_OOB_EC_MODE & TRIBBLE_BITS);
 
         /* PCIe OOB Error Reporting Enable */
         oob_config.pcie_err_reporting_en = ENABLE_BIT;
@@ -434,6 +440,130 @@ void harvest_runtime_errors(uint8_t ErrorPollingType,
     }
 }
 
+void updateErrorCount(
+    std::vector<std::pair<std::string, uint64_t>>& P0_DimmEccCount,
+    std::string DimmLabel, uint16_t err_count)
+{
+
+    auto itCheck =
+        std::find_if(P0_DimmEccCount.begin(), P0_DimmEccCount.end(),
+                     [&](const std::pair<std::string, uint64_t>& pair) {
+                         return pair.first == DimmLabel;
+                     });
+
+    if (itCheck != P0_DimmEccCount.end())
+    {
+        itCheck->second += err_count;
+
+        if (std::filesystem::exists(dramCeccErrorFile.data()))
+        {
+            nlohmann::json j;
+            std::ifstream file(dramCeccErrorFile.data());
+            file >> j;
+
+            if (j.contains(itCheck->first))
+            {
+                j[itCheck->first] = itCheck->second;
+                std::ofstream file(dramCeccErrorFile.data());
+                file << std::setw(INDEX_4) << j << std::endl;
+            }
+        }
+    }
+}
+
+void harvest_dram_cecc_error_counters(struct ras_rt_valid_err_inst inst,
+                                      uint8_t soc_num)
+{
+    uint32_t d_out = 0;
+    struct run_time_err_d_in d_in;
+    uint16_t err_count;
+    uint8_t ch_num;
+    uint8_t chip_sel_num;
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
+
+    if (inst.number_of_inst != 0)
+    {
+        uint16_t n = 0;
+        while (n < inst.number_of_inst)
+        {
+            memset(&d_in, 0, sizeof(d_in));
+            memset(&d_out, 0, sizeof(d_out));
+            d_in.valid_inst_index = n;
+            d_in.offset = 0;
+            d_in.category = DRAM_CECC_ERR;
+
+            ret = get_bmc_ras_run_time_error_info(soc_num, d_in, &d_out);
+
+            if (ret != OOB_SUCCESS)
+            {
+                // retry
+                uint16_t retryCount = Configuration::getApmlRetryCount();
+                while (retryCount > 0)
+                {
+                    memset(&d_in, 0, sizeof(d_in));
+                    memset(&d_out, 0, sizeof(d_out));
+                    d_in.offset = 0;
+                    d_in.category = DRAM_CECC_ERR;
+                    d_in.valid_inst_index = n;
+
+                    ret =
+                        get_bmc_ras_run_time_error_info(soc_num, d_in, &d_out);
+                    if (ret == OOB_SUCCESS)
+                    {
+                        break;
+                    }
+                    retryCount--;
+                    usleep(1000 * 1000);
+                }
+            }
+            n++;
+        }
+        if (ret == OOB_SUCCESS)
+        {
+            err_count = d_out & TWO_BYTE_MASK;
+
+            ch_num = (d_out >> INDEX_16) & NIBBLE_MASK;
+
+            std::map<int, char> dimmPairSequence = {
+                {0, 'C'}, {1, 'E'}, {2, 'F'}, {3, 'A'}, {4, 'B'},  {5, 'D'},
+                {6, 'I'}, {7, 'K'}, {8, 'L'}, {9, 'G'}, {10, 'H'}, {11, 'J'}};
+
+            char Channel = '\0';
+            auto it = dimmPairSequence.find(ch_num);
+
+            if (it != dimmPairSequence.end())
+            {
+                Channel = it->second;
+            }
+
+            std::string soc_num_str = std::to_string(soc_num);
+            std::string DimmLabel = "P" + soc_num_str + "_DIMM_" + Channel;
+
+            chip_sel_num = (d_out >> CHIP_SEL_NUM_POS) & INDEX_3;
+
+            uint8_t DimmNumber = chip_sel_num >> INDEX_1;
+
+            if (DimmNumber)
+            {
+                DimmLabel = DimmLabel + std::to_string(DimmNumber);
+            }
+
+            sd_journal_print(LOG_INFO,
+                             "Dimm Label = %s Dram Cecc error count = %d\n",
+                             DimmLabel.data(), err_count);
+
+            if (soc_num == p0_info)
+            {
+                updateErrorCount(P0_DimmEccCount, DimmLabel, err_count);
+            }
+            else if (soc_num == p1_info)
+            {
+                updateErrorCount(P1_DimmEccCount, DimmLabel, err_count);
+            }
+        }
+    }
+}
+
 void RunTimeErrorInfoCheck(uint8_t ErrType, uint8_t ReqType)
 {
 
@@ -467,12 +597,28 @@ void RunTimeErrorInfoCheck(uint8_t ErrType, uint8_t ReqType)
             {
                 mca_ptr = std::make_shared<PROC_RUNTIME_ERR_RECORD>();
             }
+            harvest_runtime_errors(ErrType, p0_inst, p1_inst);
         }
         else if (ErrType == DRAM_CECC_ERR)
         {
-            if (dram_ptr == nullptr)
+            if (ReqType == POLLING_MODE)
             {
-                dram_ptr = std::make_shared<PROC_RUNTIME_ERR_RECORD>();
+                if (p0_inst.number_of_inst != 0)
+                {
+                    harvest_dram_cecc_error_counters(p0_inst, p0_info);
+                }
+                if (p1_inst.number_of_inst != 0)
+                {
+                    harvest_dram_cecc_error_counters(p1_inst, p1_info);
+                }
+            }
+            else if (ReqType == INTERRUPT_MODE)
+            {
+                if (dram_ptr == nullptr)
+                {
+                    dram_ptr = std::make_shared<PROC_RUNTIME_ERR_RECORD>();
+                }
+                harvest_runtime_errors(ErrType, p0_inst, p1_inst);
             }
         }
         else if (ErrType == PCIE_ERR)
@@ -481,9 +627,8 @@ void RunTimeErrorInfoCheck(uint8_t ErrType, uint8_t ReqType)
             {
                 pcie_ptr = std::make_shared<PCIE_RUNTIME_ERR_RECORD>();
             }
+            harvest_runtime_errors(ErrType, p0_inst, p1_inst);
         }
-
-        harvest_runtime_errors(ErrType, p0_inst, p1_inst);
     }
 }
 
@@ -577,6 +722,10 @@ void RunTimeErrorPolling()
       is supported for the platform*/
     if (ret != OOB_MAILBOX_CMD_UNKNOWN)
     {
+
+        sd_journal_print(LOG_INFO,
+                         "Starting seprate threads to perform runtime error "
+                         "polling as per user settings\n");
         McaErrorPollingHandler(Configuration::getMcaPollingPeriod());
 
         DramCeccErrorPollingHandler(Configuration::getDramCeccPollingPeriod());
