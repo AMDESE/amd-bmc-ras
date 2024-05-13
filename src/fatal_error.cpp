@@ -708,6 +708,104 @@ void harvest_fatal_errors(uint8_t info, uint16_t numbanks, uint16_t bytespermca)
     }
 }
 
+
+std::vector<uint32_t> hexstring_to_vector(const std::string& hexString)
+{
+    std::vector<uint32_t> result;
+
+    // Skip the "0x" prefix if present
+    size_t start = (hexString.substr(INDEX_0, INDEX_2) == "0x") ? INDEX_2 : INDEX_0;
+
+    // Process the string in chunks of 8 characters (32 bits)
+    for (size_t i = start; i < hexString.length(); i += INDEX_8)
+    {
+        std::string chunk = hexString.substr(i, INDEX_8);
+        std::istringstream iss(chunk);
+        uint32_t value = 0;
+        iss >> std::hex >> value;
+        if (iss)
+        {
+            result.push_back(value);
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    // Pad the result vector with leading zeros if necessary
+    while (result.size() < 8)
+    {
+        result.insert(result.begin(), 0);
+    }
+
+    return result;
+}
+
+bool compare_with_bitwise_AND(const uint32_t* Var, const std::string& hexString)
+{
+
+    std::vector<uint32_t> hexVector = hexstring_to_vector(hexString);
+    std::vector<uint32_t> result(8);
+
+    // Pad the Var array with leading zeros if necessary
+    std::vector<uint32_t> varVector(8);
+
+    std::copy(Var, Var + 8, varVector.begin());
+
+    // Reverse the order of elements in varVector
+    std::reverse(varVector.begin(), varVector.end());
+
+    // Perform the bitwise AND operation
+    for (size_t i = 0; i < 8; i++)
+    {
+        result[i] = varVector[i] & hexVector[i];
+    }
+
+    // Compare the result with the original hexVector
+    return std::equal(result.begin(), result.end(), hexVector.begin(),
+                      hexVector.end());
+}
+
+bool check_signature_id_match()
+{
+    bool ret = false;
+
+    std::vector<std::pair<std::string, std::string>> configSigIdList =
+        Configuration::getAllAifsSignatureId();
+
+    uint32_t P0_tempVar[8];
+    std::memcpy(P0_tempVar, rcd->P0_ErrorRecord.ProcError.SignatureID,
+                sizeof(P0_tempVar));
+
+    uint32_t P1_tempVar[8];
+    std::memcpy(P1_tempVar, rcd->P1_ErrorRecord.ProcError.SignatureID,
+                sizeof(P1_tempVar));
+
+    for (const auto& pair : configSigIdList)
+    {
+        bool equal = compare_with_bitwise_AND(P0_tempVar, pair.second);
+
+        if (equal == true)
+        {
+            sd_journal_print(LOG_INFO, "Signature ID matched with the config "
+                                       "file signature ID list\n");
+            ret = true;
+            break;
+        }
+
+        equal = compare_with_bitwise_AND(P1_tempVar, pair.second);
+        if (equal == true)
+        {
+            sd_journal_print(LOG_INFO, "Signature ID matched with the config "
+                                       "file signature ID list\n");
+            ret = true;
+            break;
+        }
+    }
+    return ret;
+}
+
 bool harvest_ras_errors(uint8_t info, std::string alert_name)
 {
     std::unique_lock lock(harvest_in_progress_mtx);
@@ -867,9 +965,85 @@ bool harvest_ras_errors(uint8_t info, std::string alert_name)
                     write_to_cper_file(rcd, FATAL_ERR, INDEX_2);
                 }
 
-                rcd = nullptr;
+                bool recoveryAction = true;
 
-                SystemRecovery(buf);
+                if ((Configuration::getAifsArmed() == true) &&
+                    (check_signature_id_match() == true))
+                {
+                    sd_journal_print(LOG_INFO, "AIFS armed for the system\n");
+
+                    std::ifstream inputFile(EVENT_SUBSCRIPTION_FILE);
+
+                    if (inputFile.is_open())
+                    {
+                        nlohmann::json jsonData;
+                        inputFile >> jsonData;
+
+                        if (jsonData.find("Subscriptions") != jsonData.end())
+                        {
+                            const auto& subscriptionsArray =
+                                jsonData["Subscriptions"];
+                            if (subscriptionsArray.is_array())
+                            {
+                                for (const auto& subscription :
+                                     subscriptionsArray)
+                                {
+                                    const auto& messageIds =
+                                        subscription["MessageIds"];
+                                    if (messageIds.is_array())
+                                    {
+                                        for (const auto& messageId : messageIds)
+                                        {
+                                            if (messageId == "AifsFailureMatch")
+                                            {
+                                                recoveryAction = false;
+
+                                                struct ras_override_delay d_in;
+                                                bool ack_resp;
+                                                d_in.stop_delay_counter = 1;
+                                                oob_status_t ret;
+
+                                                ret =
+                                                    override_delay_reset_on_sync_flood(
+                                                        info, d_in, &ack_resp);
+
+                                                if (ret)
+                                                {
+                                                    sd_journal_print(
+                                                        LOG_ERR,
+                                                        "Failed to override "
+                                                        "delay value reset on "
+                                                        "sync flood\n");
+                                                }
+                                                else
+                                                {
+                                                    sd_journal_print(
+                                                        LOG_INFO,
+                                                        "Successfully sent "
+                                                        "Reset delay on "
+                                                        "Syncflood command\n");
+                                                }
+                                                sd_journal_send(
+                                                    "PRIORITY=%i", LOG_INFO,
+                                                    "REDFISH_MESSAGE_ID=%s",
+                                                    "OpenBMC.0.1."
+                                                    "AifsFailureMatch",
+                                                    NULL);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        inputFile.close();
+                    }
+                }
+                if (recoveryAction == true)
+                {
+                    SystemRecovery(buf);
+                }
+                rcd = nullptr;
 
                 P0_AlertProcessed = false;
                 P1_AlertProcessed = false;
@@ -956,8 +1130,8 @@ void P0PmicAfEventHandler()
 
     if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
     {
-        std::string ras_err_msg =
-            "P0 DIMM A-F PMIC FATAL Error detected. System will be power off";
+        std::string ras_err_msg = "P0 DIMM A-F PMIC FATAL Error detected. "
+                                  "System will be powered off";
         sd_journal_print(LOG_DEBUG,
                          "Rising Edge: P0 PMIC DIMM A-F Alert received\n");
         sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
@@ -986,8 +1160,8 @@ void P0PmicGlEventHandler()
 
     if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
     {
-        std::string ras_err_msg =
-            "P0 DIMM G-L PMIC FATAL Error detected. System will be power off";
+        std::string ras_err_msg = "P0 DIMM G-L PMIC FATAL Error detected. "
+                                  "System will be powered off";
         sd_journal_print(LOG_DEBUG,
                          "Rising Edge: P0 PMIC DIMM G-L Alert received\n");
         sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
@@ -1016,8 +1190,8 @@ void P1PmicAfEventHandler()
 
     if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
     {
-        std::string ras_err_msg =
-            "P1 DIMM A-F PMIC FATAL Error detected. System will be power off";
+        std::string ras_err_msg = "P1 DIMM A-F PMIC FATAL Error detected. "
+                                  "System will be powered off";
         sd_journal_print(LOG_DEBUG,
                          "Rising Edge: P1 PMIC DIMM A-F Alert received\n");
         sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
@@ -1046,8 +1220,8 @@ void P1PmicGlEventHandler()
 
     if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
     {
-        std::string ras_err_msg =
-            "P1 DIMM G-L PMIC FATAL Error detected. System will be power off";
+        std::string ras_err_msg = "P1 DIMM G-L PMIC FATAL Error detected. "
+                                  "System will be powered off";
         sd_journal_print(LOG_DEBUG,
                          "Rising Edge: P1 PMIC DIMM G-L Alert received\n");
         sd_journal_send("MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",

@@ -360,6 +360,9 @@ void CreateConfigFile()
         std::vector<std::pair<std::string, std::string>> P1_DimmLabels =
             Configuration::getAllP1_DimmLabels();
 
+        std::vector<std::pair<std::string, std::string>> AifsSignatureId =
+            Configuration::getAllAifsSignatureId();
+
         nlohmann::json jsonP0_DimmLabel;
 
         for (const auto& pair : P0_DimmLabels)
@@ -376,6 +379,14 @@ void CreateConfigFile()
         }
         jsonConfig["P1_DIMM_LABELS"] = jsonP1_DimmLabel;
 
+        nlohmann::json jsonAifsSignatureId;
+
+        for (const auto& pair : AifsSignatureId)
+        {
+            jsonAifsSignatureId[pair.first] = pair.second;
+        }
+        jsonConfig["AifsSignatureId"] = jsonAifsSignatureId;
+
         jsonConfig["McaPollingEn"] = true;
         jsonConfig["McaPollingPeriod"] = MCA_POLLING_PERIOD;
         jsonConfig["DramCeccPollingEn"] = false;
@@ -389,6 +400,7 @@ void CreateConfigFile()
         jsonConfig["DramCeccErrCounter"] = ERROR_THRESHOLD_VAL;
         jsonConfig["PcieAerThresholdEn"] = false;
         jsonConfig["PcieAerErrCounter"] = ERROR_THRESHOLD_VAL;
+        jsonConfig["AifsArmed"] = false;
 
         std::ofstream jsonWrite(config_file);
         jsonWrite << jsonConfig;
@@ -419,6 +431,7 @@ void CreateConfigFile()
     Configuration::setDramCeccErrCounter(data["DramCeccErrCounter"]);
     Configuration::setPcieAerThresholdEn(data["PcieAerThresholdEn"]);
     Configuration::setPcieAerErrCounter(data["PcieAerErrCounter"]);
+    Configuration::setAifsArmed(data["AifsArmed"]);
 
     if (data.contains("P0_DIMM_LABELS"))
     {
@@ -442,6 +455,13 @@ void CreateConfigFile()
             std::string value = it.value();
             Configuration::setP1_DimmLabels(key, value);
         }
+    }
+
+    if (data.contains("AifsSignatureId"))
+    {
+
+        nlohmann::json AifsSignatureIdData = data["AifsSignatureId"];
+        Configuration::setAifsSignatureId(AifsSignatureIdData);
     }
 
     jsonRead.close();

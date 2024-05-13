@@ -13,6 +13,7 @@ class Configuration
     static bool McaThresholdEn;
     static bool DramCeccThresholdEn;
     static bool PcieAerThresholdEn;
+    static bool AifsArmed;
     static uint16_t McaPollingPeriod;
     static uint16_t DramCeccPollingPeriod;
     static uint16_t PcieAerPollingPeriod;
@@ -22,6 +23,7 @@ class Configuration
     static std::vector<std::string> sigIDOffset;
     static std::vector<std::pair<std::string, std::string>> P0_DimmLabels;
     static std::vector<std::pair<std::string, std::string>> P1_DimmLabels;
+    static std::vector<std::pair<std::string, std::string>> AifsSignatureId;
 
   public:
     Configuration();
@@ -55,6 +57,9 @@ class Configuration
     static void setPcieAerThresholdEn(bool);
     static bool getPcieAerThresholdEn();
 
+    static void setAifsArmed(bool);
+    static bool getAifsArmed();
+
     static void setMcaPollingPeriod(uint16_t);
     static uint16_t getMcaPollingPeriod();
 
@@ -83,15 +88,20 @@ class Configuration
         getAllP0_DimmLabels();
     static std::vector<std::pair<std::string, std::string>>
         getAllP1_DimmLabels();
+    static std::vector<std::pair<std::string, std::string>>
+        getAllAifsSignatureId();
 
     static void
         setAllP0_DimmLabels(std::vector<std::pair<std::string, std::string>>);
     static void
         setAllP1_DimmLabels(std::vector<std::pair<std::string, std::string>>);
+    static void
+        setAllAifsSignatureId(std::vector<std::pair<std::string, std::string>>);
 
     static std::string getP0_DimmLabels(const std::string&);
     static std::string getP1_DimmLabels(const std::string&);
 
     static void setP0_DimmLabels(const std::string&, const std::string&);
     static void setP1_DimmLabels(const std::string&, const std::string&);
+    static void setAifsSignatureId(const nlohmann::json&);
 };

@@ -10,6 +10,7 @@
 #include <fstream>
 #include <gpiod.hpp>
 #include <mutex>
+#include <charconv>
 #include <nlohmann/json.hpp>
 #include <phosphor-logging/log.hpp>
 #include <regex>
@@ -79,6 +80,7 @@ extern "C" {
 #define RUNTIME_PCIE_ERR ("RUNTIME_PCIE_ERROR")
 #define RUNTIME_DRAM_ERR ("RUNTIME_DRAM_ERROR")
 #define FATAL_ERR ("FATAL")
+#define EVENT_SUBSCRIPTION_FILE ("/var/lib/bmcweb/eventservice_config.json")
 
 #define WARM_RESET (0)
 #define COLD_RESET (1)

@@ -10,6 +10,7 @@ bool Configuration::PcieAerPollingEn;
 bool Configuration::McaThresholdEn;
 bool Configuration::DramCeccThresholdEn;
 bool Configuration::PcieAerThresholdEn;
+bool Configuration::AifsArmed;
 uint16_t Configuration::McaPollingPeriod;
 uint16_t Configuration::DramCeccPollingPeriod;
 uint16_t Configuration::PcieAerPollingPeriod;
@@ -39,6 +40,10 @@ std::vector<std::pair<std::string, std::string>> Configuration::P1_DimmLabels =
      {"P1_DIMM_H1", "null"}, {"P1_DIMM_I", "null"},  {"P1_DIMM_I1", "null"},
      {"P1_DIMM_J", "null"},  {"P1_DIMM_J1", "null"}, {"P1_DIMM_K", "null"},
      {"P1_DIMM_K1", "null"}, {"P1_DIMM_L", "null"},  {"P1_DIMM_L1", "null"}};
+
+std::vector<std::pair<std::string, std::string>>
+    Configuration::AifsSignatureId = {
+        {"EX-WDT", "0xaea0000000000108000500b020009a00000000004d000000"}};
 
 void Configuration::setApmlRetryCount(uint16_t value)
 {
@@ -128,6 +133,16 @@ void Configuration::setPcieAerThresholdEn(bool value)
 bool Configuration::getPcieAerThresholdEn()
 {
     return PcieAerThresholdEn;
+}
+
+void Configuration::setAifsArmed(bool value)
+{
+    AifsArmed = value;
+}
+
+bool Configuration::getAifsArmed()
+{
+    return AifsArmed;
 }
 
 void Configuration::setMcaPollingPeriod(uint16_t value)
@@ -256,6 +271,29 @@ void Configuration::setP1_DimmLabels(const std::string& key,
     }
 }
 
+void Configuration::setAifsSignatureId(
+    const nlohmann::json& AifsSignatureIdData)
+{
+    AifsSignatureId.clear();
+
+    for (const auto& item : AifsSignatureIdData)
+    {
+        if (item.size() == INDEX_2)
+        {
+            AifsSignatureId.emplace_back(item[INDEX_0], item[INDEX_1]);
+        }
+    }
+
+    for (auto it = AifsSignatureIdData.begin(); it != AifsSignatureIdData.end();
+         ++it)
+    {
+        const std::string& key = it.key();
+        const std::string& value = it.value();
+
+        AifsSignatureId.push_back(std::make_pair(key, value));
+    }
+}
+
 std::vector<std::pair<std::string, std::string>>
     Configuration::getAllP0_DimmLabels()
 {
@@ -268,6 +306,12 @@ std::vector<std::pair<std::string, std::string>>
     return P1_DimmLabels;
 }
 
+std::vector<std::pair<std::string, std::string>>
+    Configuration::getAllAifsSignatureId()
+{
+    return AifsSignatureId;
+}
+
 void Configuration::setAllP0_DimmLabels(
     std::vector<std::pair<std::string, std::string>> value)
 {
@@ -278,4 +322,10 @@ void Configuration::setAllP1_DimmLabels(
     std::vector<std::pair<std::string, std::string>> value)
 {
     P1_DimmLabels = value;
+}
+
+void Configuration::setAllAifsSignatureId(
+    std::vector<std::pair<std::string, std::string>> value)
+{
+    AifsSignatureId = value;
 }
