@@ -827,9 +827,6 @@ bool harvest_ras_errors(uint8_t info, std::string alert_name)
         // check RAS Status Register
         if (buf & INT_15)
         {
-            sd_journal_print(
-                LOG_INFO, "The alert signaled is due to a RAS fatal error\n");
-
             if (buf & SYS_MGMT_CTRL_ERR)
             {
                 /*if RasStatus[reset_ctrl_err] is set in any of the processors,

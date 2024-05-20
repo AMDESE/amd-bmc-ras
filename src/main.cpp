@@ -535,6 +535,7 @@ static void currentHostStateMonitor()
         "interface='org.freedesktop.DBus.Properties', "
         "arg0='xyz.openbmc_project.State.Host'",
         [](sdbusplus::message::message& message) {
+            oob_status_t ret;
             std::string intfName;
             std::map<std::string, std::variant<std::string>> properties;
 
@@ -591,6 +592,26 @@ static void currentHostStateMonitor()
                 std::ofstream outFile(dramCeccErrorFile.data());
                 outFile << std::setw(INDEX_4) << j << std::endl;
             }
+
+            if (*currentHostState !=
+                "xyz.openbmc_project.State.Host.HostState.Off")
+            {
+                sd_journal_print(LOG_INFO,
+                                 "Current host state monitor changed\n");
+                uint32_t d_out = 0;
+
+                while (ret != OOB_SUCCESS)
+                {
+                    ret = get_bmc_ras_oob_config(INDEX_0, &d_out);
+
+                    if (ret == OOB_SUCCESS)
+                    {
+                        performPlatformInitialization();
+                        break;
+                    }
+                    sleep(INDEX_1);
+                }
+            }
         });
 }
 
@@ -599,72 +620,86 @@ void performPlatformInitialization()
     oob_status_t ret;
     uint8_t soc_num = 0;
     struct processor_info plat_info[INDEX_1];
-    uint16_t retryCount = 10;
 
-    while (retryCount > 0)
+    if (platformInitialized == false)
     {
-        ret = esmi_get_processor_info(soc_num, plat_info);
+        while (ret != OOB_SUCCESS)
+        {
+            ret = esmi_get_processor_info(soc_num, plat_info);
+
+            if (ret == OOB_SUCCESS)
+            {
+                FamilyId = plat_info->family;
+                break;
+            }
+            sleep(INDEX_1);
+        }
 
         if (ret == OOB_SUCCESS)
         {
-            FamilyId = plat_info->family;
-            break;
-        }
-        sleep(INDEX_1);
-        retryCount--;
-    }
-
-    if (ret == OOB_SUCCESS)
-    {
-        if (plat_info->family == GENOA_FAMILY_ID)
-        {
-            if ((plat_info->model != MI300A_MODEL_NUMBER) &&
-                (plat_info->model != MI300C_MODEL_NUMBER))
+            if (plat_info->family == GENOA_FAMILY_ID)
             {
-                BlockId = {BLOCK_ID_33};
+                if ((plat_info->model != MI300A_MODEL_NUMBER) &&
+                    (plat_info->model != MI300C_MODEL_NUMBER))
+                {
+                    BlockId = {BLOCK_ID_33};
+                }
             }
+            else if (plat_info->family == TURIN_FAMILY_ID)
+            {
+                currentHostStateMonitor();
+
+                clearSbrmiAlertMask();
+
+                BlockId = {BLOCK_ID_1,  BLOCK_ID_2,  BLOCK_ID_3,  BLOCK_ID_23,
+                           BLOCK_ID_24, BLOCK_ID_33, BLOCK_ID_36, BLOCK_ID_37,
+                           BLOCK_ID_38, BLOCK_ID_40};
+
+                RunTimeErrorPolling();
+
+                runtimeErrPollingSupported = true;
+            }
+            platformInitialized = true;
+            apmlInitialized = true;
         }
-        else if (plat_info->family == TURIN_FAMILY_ID)
+        else
         {
-            currentHostStateMonitor();
-
-            clearSbrmiAlertMask();
-
-            BlockId = {BLOCK_ID_1,  BLOCK_ID_2,  BLOCK_ID_3,  BLOCK_ID_23,
-                       BLOCK_ID_24, BLOCK_ID_33, BLOCK_ID_36, BLOCK_ID_37,
-                       BLOCK_ID_38, BLOCK_ID_40};
-
-            RunTimeErrorPolling();
-
-            runtimeErrPollingSupported = true;
+            sd_journal_print(LOG_ERR,
+                             "Failed to perform platform initialization\n");
         }
-        platformInitialized = true;
-        apmlInitialized = true;
     }
     else
     {
-        sd_journal_print(LOG_ERR,
-                         "Failed to perform platform initialization\n");
+        apmlInitialized = true;
+        clearSbrmiAlertMask();
+
+        if (runtimeErrPollingSupported == true)
+        {
+            sd_journal_print(LOG_INFO, "Setting MCA and DRAM OOB Config\n");
+            SetMcaOobConfig();
+            sd_journal_print(LOG_INFO,
+                             "Setting MCA and DRAM Error threshold\n");
+            McaErrThresholdEnable();
+        }
     }
 }
 
 void apmlActiveMonitor()
 {
-    uint8_t rev;
     oob_status_t ret;
-    uint8_t soc_num = INDEX_0;
-    uint16_t retryCount = 10;
 
-    while (retryCount > 0)
+    uint32_t d_out = 0;
+
+    while (ret != OOB_SUCCESS)
     {
-        ret = read_sbrmi_revision(soc_num, &rev);
+        ret = get_bmc_ras_oob_config(INDEX_0, &d_out);
+
         if (ret == OOB_SUCCESS)
         {
             performPlatformInitialization();
             break;
         }
         sleep(INDEX_1);
-        retryCount--;
     }
 
     sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
@@ -683,20 +718,12 @@ void apmlActiveMonitor()
                                  apmlActive.c_str());
                 if (apmlActive == "true")
                 {
-                    if (platformInitialized == false)
-                    {
-                        performPlatformInitialization();
-                    }
-                    else
-                    {
-                        apmlInitialized = true;
-                        clearSbrmiAlertMask();
-                        if (runtimeErrPollingSupported == true)
-                        {
-                            SetOobConfig();
-                            ErrThresholdEnable();
-                        }
-                    }
+                    sd_journal_print(LOG_INFO, "Setting PCIE OOB Config\n");
+                    SetPcieOobConfig();
+
+                    sd_journal_print(LOG_INFO,
+                                     "Setting PCIE Error threshold\n");
+                    PcieErrThresholdEnable();
                 }
             }
             catch (std::exception& e)

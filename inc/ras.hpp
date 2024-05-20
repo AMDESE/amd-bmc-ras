@@ -97,12 +97,15 @@ extern "C" {
 #define BIT_MASK (1)
 
 void RunTimeErrorPolling();
-oob_status_t SetOobConfig();
-oob_status_t ErrThresholdEnable();
+oob_status_t SetMcaOobConfig();
+oob_status_t SetPcieOobConfig();
+oob_status_t McaErrThresholdEnable();
+oob_status_t PcieErrThresholdEnable();
 void RunTimeErrorInfoCheck(uint8_t, uint8_t);
 void write_to_cper_file(std::string);
 void ErrorPollingHandler(uint8_t, uint16_t);
 void CreateDbusInterface();
+void performPlatformInitialization();
 
 bool requestGPIOEvents(const std::string&, const std::function<void()>&,
                        gpiod::line&, boost::asio::posix::stream_descriptor&);

@@ -47,8 +47,7 @@ oob_status_t RasErrThresholdSet(struct run_time_threshold th)
         if (ret != OOB_SUCCESS)
         {
             sd_journal_print(
-                LOG_INFO,
-                "Failed to set MCA error threshold for processor P0\n");
+                LOG_INFO, "Failed to set error threshold for processor P0\n");
         }
         sleep(INDEX_1);
         retryCount--;
@@ -68,7 +67,7 @@ oob_status_t RasErrThresholdSet(struct run_time_threshold th)
             {
                 sd_journal_print(
                     LOG_INFO,
-                    "Failed to set MCA error threshold for processor P1\n");
+                    "Failed to set error threshold for processor P1\n");
             }
             sleep(INDEX_1);
             retryCount--;
@@ -82,7 +81,7 @@ oob_status_t BmcRasOobConfig(struct oob_config_d_in oob_config)
     uint16_t retryCount = 0;
     oob_status_t ret;
 
-    for(int i = 0 ; i < num_of_proc; i++)
+    for (int i = 0; i < num_of_proc; i++)
     {
         retryCount = MAX_RETRIES;
 
@@ -94,21 +93,23 @@ oob_status_t BmcRasOobConfig(struct oob_config_d_in oob_config)
             {
                 break;
             }
-            else
-            {
-                sd_journal_print(LOG_ERR, "Failed to set ras oob configuration "
-                                          "for Processor P%d. Retrying....\n",i);
-            }
             sleep(INDEX_1);
             retryCount--;
         }
 
         if (ret == OOB_SUCCESS)
         {
-            sd_journal_print(
-                LOG_INFO,
-                "BMC RAS oob configuration set successfully for the processor P%d\n",i);
-        } else {
+            sd_journal_print(LOG_INFO,
+                             "BMC RAS oob configuration set successfully for "
+                             "the processor P%d\n",
+                             i);
+        }
+        else
+        {
+            sd_journal_print(LOG_ERR,
+                             "Failed to set BMC RAS OOB configuration for the "
+                             "processor P%d\n",
+                             i);
             break;
         }
     }
@@ -116,7 +117,48 @@ oob_status_t BmcRasOobConfig(struct oob_config_d_in oob_config)
     return ret;
 }
 
-oob_status_t ErrThresholdEnable()
+oob_status_t getOobRegisters(struct oob_config_d_in* oob_config)
+{
+    oob_status_t ret;
+    uint32_t d_out = 0;
+
+    ret = get_bmc_ras_oob_config(INDEX_0, &d_out);
+
+    if (ret)
+    {
+        sd_journal_print(LOG_INFO, "Failed to get ras oob configuration \n");
+    }
+    else
+    {
+        oob_config->core_mca_err_reporting_en =
+            (d_out >> CORE_MCA_ERR_REPORT_EN & BIT_MASK);
+        oob_config->dram_cecc_oob_ec_mode =
+            (d_out >> DRAM_CECC_OOB_EC_MODE & TRIBBLE_BITS);
+        oob_config->pcie_err_reporting_en =
+            (d_out >> PCIE_ERR_REPORT_EN & BIT_MASK);
+    }
+    return ret;
+}
+
+oob_status_t SetPcieOobRegisters()
+{
+
+    oob_status_t ret;
+    struct oob_config_d_in oob_config;
+
+    memset(&oob_config, 0, sizeof(oob_config));
+
+    getOobRegisters(&oob_config);
+
+    /* PCIe OOB Error Reporting Enable */
+    oob_config.pcie_err_reporting_en = ENABLE_BIT;
+
+    ret = BmcRasOobConfig(oob_config);
+
+    return ret;
+}
+
+oob_status_t McaErrThresholdEnable()
 {
     oob_status_t ret = OOB_NOT_SUPPORTED;
     struct run_time_threshold th;
@@ -129,6 +171,18 @@ oob_status_t ErrThresholdEnable()
         th.err_count_th = Configuration::getMcaErrCounter();
         th.max_intrupt_rate = 1;
 
+        struct oob_config_d_in oob_config;
+
+        memset(&oob_config, 0, sizeof(oob_config));
+
+        getOobRegisters(&oob_config);
+
+        /* Core MCA Error Reporting Enable */
+        oob_config.core_mca_err_reporting_en = ENABLE_BIT;
+
+        ret = BmcRasOobConfig(oob_config);
+
+        sd_journal_print(LOG_INFO, "Setting MCA error threshold\n");
         ret = RasErrThresholdSet(th);
     }
     if (Configuration::getDramCeccThresholdEn() == true)
@@ -137,43 +191,44 @@ oob_status_t ErrThresholdEnable()
         th.err_count_th = Configuration::getDramCeccErrCounter();
         th.max_intrupt_rate = 1;
 
-        ret = RasErrThresholdSet(th);
-    }
-    if (Configuration::getPcieAerThresholdEn() == true)
-    {
-
         struct oob_config_d_in oob_config;
-        uint32_t d_out = 0;
 
         memset(&oob_config, 0, sizeof(oob_config));
 
-        ret = get_bmc_ras_oob_config(INDEX_0, &d_out);
-        if (ret)
-        {
-            sd_journal_print(LOG_INFO,
-                             "Failed to get ras oob configuration \n");
-        }
+        getOobRegisters(&oob_config);
+        oob_config.dram_cecc_oob_ec_mode = ENABLE_BIT;
 
-        oob_config.core_mca_err_reporting_en =
-            (d_out >> CORE_MCA_ERR_REPORT_EN & BIT_MASK);
-        oob_config.dram_cecc_oob_ec_mode =
-            (d_out >> DRAM_CECC_OOB_EC_MODE & TRIBBLE_BITS);
+        ret = BmcRasOobConfig(oob_config);
 
-        /* PCIe OOB Error Reporting Enable */
-        oob_config.pcie_err_reporting_en = ENABLE_BIT;
+        sd_journal_print(LOG_INFO, "Setting Dram Cecc Error threshold\n");
+        ret = RasErrThresholdSet(th);
+    }
 
-        BmcRasOobConfig(oob_config);
+    return ret;
+}
+
+oob_status_t PcieErrThresholdEnable()
+{
+    oob_status_t ret = OOB_NOT_SUPPORTED;
+    struct run_time_threshold th;
+
+    memset(&th, 0, sizeof(th));
+
+    if (Configuration::getPcieAerThresholdEn() == true)
+    {
+        SetPcieOobRegisters();
 
         th.err_type = 2; /*00 = PCIE error type*/
         th.err_count_th = Configuration::getPcieAerErrCounter();
         th.max_intrupt_rate = 1;
 
+        sd_journal_print(LOG_INFO, "Setting PCIE error threshold\n");
         ret = RasErrThresholdSet(th);
     }
     return ret;
 }
 
-oob_status_t SetOobConfig()
+oob_status_t SetMcaOobConfig()
 {
     oob_status_t ret;
     struct oob_config_d_in oob_config;
@@ -194,14 +249,19 @@ oob_status_t SetOobConfig()
             ENABLE_BIT; /*Enabled in No leak mode*/
     }
 
-    if (Configuration::getPcieAerPollingEn() == true)
-    {
-        /* PCIe OOB Error Reporting Enable */
-        oob_config.pcie_err_reporting_en = ENABLE_BIT;
-    }
-
     ret = BmcRasOobConfig(oob_config);
 
+    return ret;
+}
+
+oob_status_t SetPcieOobConfig()
+{
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
+
+    if (Configuration::getPcieAerPollingEn() == true)
+    {
+        ret = SetPcieOobRegisters();
+    }
     return ret;
 }
 
@@ -583,7 +643,6 @@ void RunTimeErrorInfoCheck(uint8_t ErrType, uint8_t ReqType)
 
     if (num_of_proc == TWO_SOCKET)
     {
-
         p1_ret = RunTimeErrValidityCheck(p1_info, rt_err_category, &p1_inst);
     }
 
@@ -715,13 +774,16 @@ void RunTimeErrorPolling()
 {
     oob_status_t ret;
 
-    ret = SetOobConfig();
+    sd_journal_print(LOG_INFO, "Setting MCA and DRAM OOB Config\n");
+    ret = SetMcaOobConfig();
 
-    /*SetOobConfig is not supported for Genoa platform.
-      Enable run time error polling only if SetOobConfig command
+    /*SetMcaOobConfig is not supported for Genoa platform.
+      Enable run time error polling only if SetMcaOobConfig command
       is supported for the platform*/
     if (ret != OOB_MAILBOX_CMD_UNKNOWN)
     {
+        sd_journal_print(LOG_INFO, "Setting PCIE OOB Config\n");
+        SetPcieOobConfig();
 
         sd_journal_print(LOG_INFO,
                          "Starting seprate threads to perform runtime error "
@@ -739,12 +801,16 @@ void RunTimeErrorPolling()
             "Runtime error polling is not supported for this platform\n");
     }
 
-    ret = ErrThresholdEnable();
+    ret = McaErrThresholdEnable();
 
     if (ret == OOB_MAILBOX_CMD_UNKNOWN)
     {
         sd_journal_print(
             LOG_ERR,
             "Runtime error threshold is not supported for this platform\n");
+    }
+    else
+    {
+        PcieErrThresholdEnable();
     }
 }
