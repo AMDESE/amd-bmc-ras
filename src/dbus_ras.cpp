@@ -202,7 +202,7 @@ void CreateDbusInterface()
             resp = requested;
             Configuration::setApmlRetryCount(resp);
             updateConfigFile("apmlRetries", resp);
-            return 1;
+            return true;
         });
 
     uint16_t systemRecovery = Configuration::getSystemRecovery();
@@ -212,7 +212,7 @@ void CreateDbusInterface()
             resp = requested;
             Configuration::setSystemRecovery(resp);
             updateConfigFile("systemRecovery", resp);
-            return 1;
+            return true;
         });
 
     bool harvestuCodeVersionFlag = Configuration::getHarvestuCodeVersionFlag();
@@ -224,7 +224,7 @@ void CreateDbusInterface()
             resp = requested;
             Configuration::setHarvestuCodeVersionFlag(resp);
             updateConfigFile("harvestuCodeVersion", resp);
-            return 1;
+            return true;
         });
 
     bool harvestPpinFlag = Configuration::getHarvestPpinFlag();
@@ -233,7 +233,7 @@ void CreateDbusInterface()
                                        resp = requested;
                                        Configuration::setHarvestPpinFlag(resp);
                                        updateConfigFile("harvestPpin", resp);
-                                       return 1;
+                                       return true;
                                    });
 
     std::string ResetSignal = Configuration::getResetSignal();
@@ -243,7 +243,7 @@ void CreateDbusInterface()
             resp = requested;
             Configuration::setResetSignal(resp);
             updateConfigFile("ResetSignal", resp);
-            return 1;
+            return true;
         });
 
     std::vector<std::string> sigIDOffset = Configuration::getSigIDOffset();
@@ -253,7 +253,7 @@ void CreateDbusInterface()
                                        resp = requested;
                                        Configuration::setSigIDOffset(resp);
                                        updateConfigFile("sigIDOffset", resp);
-                                       return 1;
+                                       return true;
                                    });
 
     std::vector<std::pair<std::string, std::string>> P0_DimmLabels =
@@ -279,7 +279,7 @@ void CreateDbusInterface()
 
             Configuration::setAllP0_DimmLabels(resp);
             updateConfigFile("P0_DIMM_LABELS", resp);
-            return 1;
+            return true;
         });
 
     std::vector<std::pair<std::string, std::string>> P1_DimmLabels =
@@ -305,7 +305,28 @@ void CreateDbusInterface()
 
             Configuration::setAllP1_DimmLabels(resp);
             updateConfigFile("P1_DIMM_LABELS", resp);
-            return 1;
+            return true;
+        });
+
+    bool AifsArmed = Configuration::getAifsArmed();
+    configIface->register_property("AifsArmed", AifsArmed,
+                                   [](const bool& requested, bool& resp) {
+                                       resp = requested;
+                                       Configuration::setAifsArmed(resp);
+                                       updateConfigFile("AifsArmed", resp);
+                                       return true;
+                                   });
+
+    std::vector<std::pair<std::string, std::string>> AifsSignatureId =
+        Configuration::getAllAifsSignatureId();
+    configIface->register_property(
+        "AifsSignatureId", AifsSignatureId,
+        [](const std::vector<std::pair<std::string, std::string>>& requested,
+           std::vector<std::pair<std::string, std::string>>& resp) {
+            resp = requested;
+            Configuration::setAllAifsSignatureId(resp);
+            updateConfigFile("AifsSignatureId", resp);
+            return true;
         });
 
     bool McaPollingEn = Configuration::getMcaPollingEn();
@@ -314,7 +335,7 @@ void CreateDbusInterface()
                                        resp = requested;
                                        Configuration::setMcaPollingEn(resp);
                                        updateConfigFile("McaPollingEn", resp);
-                                       return 1;
+                                       return true;
                                    });
 
     bool DramCeccPollingEn = Configuration::getDramCeccPollingEn();
@@ -324,7 +345,7 @@ void CreateDbusInterface()
             resp = requested;
             Configuration::setDramCeccPollingEn(resp);
             updateConfigFile("DramCeccPollingEn", resp);
-            return 1;
+            return true;
         });
 
     bool PcieAerPollingEn = Configuration::getPcieAerPollingEn();
@@ -334,7 +355,7 @@ void CreateDbusInterface()
                                        Configuration::setPcieAerPollingEn(resp);
                                        updateConfigFile("PcieAerPollingEn",
                                                         resp);
-                                       return 1;
+                                       return true;
                                    });
 
     bool McaThresholdEn = Configuration::getMcaThresholdEn();
@@ -343,7 +364,7 @@ void CreateDbusInterface()
                                        resp = requested;
                                        Configuration::setMcaThresholdEn(resp);
                                        updateConfigFile("McaThresholdEn", resp);
-                                       return 1;
+                                       return true;
                                    });
 
     bool DramCeccThresholdEn = Configuration::getDramCeccThresholdEn();
@@ -353,7 +374,7 @@ void CreateDbusInterface()
             resp = requested;
             Configuration::setDramCeccThresholdEn(resp);
             updateConfigFile("DramCeccThresholdEn", resp);
-            return 1;
+            return true;
         });
 
     bool PcieAerThresholdEn = Configuration::getPcieAerThresholdEn();
@@ -363,7 +384,7 @@ void CreateDbusInterface()
             resp = requested;
             Configuration::setPcieAerThresholdEn(resp);
             updateConfigFile("PcieAerThresholdEn", resp);
-            return 1;
+            return true;
         });
 
     uint16_t McaPollingPeriod = Configuration::getMcaPollingPeriod();
@@ -373,7 +394,7 @@ void CreateDbusInterface()
             resp = requested;
             Configuration::setMcaPollingPeriod(resp);
             updateConfigFile("McaPollingPeriod", resp);
-            return 1;
+            return true;
         });
 
     uint16_t DramCeccPollingPeriod = Configuration::getDramCeccPollingPeriod();
@@ -383,7 +404,7 @@ void CreateDbusInterface()
             resp = requested;
             Configuration::setDramCeccPollingPeriod(resp);
             updateConfigFile("DramCeccPollingPeriod", resp);
-            return 1;
+            return true;
         });
 
     uint16_t PcieAerPollingPeriod = Configuration::getPcieAerPollingPeriod();
@@ -393,7 +414,7 @@ void CreateDbusInterface()
             resp = requested;
             Configuration::setPcieAerPollingPeriod(resp);
             updateConfigFile("PcieAerPollingPeriod", resp);
-            return 1;
+            return true;
         });
 
     uint16_t McaErrCounter = Configuration::getMcaErrCounter();
@@ -403,7 +424,7 @@ void CreateDbusInterface()
             resp = requested;
             Configuration::setMcaErrCounter(resp);
             updateConfigFile("McaErrCounter", resp);
-            return 1;
+            return true;
         });
 
     uint16_t DramCeccErrCounter = Configuration::getDramCeccErrCounter();
@@ -413,7 +434,7 @@ void CreateDbusInterface()
             resp = requested;
             Configuration::setDramCeccErrCounter(resp);
             updateConfigFile("DramCeccErrCounter", resp);
-            return 1;
+            return true;
         });
 
     uint16_t PcieAerErrCounter = Configuration::getPcieAerErrCounter();
@@ -423,7 +444,7 @@ void CreateDbusInterface()
             resp = requested;
             Configuration::setPcieAerErrCounter(resp);
             updateConfigFile("PcieAerErrCounter", resp);
-            return 1;
+            return true;
         });
 
     configIface->initialize();

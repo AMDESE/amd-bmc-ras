@@ -10,6 +10,7 @@
 #include <fstream>
 #include <gpiod.hpp>
 #include <mutex>
+#include <charconv>
 #include <nlohmann/json.hpp>
 #include <phosphor-logging/log.hpp>
 #include <regex>
@@ -79,6 +80,7 @@ extern "C" {
 #define RUNTIME_PCIE_ERR ("RUNTIME_PCIE_ERROR")
 #define RUNTIME_DRAM_ERR ("RUNTIME_DRAM_ERROR")
 #define FATAL_ERR ("FATAL")
+#define EVENT_SUBSCRIPTION_FILE ("/var/lib/bmcweb/eventservice_config.json")
 
 #define WARM_RESET (0)
 #define COLD_RESET (1)
@@ -95,12 +97,15 @@ extern "C" {
 #define BIT_MASK (1)
 
 void RunTimeErrorPolling();
-oob_status_t SetOobConfig();
-oob_status_t ErrThresholdEnable();
+oob_status_t SetMcaOobConfig();
+oob_status_t SetPcieOobConfig();
+oob_status_t McaErrThresholdEnable();
+oob_status_t PcieErrThresholdEnable();
 void RunTimeErrorInfoCheck(uint8_t, uint8_t);
 void write_to_cper_file(std::string);
 void ErrorPollingHandler(uint8_t, uint16_t);
 void CreateDbusInterface();
+void performPlatformInitialization();
 
 bool requestGPIOEvents(const std::string&, const std::function<void()>&,
                        gpiod::line&, boost::asio::posix::stream_descriptor&);
