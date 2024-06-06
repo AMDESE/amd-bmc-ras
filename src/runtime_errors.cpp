@@ -168,7 +168,7 @@ oob_status_t McaErrThresholdEnable()
     if (Configuration::getMcaThresholdEn() == true)
     {
         th.err_type = 0; /*00 = MCA error type*/
-        th.err_count_th = Configuration::getMcaErrCounter();
+        th.err_count_th = Configuration::getMcaErrThresholdCnt();
         th.max_intrupt_rate = 1;
 
         struct oob_config_d_in oob_config;
@@ -188,7 +188,7 @@ oob_status_t McaErrThresholdEnable()
     if (Configuration::getDramCeccThresholdEn() == true)
     {
         th.err_type = 1; /*01 = DRAM CECC error type*/
-        th.err_count_th = Configuration::getDramCeccErrCounter();
+        th.err_count_th = Configuration::getDramCeccErrThresholdCnt();
         th.max_intrupt_rate = 1;
 
         struct oob_config_d_in oob_config;
@@ -219,7 +219,7 @@ oob_status_t PcieErrThresholdEnable()
         SetPcieOobRegisters();
 
         th.err_type = 2; /*00 = PCIE error type*/
-        th.err_count_th = Configuration::getPcieAerErrCounter();
+        th.err_count_th = Configuration::getPcieAerErrThresholdCnt();
         th.max_intrupt_rate = 1;
 
         sd_journal_print(LOG_INFO, "Setting PCIE error threshold\n");

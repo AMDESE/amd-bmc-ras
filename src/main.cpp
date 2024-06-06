@@ -395,11 +395,11 @@ void CreateConfigFile()
         jsonConfig["PcieAerPollingPeriod"] = PCIE_AER_POLLING_PERIOD;
 
         jsonConfig["McaThresholdEn"] = false;
-        jsonConfig["McaErrCounter"] = ERROR_THRESHOLD_VAL;
+        jsonConfig["McaErrThresholdCnt"] = ERROR_THRESHOLD_VAL;
         jsonConfig["DramCeccThresholdEn"] = false;
-        jsonConfig["DramCeccErrCounter"] = ERROR_THRESHOLD_VAL;
+        jsonConfig["DramCeccErrThresholdCnt"] = ERROR_THRESHOLD_VAL;
         jsonConfig["PcieAerThresholdEn"] = false;
-        jsonConfig["PcieAerErrCounter"] = ERROR_THRESHOLD_VAL;
+        jsonConfig["PcieAerErrThresholdCnt"] = ERROR_THRESHOLD_VAL;
         jsonConfig["AifsArmed"] = false;
 
         std::ofstream jsonWrite(config_file);
@@ -426,11 +426,11 @@ void CreateConfigFile()
     Configuration::setPcieAerPollingPeriod(data["PcieAerPollingPeriod"]);
 
     Configuration::setMcaThresholdEn(data["McaThresholdEn"]);
-    Configuration::setMcaErrCounter(data["McaErrCounter"]);
+    Configuration::setMcaErrThresholdCnt(data["McaErrThresholdCnt"]);
     Configuration::setDramCeccThresholdEn(data["DramCeccThresholdEn"]);
-    Configuration::setDramCeccErrCounter(data["DramCeccErrCounter"]);
+    Configuration::setDramCeccErrThresholdCnt(data["DramCeccErrThresholdCnt"]);
     Configuration::setPcieAerThresholdEn(data["PcieAerThresholdEn"]);
-    Configuration::setPcieAerErrCounter(data["PcieAerErrCounter"]);
+    Configuration::setPcieAerErrThresholdCnt(data["PcieAerErrThresholdCnt"]);
     Configuration::setAifsArmed(data["AifsArmed"]);
 
     if (data.contains("P0_DIMM_LABELS"))

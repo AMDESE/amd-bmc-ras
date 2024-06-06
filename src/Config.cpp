@@ -14,9 +14,9 @@ bool Configuration::AifsArmed;
 uint16_t Configuration::McaPollingPeriod;
 uint16_t Configuration::DramCeccPollingPeriod;
 uint16_t Configuration::PcieAerPollingPeriod;
-uint16_t Configuration::McaErrCounter;
-uint16_t Configuration::DramCeccErrCounter;
-uint16_t Configuration::PcieAerErrCounter;
+uint16_t Configuration::McaErrThresholdCnt;
+uint16_t Configuration::DramCeccErrThresholdCnt;
+uint16_t Configuration::PcieAerErrThresholdCnt;
 std::string ResetSignal;
 std::vector<std::string> Configuration::sigIDOffset = {
     "0x30", "0x34", "0x28", "0x2c", "0x08", "0x0c", "null", "null"};
@@ -172,31 +172,31 @@ uint16_t Configuration::getPcieAerPollingPeriod()
     return PcieAerPollingPeriod;
 }
 
-void Configuration::setMcaErrCounter(uint16_t value)
+void Configuration::setMcaErrThresholdCnt(uint16_t value)
 {
-    McaErrCounter = value;
+    McaErrThresholdCnt = value;
 }
-uint16_t Configuration::getMcaErrCounter()
+uint16_t Configuration::getMcaErrThresholdCnt()
 {
-    return McaErrCounter;
-}
-
-void Configuration::setDramCeccErrCounter(uint16_t value)
-{
-    DramCeccErrCounter = value;
-}
-uint16_t Configuration::getDramCeccErrCounter()
-{
-    return DramCeccErrCounter;
+    return McaErrThresholdCnt;
 }
 
-void Configuration::setPcieAerErrCounter(uint16_t value)
+void Configuration::setDramCeccErrThresholdCnt(uint16_t value)
 {
-    PcieAerErrCounter = value;
+    DramCeccErrThresholdCnt = value;
 }
-uint16_t Configuration::getPcieAerErrCounter()
+uint16_t Configuration::getDramCeccErrThresholdCnt()
 {
-    return PcieAerErrCounter;
+    return DramCeccErrThresholdCnt;
+}
+
+void Configuration::setPcieAerErrThresholdCnt(uint16_t value)
+{
+    PcieAerErrThresholdCnt = value;
+}
+uint16_t Configuration::getPcieAerErrThresholdCnt()
+{
+    return PcieAerErrThresholdCnt;
 }
 
 void Configuration::setResetSignal(std::string value)

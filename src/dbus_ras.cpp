@@ -417,33 +417,33 @@ void CreateDbusInterface()
             return true;
         });
 
-    uint16_t McaErrCounter = Configuration::getMcaErrCounter();
+    uint16_t McaErrThresholdCnt = Configuration::getMcaErrThresholdCnt();
     configIface->register_property(
-        "McaErrCounter", McaErrCounter,
+        "McaErrThresholdCnt", McaErrThresholdCnt,
         [](const uint16_t& requested, uint16_t& resp) {
             resp = requested;
-            Configuration::setMcaErrCounter(resp);
-            updateConfigFile("McaErrCounter", resp);
+            Configuration::setMcaErrThresholdCnt(resp);
+            updateConfigFile("McaErrThresholdCnt", resp);
             return true;
         });
 
-    uint16_t DramCeccErrCounter = Configuration::getDramCeccErrCounter();
+    uint16_t DramCeccErrThresholdCnt = Configuration::getDramCeccErrThresholdCnt();
     configIface->register_property(
-        "DramCeccErrCounter", DramCeccErrCounter,
+        "DramCeccErrThresholdCnt", DramCeccErrThresholdCnt,
         [](const uint16_t& requested, uint16_t& resp) {
             resp = requested;
-            Configuration::setDramCeccErrCounter(resp);
-            updateConfigFile("DramCeccErrCounter", resp);
+            Configuration::setDramCeccErrThresholdCnt(resp);
+            updateConfigFile("DramCeccErrThresholdCnt", resp);
             return true;
         });
 
-    uint16_t PcieAerErrCounter = Configuration::getPcieAerErrCounter();
+    uint16_t PcieAerErrThresholdCnt = Configuration::getPcieAerErrThresholdCnt();
     configIface->register_property(
-        "PcieAerErrCounter", PcieAerErrCounter,
+        "PcieAerErrThresholdCnt", PcieAerErrThresholdCnt,
         [](const uint16_t& requested, uint16_t& resp) {
             resp = requested;
-            Configuration::setPcieAerErrCounter(resp);
-            updateConfigFile("PcieAerErrCounter", resp);
+            Configuration::setPcieAerErrThresholdCnt(resp);
+            updateConfigFile("PcieAerErrThresholdCnt", resp);
             return true;
         });
 
