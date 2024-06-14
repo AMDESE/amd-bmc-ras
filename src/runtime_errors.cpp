@@ -136,6 +136,7 @@ oob_status_t getOobRegisters(struct oob_config_d_in* oob_config)
             (d_out >> DRAM_CECC_OOB_EC_MODE & TRIBBLE_BITS);
         oob_config->pcie_err_reporting_en =
             (d_out >> PCIE_ERR_REPORT_EN & BIT_MASK);
+        oob_config->mca_oob_misc0_ec_enable = (d_out & BIT_MASK);
     }
     return ret;
 }
@@ -179,6 +180,7 @@ oob_status_t McaErrThresholdEnable()
 
         /* Core MCA Error Reporting Enable */
         oob_config.core_mca_err_reporting_en = ENABLE_BIT;
+        oob_config.mca_oob_misc0_ec_enable = ENABLE_BIT;
 
         ret = BmcRasOobConfig(oob_config);
 
@@ -196,7 +198,9 @@ oob_status_t McaErrThresholdEnable()
         memset(&oob_config, 0, sizeof(oob_config));
 
         getOobRegisters(&oob_config);
+
         oob_config.dram_cecc_oob_ec_mode = ENABLE_BIT;
+        oob_config.mca_oob_misc0_ec_enable = ENABLE_BIT;
 
         ret = BmcRasOobConfig(oob_config);
 
