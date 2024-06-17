@@ -21,7 +21,6 @@ constexpr std::string_view crashdumpAssertedInterface =
     "com.amd.crashdump.Asserted";
 constexpr std::string_view crashdumpConfigInterface =
     "com.amd.crashdump.Configuration";
-constexpr std::string_view apmlActiveInterface = "com.amd.crashdump.ApmlActive";
 constexpr std::string_view dimmEccInterface =
     "com.amd.crashdump.DimmEcc.ErrorCount";
 
@@ -143,12 +142,6 @@ void CreateDbusInterface()
     conn->request_name(crashdumpService.data());
     server = std::make_shared<sdbusplus::asio::object_server>(conn);
 
-    std::shared_ptr<sdbusplus::asio::dbus_interface> apmlIface =
-        server->add_interface(crashdumpPath.data(), apmlActiveInterface.data());
-
-    // Set the signal handler using a lambda function
-    apmlIface->register_signal<std::string>("apmlActive");
-    apmlIface->initialize();
     // This DBus interface/method should be triggered by
     // host-error-monitor(https://github.com/openbmc/host-error-monitor).
     // However `amd-ras` monitors the alert pin by itself instead of asking

@@ -26,6 +26,7 @@ constexpr auto CpuInventoryInterface = "xyz.openbmc_project.Inventory.Item.Cpu";
 
 constexpr int kCrashdumpTimeInSec = 300;
 
+uint8_t watchdogTimerCounter = 0;
 static std::string BoardName;
 uint32_t err_count = 0;
 uint32_t FamilyId = 0;
@@ -707,30 +708,67 @@ void apmlActiveMonitor()
 
     static auto match = sdbusplus::bus::match::match(
         bus,
-        "type='signal',member='apmlActive', "
-        "interface='com.amd.crashdump.ApmlActive'",
+        "type='signal',member='PropertiesChanged', "
+        "interface='org.freedesktop.DBus.Properties', "
+        "arg0='xyz.openbmc_project.State.Watchdog'",
         [](sdbusplus::message::message& message) {
-            std::string apmlActive;
+            std::string intfName;
+            std::map<std::string, std::variant<bool>> properties;
+
             try
             {
-                message.read(apmlActive);
-                sd_journal_print(LOG_INFO, "APML active signal received %s\n",
-                                 apmlActive.c_str());
-                if (apmlActive == "true")
-                {
-                    sd_journal_print(LOG_INFO, "Setting PCIE OOB Config\n");
-                    SetPcieOobConfig();
-
-                    sd_journal_print(LOG_INFO,
-                                     "Setting PCIE Error threshold\n");
-                    PcieErrThresholdEnable();
-                }
+                message.read(intfName, properties);
             }
             catch (std::exception& e)
             {
-                sd_journal_print(LOG_ERR,
-                                 "Unable to read apmlActive D-bus signal\n");
+                sd_journal_print(LOG_ERR, "Unable to read Watchdog state\n");
                 return;
+            }
+            if (properties.empty())
+            {
+                sd_journal_print(
+                    LOG_ERR,
+                    "ERROR: Empty PropertiesChanged signal received\n");
+                return;
+            }
+
+            // We only want to check for CurrentHostState
+            if (properties.begin()->first != "Enabled")
+            {
+                return;
+            }
+
+            bool* currentTimerEnable =
+                std::get_if<bool>(&(properties.begin()->second));
+
+            if (*currentTimerEnable == false)
+            {
+
+                sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+                std::string CurrentTimerUse = getProperty<std::string>(
+                    bus, "xyz.openbmc_project.Watchdog",
+                    "/xyz/openbmc_project/watchdog/host0",
+                    "xyz.openbmc_project.State.Watchdog", "CurrentTimerUse");
+
+                if (CurrentTimerUse ==
+                    "xyz.openbmc_project.State.Watchdog.TimerUse.BIOSFRB2")
+                {
+                    watchdogTimerCounter++;
+
+                    /*Watchdog Timer Enable property will be changed twice after
+                      BIOS post complete. Platform initialization should be
+                      performed only during the second property change*/
+                    if (watchdogTimerCounter == INDEX_2)
+                    {
+                        sd_journal_print(LOG_INFO, "BIOS POST complete\n");
+                        sd_journal_print(LOG_INFO, "Setting PCIE OOB Config\n");
+                        SetPcieOobConfig();
+
+                        sd_journal_print(LOG_INFO,
+                                         "Setting PCIE Error threshold\n");
+                        PcieErrThresholdEnable();
+                    }
+                }
             }
         });
 }
