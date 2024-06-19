@@ -686,7 +686,7 @@ void performPlatformInitialization()
 
 void apmlActiveMonitor()
 {
-    oob_status_t ret;
+    oob_status_t ret = OOB_UNKNOWN_ERROR;
 
     uint32_t d_out = 0;
 
