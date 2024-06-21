@@ -21,7 +21,6 @@ constexpr std::string_view crashdumpAssertedInterface =
     "com.amd.crashdump.Asserted";
 constexpr std::string_view crashdumpConfigInterface =
     "com.amd.crashdump.Configuration";
-constexpr std::string_view apmlActiveInterface = "com.amd.crashdump.ApmlActive";
 constexpr std::string_view dimmEccInterface =
     "com.amd.crashdump.DimmEcc.ErrorCount";
 
@@ -143,12 +142,6 @@ void CreateDbusInterface()
     conn->request_name(crashdumpService.data());
     server = std::make_shared<sdbusplus::asio::object_server>(conn);
 
-    std::shared_ptr<sdbusplus::asio::dbus_interface> apmlIface =
-        server->add_interface(crashdumpPath.data(), apmlActiveInterface.data());
-
-    // Set the signal handler using a lambda function
-    apmlIface->register_signal<std::string>("apmlActive");
-    apmlIface->initialize();
     // This DBus interface/method should be triggered by
     // host-error-monitor(https://github.com/openbmc/host-error-monitor).
     // However `amd-ras` monitors the alert pin by itself instead of asking
@@ -417,33 +410,33 @@ void CreateDbusInterface()
             return true;
         });
 
-    uint16_t McaErrCounter = Configuration::getMcaErrCounter();
+    uint16_t McaErrThresholdCnt = Configuration::getMcaErrThresholdCnt();
     configIface->register_property(
-        "McaErrCounter", McaErrCounter,
+        "McaErrThresholdCnt", McaErrThresholdCnt,
         [](const uint16_t& requested, uint16_t& resp) {
             resp = requested;
-            Configuration::setMcaErrCounter(resp);
-            updateConfigFile("McaErrCounter", resp);
+            Configuration::setMcaErrThresholdCnt(resp);
+            updateConfigFile("McaErrThresholdCnt", resp);
             return true;
         });
 
-    uint16_t DramCeccErrCounter = Configuration::getDramCeccErrCounter();
+    uint16_t DramCeccErrThresholdCnt = Configuration::getDramCeccErrThresholdCnt();
     configIface->register_property(
-        "DramCeccErrCounter", DramCeccErrCounter,
+        "DramCeccErrThresholdCnt", DramCeccErrThresholdCnt,
         [](const uint16_t& requested, uint16_t& resp) {
             resp = requested;
-            Configuration::setDramCeccErrCounter(resp);
-            updateConfigFile("DramCeccErrCounter", resp);
+            Configuration::setDramCeccErrThresholdCnt(resp);
+            updateConfigFile("DramCeccErrThresholdCnt", resp);
             return true;
         });
 
-    uint16_t PcieAerErrCounter = Configuration::getPcieAerErrCounter();
+    uint16_t PcieAerErrThresholdCnt = Configuration::getPcieAerErrThresholdCnt();
     configIface->register_property(
-        "PcieAerErrCounter", PcieAerErrCounter,
+        "PcieAerErrThresholdCnt", PcieAerErrThresholdCnt,
         [](const uint16_t& requested, uint16_t& resp) {
             resp = requested;
-            Configuration::setPcieAerErrCounter(resp);
-            updateConfigFile("PcieAerErrCounter", resp);
+            Configuration::setPcieAerErrThresholdCnt(resp);
+            updateConfigFile("PcieAerErrThresholdCnt", resp);
             return true;
         });
 

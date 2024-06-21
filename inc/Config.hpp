@@ -17,9 +17,9 @@ class Configuration
     static uint16_t McaPollingPeriod;
     static uint16_t DramCeccPollingPeriod;
     static uint16_t PcieAerPollingPeriod;
-    static uint16_t McaErrCounter;
-    static uint16_t DramCeccErrCounter;
-    static uint16_t PcieAerErrCounter;
+    static uint16_t McaErrThresholdCnt;
+    static uint16_t DramCeccErrThresholdCnt;
+    static uint16_t PcieAerErrThresholdCnt;
     static std::vector<std::string> sigIDOffset;
     static std::vector<std::pair<std::string, std::string>> P0_DimmLabels;
     static std::vector<std::pair<std::string, std::string>> P1_DimmLabels;
@@ -69,14 +69,14 @@ class Configuration
     static void setPcieAerPollingPeriod(uint16_t);
     static uint16_t getPcieAerPollingPeriod();
 
-    static void setMcaErrCounter(uint16_t);
-    static uint16_t getMcaErrCounter();
+    static void setMcaErrThresholdCnt(uint16_t);
+    static uint16_t getMcaErrThresholdCnt();
 
-    static void setDramCeccErrCounter(uint16_t);
-    static uint16_t getDramCeccErrCounter();
+    static void setDramCeccErrThresholdCnt(uint16_t);
+    static uint16_t getDramCeccErrThresholdCnt();
 
-    static void setPcieAerErrCounter(uint16_t);
-    static uint16_t getPcieAerErrCounter();
+    static void setPcieAerErrThresholdCnt(uint16_t);
+    static uint16_t getPcieAerErrThresholdCnt();
 
     static void setResetSignal(std::string);
     static std::string getResetSignal();
