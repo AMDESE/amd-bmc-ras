@@ -471,7 +471,7 @@ void dump_proc_error_section(const std::shared_ptr<T>& data, uint8_t soc_num,
             {
                 PciePtr->PcieErrorSection[Section].AerInfo[DumpIndex] = d_out;
 
-                if (d_in.offset == INDEX_44)
+                if (d_in.offset == INDEX_52)
                 {
                     root_err_status = d_out;
                 }

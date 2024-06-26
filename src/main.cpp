@@ -392,7 +392,7 @@ void CreateConfigFile()
         jsonConfig["McaPollingPeriod"] = MCA_POLLING_PERIOD;
         jsonConfig["DramCeccPollingEn"] = false;
         jsonConfig["DramCeccPollingPeriod"] = DRAM_CECC_POLLING_PERIOD;
-        jsonConfig["PcieAerPollingEn"] = true;
+        jsonConfig["PcieAerPollingEn"] = false;
         jsonConfig["PcieAerPollingPeriod"] = PCIE_AER_POLLING_PERIOD;
 
         jsonConfig["McaThresholdEn"] = false;
