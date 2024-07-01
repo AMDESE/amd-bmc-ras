@@ -14,6 +14,7 @@ class Configuration
     static bool DramCeccThresholdEn;
     static bool PcieAerThresholdEn;
     static bool AifsArmed;
+    static bool DisableResetCounter;
     static uint16_t McaPollingPeriod;
     static uint16_t DramCeccPollingPeriod;
     static uint16_t PcieAerPollingPeriod;
@@ -59,6 +60,9 @@ class Configuration
 
     static void setAifsArmed(bool);
     static bool getAifsArmed();
+
+    static void setDisableResetCounter(bool);
+    static bool getDisableResetCounter();
 
     static void setMcaPollingPeriod(uint16_t);
     static uint16_t getMcaPollingPeriod();

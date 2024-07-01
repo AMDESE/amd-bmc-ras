@@ -310,6 +310,15 @@ void CreateDbusInterface()
                                        return true;
                                    });
 
+   bool DisableResetCounter = Configuration::getDisableResetCounter();
+    configIface->register_property("DisableAifsResetOnSyncfloodCounter", DisableResetCounter,
+                                   [](const bool& requested, bool& resp) {
+                                       resp = requested;
+                                       Configuration::setDisableResetCounter(resp);
+                                       updateConfigFile("DisableAifsResetOnSyncfloodCounter", resp);
+                                       return true;
+                                   });
+
     std::vector<std::pair<std::string, std::string>> AifsSignatureId =
         Configuration::getAllAifsSignatureId();
     configIface->register_property(

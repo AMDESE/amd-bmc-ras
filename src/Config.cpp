@@ -11,6 +11,7 @@ bool Configuration::McaThresholdEn;
 bool Configuration::DramCeccThresholdEn;
 bool Configuration::PcieAerThresholdEn;
 bool Configuration::AifsArmed;
+bool Configuration::DisableResetCounter;
 uint16_t Configuration::McaPollingPeriod;
 uint16_t Configuration::DramCeccPollingPeriod;
 uint16_t Configuration::PcieAerPollingPeriod;
@@ -143,6 +144,16 @@ void Configuration::setAifsArmed(bool value)
 bool Configuration::getAifsArmed()
 {
     return AifsArmed;
+}
+
+void Configuration::setDisableResetCounter(bool value)
+{
+    DisableResetCounter = value;
+}
+
+bool Configuration::getDisableResetCounter()
+{
+    return DisableResetCounter;
 }
 
 void Configuration::setMcaPollingPeriod(uint16_t value)

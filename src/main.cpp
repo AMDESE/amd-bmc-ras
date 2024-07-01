@@ -402,6 +402,7 @@ void CreateConfigFile()
         jsonConfig["PcieAerThresholdEn"] = false;
         jsonConfig["PcieAerErrThresholdCnt"] = ERROR_THRESHOLD_VAL;
         jsonConfig["AifsArmed"] = false;
+        jsonConfig["DisableAifsResetOnSyncfloodCounter"] = true;
 
         std::ofstream jsonWrite(config_file);
         jsonWrite << jsonConfig;
@@ -433,6 +434,7 @@ void CreateConfigFile()
     Configuration::setPcieAerThresholdEn(data["PcieAerThresholdEn"]);
     Configuration::setPcieAerErrThresholdCnt(data["PcieAerErrThresholdCnt"]);
     Configuration::setAifsArmed(data["AifsArmed"]);
+    Configuration::setDisableResetCounter(data["DisableAifsResetOnSyncfloodCounter"]);
 
     if (data.contains("P0_DIMM_LABELS"))
     {

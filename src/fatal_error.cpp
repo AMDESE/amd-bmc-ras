@@ -708,13 +708,13 @@ void harvest_fatal_errors(uint8_t info, uint16_t numbanks, uint16_t bytespermca)
     }
 }
 
-
 std::vector<uint32_t> hexstring_to_vector(const std::string& hexString)
 {
     std::vector<uint32_t> result;
 
     // Skip the "0x" prefix if present
-    size_t start = (hexString.substr(INDEX_0, INDEX_2) == "0x") ? INDEX_2 : INDEX_0;
+    size_t start =
+        (hexString.substr(INDEX_0, INDEX_2) == "0x") ? INDEX_2 : INDEX_0;
 
     // Process the string in chunks of 8 characters (32 bits)
     for (size_t i = start; i < hexString.length(); i += INDEX_8)
@@ -1000,25 +1000,46 @@ bool harvest_ras_errors(uint8_t info, std::string alert_name)
                                                 d_in.stop_delay_counter = 1;
                                                 oob_status_t ret;
 
-                                                ret =
-                                                    override_delay_reset_on_sync_flood(
-                                                        info, d_in, &ack_resp);
-
-                                                if (ret)
-                                                {
-                                                    sd_journal_print(
-                                                        LOG_ERR,
-                                                        "Failed to override "
-                                                        "delay value reset on "
-                                                        "sync flood\n");
-                                                }
-                                                else
+                                                if (Configuration::
+                                                        getDisableResetCounter() ==
+                                                    true)
                                                 {
                                                     sd_journal_print(
                                                         LOG_INFO,
-                                                        "Successfully sent "
-                                                        "Reset delay on "
-                                                        "Syncflood command\n");
+                                                        "Disable Aifs Delay "
+                                                        "Reset on Syncflood "
+                                                        "counter is true. "
+                                                        "Sending Delay Reset "
+                                                        "on Syncflood override "
+                                                        "APML command\n");
+                                                    ret =
+                                                        override_delay_reset_on_sync_flood(
+                                                            info, d_in,
+                                                            &ack_resp);
+
+                                                    if (ret)
+                                                    {
+                                                        sd_journal_print(
+                                                            LOG_ERR,
+                                                            "Failed to "
+                                                            "override "
+                                                            "delay value reset "
+                                                            "on "
+                                                            "syncflood "
+                                                            "Err[%d]: %s \n",
+                                                            ret,
+                                                            esmi_get_err_msg(
+                                                                ret));
+                                                    }
+                                                    else
+                                                    {
+                                                        sd_journal_print(
+                                                            LOG_INFO,
+                                                            "Successfully sent "
+                                                            "Reset delay on "
+                                                            "Syncflood "
+                                                            "command\n");
+                                                    }
                                                 }
                                                 sd_journal_send(
                                                     "PRIORITY=%i", LOG_INFO,
