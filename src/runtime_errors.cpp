@@ -131,7 +131,7 @@ oob_status_t getOobRegisters(struct oob_config_d_in* oob_config)
     else
     {
         oob_config->core_mca_err_reporting_en =
-            (d_out >> CORE_MCA_ERR_REPORT_EN & BIT_MASK);
+            (d_out >> MCA_ERR_REPORT_EN & BIT_MASK);
         oob_config->dram_cecc_oob_ec_mode =
             (d_out >> DRAM_CECC_OOB_EC_MODE & TRIBBLE_BITS);
         oob_config->pcie_err_reporting_en =
