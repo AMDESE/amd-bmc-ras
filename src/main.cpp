@@ -610,6 +610,7 @@ static void currentHostStateMonitor()
                     if (ret == OOB_SUCCESS)
                     {
                         performPlatformInitialization();
+                        watchdogTimerCounter = 0;
                         break;
                     }
                     sleep(INDEX_1);
