@@ -618,19 +618,22 @@ void dump_error_descriptor_section(const std::shared_ptr<T>& data,
             if (strcasecmp(data->SectionDescriptor[i].FRUText, "null") ==
                 INDEX_0)
             {
-                std::strcpy(data->SectionDescriptor[i].FRUText, "MemoryError");
+                std::strncpy(data->SectionDescriptor[i].FRUText, "MemoryError", INDEX_19);
+                data->SectionDescriptor[i].FRUText[INDEX_19] = '\0';
             }
             else if (data->SectionDescriptor[i].FRUText[INDEX_0] == '\0')
             {
                 if (ErrorType == RUNTIME_MCA_ERR)
                 {
-                    std::strcpy(data->SectionDescriptor[i].FRUText,
-                                "ProcessorError");
+                    std::strncpy(data->SectionDescriptor[i].FRUText,
+                                "ProcessorError", INDEX_19);
+                    data->SectionDescriptor[i].FRUText[INDEX_19] = '\0';
                 }
                 else if (ErrorType == RUNTIME_DRAM_ERR)
                 {
-                    std::strcpy(data->SectionDescriptor[i].FRUText,
-                                "DramCeccError");
+                    std::strncpy(data->SectionDescriptor[i].FRUText,
+                                "DramCeccError", INDEX_19);
+                    data->SectionDescriptor[i].FRUText[INDEX_19] = '\0';
                 }
             }
         }
