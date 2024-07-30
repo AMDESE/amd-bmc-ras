@@ -59,7 +59,7 @@ oob_status_t RasErrThresholdSet(struct run_time_threshold th)
         retryCount = MAX_RETRIES;
         ret = OOB_MAILBOX_CMD_UNKNOWN;
 
-        if (ret != OOB_SUCCESS)
+        while (retryCount > 0)
         {
             ret = set_bmc_ras_err_threshold(p1_info, th);
 
@@ -78,11 +78,11 @@ oob_status_t RasErrThresholdSet(struct run_time_threshold th)
 
 oob_status_t BmcRasOobConfig(struct oob_config_d_in oob_config)
 {
-    uint16_t retryCount = 0;
-    oob_status_t ret;
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
 
     for (int i = 0; i < num_of_proc; i++)
     {
+        uint16_t retryCount = 0;
         retryCount = MAX_RETRIES;
 
         while (retryCount > 0)
@@ -184,8 +184,11 @@ oob_status_t McaErrThresholdEnable()
 
         ret = BmcRasOobConfig(oob_config);
 
-        sd_journal_print(LOG_INFO, "Setting MCA error threshold\n");
-        ret = RasErrThresholdSet(th);
+        if (ret == OOB_SUCCESS)
+        {
+            sd_journal_print(LOG_INFO, "Setting MCA error threshold\n");
+            ret = RasErrThresholdSet(th);
+        }
     }
     if (Configuration::getDramCeccThresholdEn() == true)
     {
@@ -204,8 +207,11 @@ oob_status_t McaErrThresholdEnable()
 
         ret = BmcRasOobConfig(oob_config);
 
-        sd_journal_print(LOG_INFO, "Setting Dram Cecc Error threshold\n");
-        ret = RasErrThresholdSet(th);
+        if (ret == OOB_SUCCESS)
+        {
+            sd_journal_print(LOG_INFO, "Setting Dram Cecc Error threshold\n");
+            ret = RasErrThresholdSet(th);
+        }
     }
 
     return ret;
@@ -273,7 +279,7 @@ oob_status_t SetPcieOobConfig()
   header Severity Order = Fatal > non-fatal uncorrected > corrected*/
 bool calculate_highest_severity(uint32_t* Severity, uint16_t SectionCount,
                                 uint32_t* HighestSeverity,
-                                std::string ErrorType)
+                                const std::string& ErrorType)
 {
     bool rc = true;
     *HighestSeverity = SEV_NON_FATAL_CORRECTED;
@@ -312,8 +318,8 @@ void harvest_runtime_errors(uint8_t ErrorPollingType,
     uint32_t* Severity = nullptr;
     uint64_t* CheckInfo = nullptr;
     uint32_t HighestSeverity;
-    uint32_t SectionDesSize = 0;
-    uint32_t SectionSize = 0;
+    uint32_t SectionDesSize;
+    uint32_t SectionSize;
 
     uint16_t SectionCount = p0_inst.number_of_inst + p1_inst.number_of_inst;
 
@@ -506,7 +512,7 @@ void harvest_runtime_errors(uint8_t ErrorPollingType,
 
 void updateErrorCount(
     std::vector<std::pair<std::string, uint64_t>>& P0_DimmEccCount,
-    std::string DimmLabel, uint16_t err_count)
+    const std::string& DimmLabel, uint16_t err_count)
 {
 
     auto itCheck =
@@ -522,14 +528,14 @@ void updateErrorCount(
         if (std::filesystem::exists(dramCeccErrorFile.data()))
         {
             nlohmann::json j;
-            std::ifstream file(dramCeccErrorFile.data());
-            file >> j;
+            std::ifstream fileIn(dramCeccErrorFile.data());
+            fileIn >> j;
 
             if (j.contains(itCheck->first))
             {
                 j[itCheck->first] = itCheck->second;
-                std::ofstream file(dramCeccErrorFile.data());
-                file << std::setw(INDEX_4) << j << std::endl;
+                std::ofstream fileFd(dramCeccErrorFile.data());
+                fileFd << std::setw(INDEX_4) << j << std::endl;
             }
         }
     }
@@ -540,9 +546,6 @@ void harvest_dram_cecc_error_counters(struct ras_rt_valid_err_inst inst,
 {
     uint32_t d_out = 0;
     struct run_time_err_d_in d_in;
-    uint16_t err_count;
-    uint8_t ch_num;
-    uint8_t chip_sel_num;
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
 
     if (inst.number_of_inst != 0)
@@ -582,9 +585,14 @@ void harvest_dram_cecc_error_counters(struct ras_rt_valid_err_inst inst,
             }
             n++;
         }
+
         if (ret == OOB_SUCCESS)
         {
-            err_count = d_out & TWO_BYTE_MASK;
+            uint16_t error_count;
+            uint8_t ch_num;
+            uint8_t chip_sel_num;
+
+            error_count = d_out & TWO_BYTE_MASK;
 
             ch_num = (d_out >> INDEX_16) & NIBBLE_MASK;
 
@@ -614,15 +622,15 @@ void harvest_dram_cecc_error_counters(struct ras_rt_valid_err_inst inst,
 
             sd_journal_print(LOG_INFO,
                              "Dimm Label = %s Dram Cecc error count = %d\n",
-                             DimmLabel.data(), err_count);
+                             DimmLabel.data(), error_count);
 
             if (soc_num == p0_info)
             {
-                updateErrorCount(P0_DimmEccCount, DimmLabel, err_count);
+                updateErrorCount(P0_DimmEccCount, DimmLabel, error_count);
             }
             else if (soc_num == p1_info)
             {
-                updateErrorCount(P1_DimmEccCount, DimmLabel, err_count);
+                updateErrorCount(P1_DimmEccCount, DimmLabel, error_count);
             }
         }
     }

@@ -79,7 +79,6 @@ bool runtimeErrPollingSupported = false;
 bool getNumberOfCpu()
 {
     FILE* pf;
-    char data[COMMAND_LEN];
     bool ret = false;
     std::stringstream ss;
 
@@ -89,6 +88,7 @@ bool getNumberOfCpu()
     // Error handling
     if (pf)
     {
+        char data[COMMAND_LEN];
         // Get the data from the process execution
         if (fgets(data, COMMAND_LEN, pf))
         {
@@ -141,7 +141,6 @@ void getCpuID()
 void getBoardID()
 {
     FILE* pf;
-    char data[COMMAND_LEN];
     std::stringstream ss;
 
     // Setup pipe for reading and execute to get u-boot environment
@@ -150,6 +149,7 @@ void getBoardID()
     // Error handling
     if (pf)
     {
+        char data[COMMAND_LEN];
         // Get the data from the process execution
         if (fgets(data, COMMAND_LEN, pf))
         {
@@ -186,34 +186,34 @@ T getProperty(sdbusplus::bus::bus& bus, const char* service, const char* path,
 void getMicrocodeRev()
 {
     sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
-    std::string MicroCode = getProperty<std::string>(
+    std::string P0_MicroCode = getProperty<std::string>(
         bus, InventoryService.c_str(), P0_InventoryPath.c_str(),
         CpuInventoryInterface, "Microcode");
 
-    if (MicroCode.empty())
+    if (P0_MicroCode.empty())
     {
         sd_journal_print(LOG_ERR,
                          "Failed to read ucode revision for Processor P0\n");
     }
     else
     {
-        p0_ucode = std::stoul(MicroCode, nullptr, BASE_16);
+        p0_ucode = std::stoul(P0_MicroCode, nullptr, BASE_16);
     }
 
     if (num_of_proc == TWO_SOCKET)
     {
-        std::string MicroCode = getProperty<std::string>(
+        std::string p1_MicroCode = getProperty<std::string>(
             bus, InventoryService.c_str(), P1_InventoryPath.c_str(),
             CpuInventoryInterface, "Microcode");
 
-        if (MicroCode.empty())
+        if (p1_MicroCode.empty())
         {
             sd_journal_print(
                 LOG_ERR, "Failed to read ucode revision for Processor P1\n");
         }
         else
         {
-            p1_ucode = std::stoul(MicroCode, nullptr, BASE_16);
+            p1_ucode = std::stoul(p1_MicroCode, nullptr, BASE_16);
         }
     }
 }
@@ -221,30 +221,30 @@ void getMicrocodeRev()
 void getPpinFuse()
 {
     sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
-    std::string Ppin = getProperty<std::string>(bus, InventoryService.c_str(),
-                                                P0_InventoryPath.c_str(),
-                                                CpuInventoryInterface, "PPIN");
-    if (Ppin.empty())
+    std::string P0_Ppin = getProperty<std::string>(
+        bus, InventoryService.c_str(), P0_InventoryPath.c_str(),
+        CpuInventoryInterface, "PPIN");
+    if (P0_Ppin.empty())
     {
         sd_journal_print(LOG_ERR, "Failed to read PPIN for Processor P0\n");
     }
     else
     {
-        p0_ppin = std::stoull(Ppin, nullptr, BASE_16);
+        p0_ppin = std::stoull(P0_Ppin, nullptr, BASE_16);
     }
 
     if (num_of_proc == TWO_SOCKET)
     {
-        std::string Ppin = getProperty<std::string>(
+        std::string P1_Ppin = getProperty<std::string>(
             bus, InventoryService.c_str(), P1_InventoryPath.c_str(),
             CpuInventoryInterface, "PPIN");
-        if (Ppin.empty())
+        if (P1_Ppin.empty())
         {
             sd_journal_print(LOG_ERR, "Failed to read Ppin for Processor P1\n");
         }
         else
         {
-            p1_ppin = std::stoull(Ppin, nullptr, BASE_16);
+            p1_ppin = std::stoull(P1_Ppin, nullptr, BASE_16);
         }
     }
 }
@@ -255,12 +255,12 @@ void getPpinFuse()
  */
 void CreateIndexFile()
 {
-    int dir;
     struct stat buffer;
     FILE* file;
 
     if (stat(kRasDir.data(), &buffer) != 0)
     {
+        int dir;
         dir = mkdir(kRasDir.data(), 0777);
 
         if (dir != 0)
@@ -434,7 +434,8 @@ void CreateConfigFile()
     Configuration::setPcieAerThresholdEn(data["PcieAerThresholdEn"]);
     Configuration::setPcieAerErrThresholdCnt(data["PcieAerErrThresholdCnt"]);
     Configuration::setAifsArmed(data["AifsArmed"]);
-    Configuration::setDisableResetCounter(data["DisableAifsResetOnSyncfloodCounter"]);
+    Configuration::setDisableResetCounter(
+        data["DisableAifsResetOnSyncfloodCounter"]);
 
     if (data.contains("P0_DIMM_LABELS"))
     {
@@ -621,36 +622,40 @@ static void currentHostStateMonitor()
 
 void performPlatformInitialization()
 {
-    oob_status_t ret;
-    uint8_t soc_num = 0;
-    struct processor_info plat_info[INDEX_1];
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
+    struct processor_info platInfo[INDEX_1];
+
+    std::cout << "perform performPlatformInitialization" << std::endl;
 
     if (platformInitialized == false)
     {
         while (ret != OOB_SUCCESS)
         {
-            ret = esmi_get_processor_info(soc_num, plat_info);
+            uint8_t soc_num = 0;
+            ret = esmi_get_processor_info(soc_num, platInfo);
 
             if (ret == OOB_SUCCESS)
             {
-                FamilyId = plat_info->family;
+                FamilyId = platInfo->family;
                 break;
             }
             sleep(INDEX_1);
         }
+        std::cout << "platformInitialized " << std::endl;
 
         if (ret == OOB_SUCCESS)
         {
-            if (plat_info->family == GENOA_FAMILY_ID)
+            if (platInfo->family == GENOA_FAMILY_ID)
             {
-                if ((plat_info->model != MI300A_MODEL_NUMBER) &&
-                    (plat_info->model != MI300C_MODEL_NUMBER))
+                if ((platInfo->model != MI300A_MODEL_NUMBER) &&
+                    (platInfo->model != MI300C_MODEL_NUMBER))
                 {
                     BlockId = {BLOCK_ID_33};
                 }
             }
-            else if (plat_info->family == TURIN_FAMILY_ID)
+            else if (platInfo->family == TURIN_FAMILY_ID)
             {
+                std::cout << "Turin platform " << std::endl;
                 currentHostStateMonitor();
 
                 clearSbrmiAlertMask();
@@ -690,7 +695,7 @@ void performPlatformInitialization()
 
 void apmlActiveMonitor()
 {
-    oob_status_t ret;
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
 
     uint32_t d_out = 0;
 
@@ -781,14 +786,14 @@ void findProgramId()
     oob_status_t ret;
     uint8_t soc_num = 0;
 
-    struct processor_info plat_info[INDEX_1];
+    struct processor_info platInfo[INDEX_1];
 
-    ret = esmi_get_processor_info(soc_num, plat_info);
+    ret = esmi_get_processor_info(soc_num, platInfo);
 
     if (ret == OOB_SUCCESS)
     {
-        if ((plat_info->model == MI300A_MODEL_NUMBER) ||
-            (plat_info->model == MI300C_MODEL_NUMBER))
+        if ((platInfo->model == MI300A_MODEL_NUMBER) ||
+            (platInfo->model == MI300C_MODEL_NUMBER))
         {
             ProgId = MI_PROG_SEG_ID;
         }

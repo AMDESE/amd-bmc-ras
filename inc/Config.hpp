@@ -82,10 +82,10 @@ class Configuration
     static void setPcieAerErrThresholdCnt(uint16_t);
     static uint16_t getPcieAerErrThresholdCnt();
 
-    static void setResetSignal(std::string);
+    static void setResetSignal(const std::string&);
     static std::string getResetSignal();
 
-    static void setSigIDOffset(std::vector<std::string>);
+    static void setSigIDOffset(const std::vector<std::string>&);
     static std::vector<std::string> getSigIDOffset();
 
     static std::vector<std::pair<std::string, std::string>>
@@ -96,11 +96,11 @@ class Configuration
         getAllAifsSignatureId();
 
     static void
-        setAllP0_DimmLabels(std::vector<std::pair<std::string, std::string>>);
+        setAllP0_DimmLabels(const std::vector<std::pair<std::string, std::string>>&);
     static void
-        setAllP1_DimmLabels(std::vector<std::pair<std::string, std::string>>);
+        setAllP1_DimmLabels(const std::vector<std::pair<std::string, std::string>>&);
     static void
-        setAllAifsSignatureId(std::vector<std::pair<std::string, std::string>>);
+        setAllAifsSignatureId(const std::vector<std::pair<std::string, std::string>>&);
 
     static std::string getP0_DimmLabels(const std::string&);
     static std::string getP1_DimmLabels(const std::string&);

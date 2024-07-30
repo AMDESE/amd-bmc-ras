@@ -210,7 +210,7 @@ uint16_t Configuration::getPcieAerErrThresholdCnt()
     return PcieAerErrThresholdCnt;
 }
 
-void Configuration::setResetSignal(std::string value)
+void Configuration::setResetSignal(const std::string& value)
 {
     ResetSignal = value;
 }
@@ -220,7 +220,7 @@ std::string Configuration::getResetSignal()
     return ResetSignal;
 }
 
-void Configuration::setSigIDOffset(std::vector<std::string> value)
+void Configuration::setSigIDOffset(const std::vector<std::string>& value)
 {
     sigIDOffset = value;
 }
@@ -232,12 +232,15 @@ std::vector<std::string> Configuration::getSigIDOffset()
 
 std::string Configuration::getP0_DimmLabels(const std::string& key)
 {
-    for (const auto& pair : P0_DimmLabels)
+    auto it =
+        std::find_if(P0_DimmLabels.begin(), P0_DimmLabels.end(),
+                     [&key](const std::pair<std::string, std::string>& pair) {
+                         return pair.first == key;
+                     });
+
+    if (it != P0_DimmLabels.end())
     {
-        if (pair.first == key)
-        {
-            return pair.second;
-        }
+        return it->second;
     }
     // Return an empty string if the key is not found
     return "";
@@ -245,12 +248,15 @@ std::string Configuration::getP0_DimmLabels(const std::string& key)
 
 std::string Configuration::getP1_DimmLabels(const std::string& key)
 {
-    for (const auto& pair : P1_DimmLabels)
+    auto it =
+        std::find_if(P1_DimmLabels.begin(), P1_DimmLabels.end(),
+                     [&key](const std::pair<std::string, std::string>& pair) {
+                         return pair.first == key;
+                     });
+
+    if (it != P1_DimmLabels.end())
     {
-        if (pair.first == key)
-        {
-            return pair.second;
-        }
+        return it->second;
     }
     // Return an empty string if the key is not found
     return "";
@@ -259,26 +265,30 @@ std::string Configuration::getP1_DimmLabels(const std::string& key)
 void Configuration::setP0_DimmLabels(const std::string& key,
                                      const std::string& value)
 {
-    for (auto& pair : P0_DimmLabels)
+    auto it =
+        std::find_if(P0_DimmLabels.begin(), P0_DimmLabels.end(),
+                     [&key](const std::pair<std::string, std::string>& pair) {
+                         return pair.first == key;
+                     });
+
+    if (it != P0_DimmLabels.end())
     {
-        if (pair.first == key)
-        {
-            pair.second = value;
-            return;
-        }
+        it->second = value;
     }
 }
 
 void Configuration::setP1_DimmLabels(const std::string& key,
                                      const std::string& value)
 {
-    for (auto& pair : P1_DimmLabels)
+    auto it =
+        std::find_if(P1_DimmLabels.begin(), P1_DimmLabels.end(),
+                     [&key](const std::pair<std::string, std::string>& pair) {
+                         return pair.first == key;
+                     });
+
+    if (it != P1_DimmLabels.end())
     {
-        if (pair.first == key)
-        {
-            pair.second = value;
-            return;
-        }
+        it->second = value;
     }
 }
 
@@ -324,19 +334,19 @@ std::vector<std::pair<std::string, std::string>>
 }
 
 void Configuration::setAllP0_DimmLabels(
-    std::vector<std::pair<std::string, std::string>> value)
+    const std::vector<std::pair<std::string, std::string>>& value)
 {
     P0_DimmLabels = value;
 }
 
 void Configuration::setAllP1_DimmLabels(
-    std::vector<std::pair<std::string, std::string>> value)
+    const std::vector<std::pair<std::string, std::string>>& value)
 {
     P1_DimmLabels = value;
 }
 
 void Configuration::setAllAifsSignatureId(
-    std::vector<std::pair<std::string, std::string>> value)
+    const std::vector<std::pair<std::string, std::string>>& value)
 {
     AifsSignatureId = value;
 }
