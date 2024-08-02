@@ -700,7 +700,7 @@ void dump_cper_header_section(const std::shared_ptr<T>& data,
             sizeof(common_error_record_header) +
             (sizeof(error_section_descriptor) * SectionCount) +
             (sizeof(pcie_error_section) * SectionCount);
-        sd_journal_print(LOG_INFO, "Size of pcie erorr section = %d\n",
+        sd_journal_print(LOG_INFO, "Size of pcie erorr section = %ld\n",
                          (sizeof(pcie_error_section)));
     }
     else if (ErrorType == FATAL_ERR)

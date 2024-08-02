@@ -21,7 +21,6 @@ extern "C" {
 #include "apml.h"
 #include "esmi_cpuid_msr.h"
 #include "esmi_mailbox.h"
-#include "esmi_mailbox_nda.h"
 #include "esmi_rmi.h"
 }
 
