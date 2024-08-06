@@ -326,6 +326,7 @@ std::string FindDimmFruText(uint8_t soc_num, uint8_t UMCInstance,
 }
 
 template <typename T>
+// cppcheck-suppress unusedFunction
 void dump_proc_error_section(const std::shared_ptr<T>& data, uint8_t soc_num,
                              struct ras_rt_valid_err_inst inst,
                              uint8_t category, uint16_t Section,
@@ -336,12 +337,12 @@ void dump_proc_error_section(const std::shared_ptr<T>& data, uint8_t soc_num,
     uint32_t d_out = 0;
     uint64_t mca_status_register = 0;
     uint32_t root_err_status = 0;
-    uint32_t offset = 0;
+    uint32_t offset;
     uint32_t mca_ipid_lo_register = 0;
     uint32_t mca_ipid_hi_register = 0;
     uint32_t mca_synd_lo_register = 0;
 
-    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
+    oob_status_t ret;
 
     sd_journal_print(LOG_INFO, "Harvesting errors for category %d\n", category);
     std::shared_ptr<PROC_RUNTIME_ERR_RECORD> ProcPtr;
@@ -550,23 +551,13 @@ void dump_proc_error_section(const std::shared_ptr<T>& data, uint8_t soc_num,
 }
 
 template <typename T>
+// cppcheck-suppress unusedFunction
 void calculate_time_stamp(const std::shared_ptr<T>& data)
 {
     using namespace std;
     using namespace std::chrono;
-    typedef duration<int, ratio_multiply<hours::period, ratio<24>>::type> days;
 
     system_clock::time_point now = system_clock::now();
-    system_clock::duration tp = now.time_since_epoch();
-
-    days d = duration_cast<days>(tp);
-    tp -= d;
-    hours h = duration_cast<hours>(tp);
-    tp -= h;
-    minutes m = duration_cast<minutes>(tp);
-    tp -= m;
-    seconds s = duration_cast<seconds>(tp);
-    tp -= s;
 
     time_t tt = system_clock::to_time_t(now);
     tm utc_tm = *gmtime(&tt);
@@ -583,8 +574,9 @@ void calculate_time_stamp(const std::shared_ptr<T>& data)
 }
 
 template <typename T>
+// cppcheck-suppress unusedFunction
 void dump_error_descriptor_section(const std::shared_ptr<T>& data,
-                                   uint16_t SectionCount, std::string ErrorType,
+                                   uint16_t SectionCount,const std::string& ErrorType,
                                    uint32_t* Severity)
 {
     for (int i = 0; i < SectionCount; i++)
@@ -618,19 +610,23 @@ void dump_error_descriptor_section(const std::shared_ptr<T>& data,
             if (strcasecmp(data->SectionDescriptor[i].FRUText, "null") ==
                 INDEX_0)
             {
-                std::strcpy(data->SectionDescriptor[i].FRUText, "MemoryError");
+                std::strncpy(data->SectionDescriptor[i].FRUText, "MemoryError",
+                             INDEX_19);
+                data->SectionDescriptor[i].FRUText[INDEX_19] = '\0';
             }
             else if (data->SectionDescriptor[i].FRUText[INDEX_0] == '\0')
             {
                 if (ErrorType == RUNTIME_MCA_ERR)
                 {
-                    std::strcpy(data->SectionDescriptor[i].FRUText,
-                                "ProcessorError");
+                    std::strncpy(data->SectionDescriptor[i].FRUText,
+                                 "ProcessorError", INDEX_19);
+                    data->SectionDescriptor[i].FRUText[INDEX_19] = '\0';
                 }
                 else if (ErrorType == RUNTIME_DRAM_ERR)
                 {
-                    std::strcpy(data->SectionDescriptor[i].FRUText,
-                                "DramCeccError");
+                    std::strncpy(data->SectionDescriptor[i].FRUText,
+                                 "DramCeccError", INDEX_19);
+                    data->SectionDescriptor[i].FRUText[INDEX_19] = '\0';
                 }
             }
         }
@@ -666,9 +662,10 @@ void dump_error_descriptor_section(const std::shared_ptr<T>& data,
 }
 
 template <typename T>
+// cppcheck-suppress unusedFunction
 void dump_cper_header_section(const std::shared_ptr<T>& data,
                               uint16_t SectionCount, uint32_t ErrorSeverity,
-                              std::string ErrorType)
+                              const std::string& ErrorType)
 {
     /*ASCII 4-character array “CPER” (0x43, 0x50, 0x45, 0x52) */
     memcpy(data->Header.Signature, CPER_SIG_RECORD, CPER_SIG_SIZE);
@@ -739,6 +736,7 @@ void dump_cper_header_section(const std::shared_ptr<T>& data,
 }
 
 template <typename T>
+// cppcheck-suppress unusedFunction
 void dump_proc_error_info_section(const std::shared_ptr<T>& ProcPtr,
                                   uint8_t soc_num, uint16_t SectionCount,
                                   uint64_t* CheckInfo, uint32_t SectionStart)
@@ -792,7 +790,8 @@ inline std::string getCperFilename(int num)
 }
 
 template <typename T>
-void write_to_cper_file(const std::shared_ptr<T>& data, std::string ErrorType,
+// cppcheck-suppress unusedFunction
+void write_to_cper_file(const std::shared_ptr<T>& data, const std::string& ErrorType,
                         uint16_t SectionCount)
 {
 
@@ -875,8 +874,7 @@ void write_to_cper_file(const std::shared_ptr<T>& data, std::string ErrorType,
 
             exportCrashdumpToDBus(err_count, FatalPtr->Header.TimeStamp);
 
-            std::string ras_err_msg =
-                "CPER file generated for fatal error";
+            std::string ras_err_msg = "CPER file generated for fatal error";
 
             sd_journal_send(
                 "MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i", LOG_ERR,
@@ -908,7 +906,7 @@ void write_to_cper_file(const std::shared_ptr<T>& data, std::string ErrorType,
     file = fopen(index_file, "w");
     if (file != NULL)
     {
-        fprintf(file, "%d", err_count);
+        fprintf(file, "%u", err_count);
         fclose(file);
     }
 
@@ -924,31 +922,31 @@ template void calculate_time_stamp<PCIE_RUNTIME_ERR_RECORD>(
     const std::shared_ptr<PCIE_RUNTIME_ERR_RECORD>&);
 
 template void dump_error_descriptor_section<CPER_RECORD>(
-    const std::shared_ptr<CPER_RECORD>&, uint16_t, std::string, uint32_t*);
+    const std::shared_ptr<CPER_RECORD>&, uint16_t, const std::string& , uint32_t*);
 template void dump_error_descriptor_section<PROC_RUNTIME_ERR_RECORD>(
-    const std::shared_ptr<PROC_RUNTIME_ERR_RECORD>&, uint16_t, std::string,
+    const std::shared_ptr<PROC_RUNTIME_ERR_RECORD>&, uint16_t,const std::string&,
     uint32_t*);
 template void dump_error_descriptor_section<PCIE_RUNTIME_ERR_RECORD>(
-    const std::shared_ptr<PCIE_RUNTIME_ERR_RECORD>&, uint16_t, std::string,
+    const std::shared_ptr<PCIE_RUNTIME_ERR_RECORD>&, uint16_t,const std::string&,
     uint32_t*);
 
 template void
     dump_cper_header_section<CPER_RECORD>(const std::shared_ptr<CPER_RECORD>&,
-                                          uint16_t, uint32_t, std::string);
+                                          uint16_t, uint32_t,const std::string&);
 template void dump_cper_header_section<PROC_RUNTIME_ERR_RECORD>(
     const std::shared_ptr<PROC_RUNTIME_ERR_RECORD>&, uint16_t, uint32_t,
-    std::string);
+    const std::string&);
 template void dump_cper_header_section<PCIE_RUNTIME_ERR_RECORD>(
     const std::shared_ptr<PCIE_RUNTIME_ERR_RECORD>&, uint16_t, uint32_t,
-    std::string);
+    const std::string&);
 
 template void
     write_to_cper_file<CPER_RECORD>(const std::shared_ptr<CPER_RECORD>&,
-                                    std::string, uint16_t);
+                                    const std::string&, uint16_t);
 template void write_to_cper_file<PROC_RUNTIME_ERR_RECORD>(
-    const std::shared_ptr<PROC_RUNTIME_ERR_RECORD>&, std::string, uint16_t);
+    const std::shared_ptr<PROC_RUNTIME_ERR_RECORD>&, const std::string& , uint16_t);
 template void write_to_cper_file<PCIE_RUNTIME_ERR_RECORD>(
-    const std::shared_ptr<PCIE_RUNTIME_ERR_RECORD>&, std::string, uint16_t);
+    const std::shared_ptr<PCIE_RUNTIME_ERR_RECORD>&, const std::string& , uint16_t);
 
 template void dump_proc_error_section<PROC_RUNTIME_ERR_RECORD>(
     const std::shared_ptr<PROC_RUNTIME_ERR_RECORD>&, uint8_t,

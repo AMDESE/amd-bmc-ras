@@ -64,6 +64,39 @@ void getLastTransAddr(uint8_t info)
 
                     ret = read_ras_df_err_dump(info, df_err, &data);
 
+                    if (ret != OOB_SUCCESS)
+                    {
+                        // retry
+                        uint16_t retryCount =
+                            Configuration::getApmlRetryCount();
+                        while (retryCount > 0)
+                        {
+
+                            memset(&data, 0, sizeof(data));
+                            memset(&df_err, 0, sizeof(df_err));
+
+                            /* Offset */
+                            df_err.input[INDEX_0] = offset * BYTE_4;
+                            /* DF block ID */
+                            df_err.input[INDEX_1] = blk_id;
+                            /* DF block ID instance */
+                            df_err.input[INDEX_2] = n;
+
+                            ret = read_ras_df_err_dump(info, df_err, &data);
+
+                            if (ret == OOB_SUCCESS)
+                            {
+                                break;
+                            }
+                            retryCount--;
+                            sleep(INDEX_1);
+                        }
+
+                        if (ret != OOB_SUCCESS)
+                        {
+                            data = 0;
+                        }
+                    }
                     if (info == p0_info)
                     {
                         rcd->P0_ErrorRecord.ContextInfo.DfDumpData
@@ -87,8 +120,6 @@ void harvestDebugLogDump(uint8_t info, uint8_t blk_id)
 {
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     uint16_t retries = 0;
-    uint16_t n = 0;
-    uint16_t maxOffset32;
     uint32_t data;
     struct ras_df_err_chk err_chk;
     union ras_df_err_dump df_err = {0};
@@ -151,6 +182,8 @@ void harvestDebugLogDump(uint8_t info, uint8_t blk_id)
     {
         if (err_chk.df_block_instances != 0)
         {
+            uint16_t n = 0;
+            uint16_t maxOffset32;
 
             uint32_t DbgLogIdHeader =
                 (static_cast<uint32_t>(err_chk.err_log_len) << INDEX_16) |
@@ -227,9 +260,10 @@ void harvestDebugLogDump(uint8_t info, uint8_t blk_id)
                                                  "dump for debug log ID : %d\n",
                                                  blk_id);
                                 data = BAD_DATA;
-                                /*the Dump APML command fails in the middle of
-                                  the iterative loop, then write BAADDA7A for
-                                  the remaining iterations in the for loop*/
+                                /*the Dump APML command fails in the middle
+                                  of the iterative loop, then write BAADDA7A
+                                  for the remaining iterations in the for
+                                  loop*/
                                 apmlHang = true;
                             }
                         }
@@ -256,8 +290,8 @@ void requestHostTransition(std::string command)
 {
 
     boost::system::error_code ec;
-    boost::asio::io_context io;
-    auto conn = std::make_shared<sdbusplus::asio::connection>(io);
+    boost::asio::io_context io_conn;
+    auto conn = std::make_shared<sdbusplus::asio::connection>(io_conn);
 
     conn->async_method_call(
         [](boost::system::error_code ec) {
@@ -276,8 +310,8 @@ void requestHostTransition(std::string command)
 void triggerRsmrstReset()
 {
     boost::system::error_code ec;
-    boost::asio::io_context io;
-    auto conn = std::make_shared<sdbusplus::asio::connection>(io);
+    boost::asio::io_context io_conn;
+    auto conn = std::make_shared<sdbusplus::asio::connection>(io_conn);
 
     conn->async_method_call(
         [](boost::system::error_code ec) {
@@ -432,7 +466,7 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks,
     uint16_t maxOffset32;
     uint32_t buffer;
     struct mca_bank mca_dump;
-    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
+    oob_status_t ret;
     uint32_t Severity;
 
     std::vector<std::string> sigIDOffset = Configuration::getSigIDOffset();
@@ -649,7 +683,7 @@ static bool harvest_mca_validity_check(uint8_t info, uint16_t* numbanks,
         }
     }
 
-    if ((*numbanks <= 0) || (*numbanks > MAX_MCA_BANKS))
+    if ((*numbanks == 0) || (*numbanks > MAX_MCA_BANKS))
     {
         mac_validity_check = false;
     }
@@ -671,8 +705,8 @@ void SystemRecovery(uint8_t buf)
         }
         else
         {
-            /* In a 2P config, it is recommended to only send this command to P0
-            Hence, sending the Signal only to socket 0*/
+            /* In a 2P config, it is recommended to only send this command
+            to P0 Hence, sending the Signal only to socket 0*/
             ret = reset_on_sync_flood(p0_info, &ack_resp);
             if (ret)
             {
@@ -810,13 +844,7 @@ bool harvest_ras_errors(uint8_t info, std::string alert_name)
 {
     std::unique_lock lock(harvest_in_progress_mtx);
 
-    uint16_t bytespermca = 0;
-    uint16_t numbanks = 0;
-    bool ControlFabricError = false;
-    bool FchHangError = false;
     uint8_t buf;
-    bool ResetReady = false;
-    bool RuntimeError = false;
 
     // Check if APML ALERT is because of RAS
     if (read_sbrmi_ras_status(info, &buf) == OOB_SUCCESS)
@@ -827,10 +855,18 @@ bool harvest_ras_errors(uint8_t info, std::string alert_name)
         // check RAS Status Register
         if (buf & INT_15)
         {
+            uint16_t bytespermca = 0;
+            uint16_t numbanks = 0;
+            bool ControlFabricError = false;
+            bool FchHangError = false;
+            bool ResetReady = false;
+            bool RuntimeError = false;
+
             if (buf & SYS_MGMT_CTRL_ERR)
             {
-                /*if RasStatus[reset_ctrl_err] is set in any of the processors,
-                  proceed to cold reset, regardless of the status of the other P
+                /*if RasStatus[reset_ctrl_err] is set in any of the
+                  processors, proceed to cold reset, regardless of the
+                  status of the other P
                 */
 
                 std::string ras_err_msg =
@@ -989,66 +1025,68 @@ bool harvest_ras_errors(uint8_t info, std::string alert_name)
                                         subscription["MessageIds"];
                                     if (messageIds.is_array())
                                     {
-                                        for (const auto& messageId : messageIds)
+                                        bool messageIdFound = std::any_of(
+                                            messageIds.begin(),
+                                            messageIds.end(),
+                                            [](const std::string& messageId) {
+                                                return messageId ==
+                                                       "AifsFailureMatch";
+                                            });
+                                        if (messageIdFound)
                                         {
-                                            if (messageId == "AifsFailureMatch")
+                                            recoveryAction = false;
+
+                                            struct ras_override_delay d_in = {0,0,0};
+                                            bool ack_resp;
+                                            d_in.stop_delay_counter = 1;
+                                            oob_status_t ret;
+
+                                            if (Configuration::
+                                                    getDisableResetCounter() ==
+                                                true)
                                             {
-                                                recoveryAction = false;
+                                                sd_journal_print(
+                                                    LOG_INFO,
+                                                    "Disable Aifs Delay "
+                                                    "Reset on Syncflood "
+                                                    "counter is true. "
+                                                    "Sending Delay Reset "
+                                                    "on Syncflood override "
+                                                    "APML command\n");
+                                                ret =
+                                                    override_delay_reset_on_sync_flood(
+                                                        info, d_in, &ack_resp);
 
-                                                struct ras_override_delay d_in;
-                                                bool ack_resp;
-                                                d_in.stop_delay_counter = 1;
-                                                oob_status_t ret;
-
-                                                if (Configuration::
-                                                        getDisableResetCounter() ==
-                                                    true)
+                                                if (ret)
+                                                {
+                                                    sd_journal_print(
+                                                        LOG_ERR,
+                                                        "Failed to "
+                                                        "override "
+                                                        "delay value reset "
+                                                        "on "
+                                                        "syncflood "
+                                                        "Err[%d]: %s \n",
+                                                        ret,
+                                                        esmi_get_err_msg(ret));
+                                                }
+                                                else
                                                 {
                                                     sd_journal_print(
                                                         LOG_INFO,
-                                                        "Disable Aifs Delay "
-                                                        "Reset on Syncflood "
-                                                        "counter is true. "
-                                                        "Sending Delay Reset "
-                                                        "on Syncflood override "
-                                                        "APML command\n");
-                                                    ret =
-                                                        override_delay_reset_on_sync_flood(
-                                                            info, d_in,
-                                                            &ack_resp);
-
-                                                    if (ret)
-                                                    {
-                                                        sd_journal_print(
-                                                            LOG_ERR,
-                                                            "Failed to "
-                                                            "override "
-                                                            "delay value reset "
-                                                            "on "
-                                                            "syncflood "
-                                                            "Err[%d]: %s \n",
-                                                            ret,
-                                                            esmi_get_err_msg(
-                                                                ret));
-                                                    }
-                                                    else
-                                                    {
-                                                        sd_journal_print(
-                                                            LOG_INFO,
-                                                            "Successfully sent "
-                                                            "Reset delay on "
-                                                            "Syncflood "
-                                                            "command\n");
-                                                    }
+                                                        "Successfully sent "
+                                                        "Reset delay on "
+                                                        "Syncflood "
+                                                        "command\n");
                                                 }
-                                                sd_journal_send(
-                                                    "PRIORITY=%i", LOG_INFO,
-                                                    "REDFISH_MESSAGE_ID=%s",
-                                                    "OpenBMC.0.1."
-                                                    "AifsFailureMatch",
-                                                    NULL);
-                                                break;
                                             }
+                                            sd_journal_send(
+                                                "PRIORITY=%i", LOG_INFO,
+                                                "REDFISH_MESSAGE_ID=%s",
+                                                "OpenBMC.0.1."
+                                                "AifsFailureMatch",
+                                                NULL);
+                                            break;
                                         }
                                     }
                                 }

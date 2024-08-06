@@ -260,13 +260,15 @@ void CreateDbusInterface()
                 const std::string& key = keyValuePair.first;
                 const std::string& value = keyValuePair.second;
 
-                for (auto& pair : resp)
+                auto it = std::find_if(
+                    resp.begin(), resp.end(),
+                    [&key](const std::pair<std::string, std::string>& pair) {
+                        return pair.first == key;
+                    });
+
+                if (it != resp.end())
                 {
-                    if (pair.first == key)
-                    {
-                        pair.second = value;
-                        break;
-                    }
+                    it->second = value;
                 }
             }
 
@@ -286,16 +288,17 @@ void CreateDbusInterface()
                 const std::string& key = keyValuePair.first;
                 const std::string& value = keyValuePair.second;
 
-                for (auto& pair : resp)
+                auto it = std::find_if(
+                    resp.begin(), resp.end(),
+                    [&key](const std::pair<std::string, std::string>& pair) {
+                        return pair.first == key;
+                    });
+
+                if (it != resp.end())
                 {
-                    if (pair.first == key)
-                    {
-                        pair.second = value;
-                        break;
-                    }
+                    it->second = value;
                 }
             }
-
             Configuration::setAllP1_DimmLabels(resp);
             updateConfigFile("P1_DIMM_LABELS", resp);
             return true;
@@ -310,14 +313,15 @@ void CreateDbusInterface()
                                        return true;
                                    });
 
-   bool DisableResetCounter = Configuration::getDisableResetCounter();
-    configIface->register_property("DisableAifsResetOnSyncfloodCounter", DisableResetCounter,
-                                   [](const bool& requested, bool& resp) {
-                                       resp = requested;
-                                       Configuration::setDisableResetCounter(resp);
-                                       updateConfigFile("DisableAifsResetOnSyncfloodCounter", resp);
-                                       return true;
-                                   });
+    bool DisableResetCounter = Configuration::getDisableResetCounter();
+    configIface->register_property(
+        "DisableAifsResetOnSyncfloodCounter", DisableResetCounter,
+        [](const bool& requested, bool& resp) {
+            resp = requested;
+            Configuration::setDisableResetCounter(resp);
+            updateConfigFile("DisableAifsResetOnSyncfloodCounter", resp);
+            return true;
+        });
 
     std::vector<std::pair<std::string, std::string>> AifsSignatureId =
         Configuration::getAllAifsSignatureId();
@@ -429,7 +433,8 @@ void CreateDbusInterface()
             return true;
         });
 
-    uint16_t DramCeccErrThresholdCnt = Configuration::getDramCeccErrThresholdCnt();
+    uint16_t DramCeccErrThresholdCnt =
+        Configuration::getDramCeccErrThresholdCnt();
     configIface->register_property(
         "DramCeccErrThresholdCnt", DramCeccErrThresholdCnt,
         [](const uint16_t& requested, uint16_t& resp) {
@@ -439,7 +444,8 @@ void CreateDbusInterface()
             return true;
         });
 
-    uint16_t PcieAerErrThresholdCnt = Configuration::getPcieAerErrThresholdCnt();
+    uint16_t PcieAerErrThresholdCnt =
+        Configuration::getPcieAerErrThresholdCnt();
     configIface->register_property(
         "PcieAerErrThresholdCnt", PcieAerErrThresholdCnt,
         [](const uint16_t& requested, uint16_t& resp) {
@@ -459,9 +465,8 @@ void CreateDbusInterface()
             fut.wait_for(std::chrono::seconds(kCrashdumpTimeInSec)) !=
                 std::future_status::ready)
         {
-            sd_journal_print(
-                LOG_WARNING,
-                "A logging is still in progress, that one won't get removed\n");
+            sd_journal_print(LOG_WARNING, "A logging is still in progress, "
+                                          "that one won't get removed\n");
         }
         for (auto& [filename, interface] : crashdumpInterfaces)
         {
@@ -479,8 +484,9 @@ void CreateDbusInterface()
     });
     deleteAllIface->initialize();
 
-    // com.amd.crashdump.OnDemand/GenerateOnDemandLog currently not supported
-    // com.amd.crashdump.Telemetry/GenerateTelemetryLog currently not supported
+    // com.amd.crashdump.OnDemand/GenerateOnDemandLog currently not
+    // supported com.amd.crashdump.Telemetry/GenerateTelemetryLog currently
+    // not supported
 
     // Check if any crashdump already exists.
     if (std::filesystem::exists(std::filesystem::path(kRasDir.data())))

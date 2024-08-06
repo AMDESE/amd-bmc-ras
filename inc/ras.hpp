@@ -122,13 +122,13 @@ void HPMFPGALockoutEventHandler();
 template <typename T>
 void calculate_time_stamp(const std::shared_ptr<T>&);
 template <typename T>
-void write_to_cper_file(const std::shared_ptr<T>&, std::string, uint16_t);
+void write_to_cper_file(const std::shared_ptr<T>&,const std::string& , uint16_t);
 template <typename T>
 void dump_cper_header_section(const std::shared_ptr<T>&, uint16_t, uint32_t,
-                              std::string);
+                              const std::string&);
 template <typename T>
 void dump_error_descriptor_section(const std::shared_ptr<T>&, uint16_t,
-                                   std::string, uint32_t*);
+                                   const std::string&, uint32_t*);
 template <typename T>
 void dump_proc_error_section(const std::shared_ptr<T>&, uint8_t,
                              struct ras_rt_valid_err_inst, uint8_t, uint16_t,
