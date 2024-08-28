@@ -512,8 +512,9 @@ void dump_proc_error_section(const std::shared_ptr<T>& data, uint8_t soc_num,
                 std::string FruText =
                     FindDimmFruText(soc_num, UMCInstance, DimmNumber);
 
-                memcpy(ProcPtr->SectionDescriptor[Section].FRUText,
-                       FruText.c_str(), INDEX_20);
+                std::strncpy(ProcPtr->SectionDescriptor[Section].FRUText, FruText.c_str(),
+                             INDEX_19);
+                ProcPtr->SectionDescriptor[Section].FRUText[INDEX_19] = '\0';
             }
         }
         else if (category == PCIE_ERR)
