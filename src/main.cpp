@@ -703,13 +703,14 @@ void apmlActiveMonitor()
     {
         ret = get_bmc_ras_oob_config(INDEX_0, &d_out);
 
-        if (ret == OOB_SUCCESS)
+        if(ret == OOB_MAILBOX_CMD_UNKNOWN)
         {
-            performPlatformInitialization();
-            break;
+            ret = esmi_get_processor_info(INDEX_0, plat_info);
         }
         sleep(INDEX_1);
     }
+
+    performPlatformInitialization();
 
     sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
     boost::system::error_code ec;
