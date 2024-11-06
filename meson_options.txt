@@ -1,0 +1,8 @@
+option(
+    'systemd-target',
+    description: 'Target for starting this service.',
+    type: 'string'
+)
+
+option('apml-interface', type: 'boolean', value: true, description: 'Enable APML interface')
+option('pldm-interface', type: 'boolean', value: false, description: 'Enable PLDM interface')
