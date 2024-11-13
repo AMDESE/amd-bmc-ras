@@ -1,0 +1,70 @@
+{
+    "Configuration": [
+        {
+            "ApmlRetries": {
+                "Description": "Number of APML retry count",
+                "Value": 10,
+                "MaxBoundLimit": "50"
+            }
+        },
+        {
+            "SystemRecovery": {
+                "Description": "System recovery mode",
+                "Value": "NO_RESET"
+            }
+        },
+        {
+            "HarvestMicrocode": {
+                "Description": "Harvest microcode version",
+                "Value": true
+            }
+        },
+        {
+            "HarvestPPIN": {
+                "Description": "Harvest PPIN",
+                "Value": true
+            }
+        },
+        {
+            "ResetSignal": {
+                "Description": "Reset Signal Type",
+                "Value": "SYS_RST"
+            }
+        },
+        {
+            "SigIdOffset": {
+                "Description": "List of Signature ID offsets",
+                "Value": [
+                    "0x30",
+                    "0x34",
+                    "0x28",
+                    "0x2c",
+                    "0x08",
+                    "0x0c",
+                    "null",
+                    "null"
+                ]
+            }
+        },
+        {
+            "AifsArmed": {
+                "Description": "If this field is true, AIFS flow is triggered",
+                "Value": false
+            }
+        },
+        {
+            "AifsSignatureId": {
+                "Description": "List of signature Id to check if Aifs is triggered",
+                "Value": {
+                    "EX-WDT": "0xaea0000000000108000500b020009a00000000004d000000"
+                }
+            }
+        },
+        {
+            "DisableAifsResetOnSyncfloodCounter": {
+                "Description": "Disable AIFS Reset on syncfloow counter ",
+                "Value": true
+            }
+        }
+    ]
+}
