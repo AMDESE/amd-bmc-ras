@@ -1,0 +1,10 @@
+[Unit]
+Description=AMD RAS Manager
+After=xyz.openbmc_project.Chassis.Control.Power.service
+
+[Service]
+Restart=always
+ExecStart=/usr/bin/amd-ras-manager
+
+[Install]
+WantedBy=multi-user.target

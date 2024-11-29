@@ -15,6 +15,12 @@ APML and generates the CPER record. On user demand, these CPER files will be
 available for download via redfish. The CPER records will be rotated after
 reaching maximum limit of 10 CPER records in the BMC.
 
+assertion by the SMU. If the SBRMI register indicates if the assertion is due to
+the fatal error, BMC harvests MCA and MSR dump via APML and generates the CPER
+record. On user demand, these CPER files will be available for download via
+redfish. The CPER records will be rotated after reaching maximum limit of 10
+CPER records in the BMC.
+
 Once the CPER record is created, BMC triggers system recovery either by cold
 reset or warm reset or no reset depending on user configuration.
 
