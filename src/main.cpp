@@ -1,7 +1,14 @@
 #include "config_manager.hpp"
+#ifdef APML
+#include "apml_manager.hpp"
+#endif
+#include "error_monitor.hpp"
+
 #include <boost/asio.hpp>
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/object_server.hpp>
+
+#include <iostream>
 
 int main()
 {
@@ -18,6 +25,20 @@ int main()
     sdbusplus::asio::object_server objectServer(systemBus);
 
     amd::ras::config::Manager manager(objectServer, systemBus);
+
+#ifdef APML
+    amd::ras::Manager* errorMgr =
+        new amd::ras::apml::Manager(manager, objectServer, systemBus, io);
+
+    errorMgr->init();
+
+    errorMgr->configure();
+#endif
+
+#ifdef PLDM
+    // Log an error message if PLDM capabilities are not enabled
+    lg2::error("TODO: PLDM RAS capabilities are yet to be enabled");
+#endif
 
     io.run();
 
