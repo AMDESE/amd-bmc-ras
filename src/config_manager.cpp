@@ -1,8 +1,10 @@
 #include "config_manager.hpp"
+
+#include "xyz/openbmc_project/Common/File/error.hpp"
 #include "xyz/openbmc_project/Common/error.hpp"
+
 #include <nlohmann/json.hpp>
 #include <phosphor-logging/lg2.hpp>
-#include <xyz/openbmc_project/Common/File/error.hpp>
 
 namespace amd
 {
@@ -64,15 +66,15 @@ void Manager::setAttribute(AttributeName attribute, AttributeValue value)
 
             if (it.value().contains("ValidOptions"))
             {
-                auto ValidOptions = it.value()["ValidOptions"];
+                auto validOptions = it.value()["ValidOptions"];
 
-                for (const auto& ValidOption : ValidOptions)
+                for (const auto& validOption : validOptions)
                 {
-                    if (ValidOption.is_string())
+                    if (validOption.is_string())
                     {
                         if (std::holds_alternative<std::string>(value) &&
                             std::get<std::string>(value) ==
-                                ValidOption.get<std::string>())
+                                validOption.get<std::string>())
                         {
                             isValidValue = true;
                             break;
@@ -196,6 +198,7 @@ void Manager::updateConfigToDbus()
 
     ConfigTable configMap;
 
+    lg2::info("PARSE CONFIGURATION");
     for (const auto& item : data["Configuration"])
     {
         AttributeType attributeType;
