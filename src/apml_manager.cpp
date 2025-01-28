@@ -19,6 +19,7 @@ constexpr int FATAL_ERROR = 1;
 constexpr int GENOA_FAMILY_ID = 0x19;
 constexpr int RESET_HANG_ERR = 0x02;
 constexpr int SBRMI_CONTROL_REGISTER = 0x1;
+constexpr int SBRMI_STATUS_REGISTER = 0x2;
 constexpr int SYS_MGMT_CTRL_ERR = 0x04;
 constexpr int SOCKET_0 = 0;
 constexpr int SOCKET_1 = 1;
@@ -388,7 +389,8 @@ void Manager::clearSbrmiAlertMask(uint8_t socNum)
 
     if (ret == OOB_SUCCESS)
     {
-        buffer = buffer & 0xFE;
+        buffer = buffer &
+                 0xBE; /*Clear bit 0 (AlertMask) and bit 6 (SwAsyncAlertMask)*/
         writeRegister(socNum, SBRMI_CONTROL_REGISTER,
                       static_cast<uint32_t>(buffer));
     }
@@ -550,299 +552,350 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     bool controlFabricError = false;
     bool resetReady = false;
     bool runtimeError = false;
+    oob_status_t ret;
 
     // Check if APML ALERT is because of RAS
-    if (read_sbrmi_ras_status(socNum, &buf) == OOB_SUCCESS)
+
+    ret = readRegister(socNum, SBRMI_STATUS_REGISTER, &buf);
+    if (ret == OOB_SUCCESS)
     {
-        lg2::debug("Read RAS status register. Value: {BUF}", "BUF", buf);
-
-        // check RAS Status Register
-        if (buf & 0xFF)
+        if (buf & 0x8)
         {
-            lg2::error("The alert signaled is due to a RAS fatal error");
+            lg2::info("APML_ALERT_L assetion is due to asyncrhonous event");
 
-            if (buf & SYS_MGMT_CTRL_ERR)
+            if (read_sbrmi_ras_status(socNum, &buf) == OOB_SUCCESS)
             {
-                /*if RasStatus[reset_ctrl_err] is set in any of the processors,
-                  proceed to cold reset, regardless of the status of the other P
-                */
+                lg2::debug("Read RAS status register. Value: {BUF}", "BUF",
+                           buf);
 
-                std::string ras_err_msg =
-                    "Fatal error detected in the control fabric. "
-                    "BMC may trigger a reset based on policy set. ";
-
-                sd_journal_send(
-                    "MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i", LOG_ERR,
-                    "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                    "REDFISH_MESSAGE_ARGS=%s", ras_err_msg.c_str(), NULL);
-
-                p0AlertProcessed = true;
-                p1AlertProcessed = true;
-                controlFabricError = true;
-            }
-            else if (buf & RESET_HANG_ERR)
-            {
-                std::string ras_err_msg =
-                    "System hang while resetting in syncflood."
-                    "Suggested next step is to do an additional manual "
-                    "immediate reset";
-
-                sd_journal_send(
-                    "MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i", LOG_ERR,
-                    "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                    "REDFISH_MESSAGE_ARGS=%s", ras_err_msg.c_str(), NULL);
-
-                fchHangError = true;
-            }
-            else if (buf & FATAL_ERROR)
-            {
-                std::string ras_err_msg = "RAS FATAL Error detected. "
-                                          "System may reset after harvesting "
-                                          "MCA data based on policy set. ";
-
-                sd_journal_send(
-                    "MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i", LOG_ERR,
-                    "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                    "REDFISH_MESSAGE_ARGS=%s", ras_err_msg.c_str(), NULL);
-
-                if (true ==
-                    harvestMcaValidityCheck(socNum, &numbanks, &bytespermca))
+                // check RAS Status Register
+                if (buf & 0xFF)
                 {
-                    harvestMcaDataBanks(socNum, numbanks, bytespermca);
-                }
-            }
-            else if (buf & MCA_ERR_OVERFLOW)
-            {
+                    lg2::error(
+                        "The alert signaled is due to a RAS fatal error");
 
-                runTimeErrorInfoCheck(MCA_ERR, INTERRUPT_MODE);
+                    if (buf & SYS_MGMT_CTRL_ERR)
+                    {
+                        /*if RasStatus[reset_ctrl_err] is set in any of the
+                          processors, proceed to cold reset, regardless of the
+                          status of the other P
+                        */
 
-                std::string mca_err_overflow_msg =
-                    "MCA runtime error counter overflow occured";
+                        std::string ras_err_msg =
+                            "Fatal error detected in the control fabric. "
+                            "BMC may trigger a reset based on policy set. ";
 
-                sd_journal_send("MESSAGE=%s", mca_err_overflow_msg.c_str(),
-                                "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
-                                "OpenBMC.0.1.CPUError",
-                                "REDFISH_MESSAGE_ARGS=%s",
-                                mca_err_overflow_msg.c_str(), NULL);
+                        sd_journal_send(
+                            "MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                            LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            ras_err_msg.c_str(), NULL);
 
-                runtimeError = true;
-            }
-            else if (buf & DRAM_CECC_ERR_OVERFLOW)
-            {
-                runTimeErrorInfoCheck(DRAM_CECC_ERR, INTERRUPT_MODE);
+                        p0AlertProcessed = true;
+                        p1AlertProcessed = true;
+                        controlFabricError = true;
+                    }
+                    else if (buf & RESET_HANG_ERR)
+                    {
+                        std::string ras_err_msg =
+                            "System hang while resetting in syncflood."
+                            "Suggested next step is to do an additional manual "
+                            "immediate reset";
 
-                std::string dram_err_overflow_msg =
-                    "DRAM CECC runtime error counter overflow occured";
+                        sd_journal_send(
+                            "MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                            LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            ras_err_msg.c_str(), NULL);
 
-                sd_journal_send("MESSAGE=%s", dram_err_overflow_msg.c_str(),
-                                "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
-                                "OpenBMC.0.1.CPUError",
-                                "REDFISH_MESSAGE_ARGS=%s",
-                                dram_err_overflow_msg.c_str(), NULL);
+                        fchHangError = true;
+                    }
+                    else if (buf & FATAL_ERROR)
+                    {
+                        std::string ras_err_msg =
+                            "RAS FATAL Error detected. "
+                            "System may reset after harvesting "
+                            "MCA data based on policy set. ";
 
-                runtimeError = true;
-            }
-            else if (buf & PCIE_ERR_OVERFLOW)
-            {
+                        sd_journal_send(
+                            "MESSAGE=%s", ras_err_msg.c_str(), "PRIORITY=%i",
+                            LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            ras_err_msg.c_str(), NULL);
 
-                runTimeErrorInfoCheck(PCIE_ERR, INTERRUPT_MODE);
+                        if (true == harvestMcaValidityCheck(socNum, &numbanks,
+                                                            &bytespermca))
+                        {
+                            harvestMcaDataBanks(socNum, numbanks, bytespermca);
+                        }
+                    }
+                    else if (buf & MCA_ERR_OVERFLOW)
+                    {
+                        runTimeErrorInfoCheck(MCA_ERR, INTERRUPT_MODE);
 
-                std::string pcie_err_overflow_msg =
-                    "PCIE runtime error counter overflow occured";
+                        std::string mca_err_overflow_msg =
+                            "MCA runtime error counter overflow occured";
 
-                sd_journal_send("MESSAGE=%s", pcie_err_overflow_msg.c_str(),
-                                "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
-                                "OpenBMC.0.1.CPUError",
-                                "REDFISH_MESSAGE_ARGS=%s",
-                                pcie_err_overflow_msg.c_str(), NULL);
+                        sd_journal_send(
+                            "MESSAGE=%s", mca_err_overflow_msg.c_str(),
+                            "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            mca_err_overflow_msg.c_str(), NULL);
 
-                runtimeError = true;
-            }
+                        runtimeError = true;
+                    }
+                    else if (buf & DRAM_CECC_ERR_OVERFLOW)
+                    {
+                        runTimeErrorInfoCheck(DRAM_CECC_ERR, INTERRUPT_MODE);
 
-            if (socNum == SOCKET_0)
-            {
-                p0AlertProcessed = true;
-            }
+                        std::string dram_err_overflow_msg =
+                            "DRAM CECC runtime error counter overflow occured";
 
-            if (socNum == SOCKET_1)
-            {
-                p1AlertProcessed = true;
-            }
+                        sd_journal_send(
+                            "MESSAGE=%s", dram_err_overflow_msg.c_str(),
+                            "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            dram_err_overflow_msg.c_str(), NULL);
 
-            // Clear RAS status register
-            // 0x4c is a SB-RMI register acting as write to clear
-            // check PPR to determine whether potential bug in PPR or in
-            // implementation of SMU?
+                        runtimeError = true;
+                    }
+                    else if (buf & PCIE_ERR_OVERFLOW)
+                    {
+                        runTimeErrorInfoCheck(PCIE_ERR, INTERRUPT_MODE);
 
-            writeRegister(socNum, 0x4C, buf);
+                        std::string pcie_err_overflow_msg =
+                            "PCIE runtime error counter overflow occured";
 
-            if (fchHangError == true || runtimeError == true)
-            {
-                return true;
-            }
+                        sd_journal_send(
+                            "MESSAGE=%s", pcie_err_overflow_msg.c_str(),
+                            "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            pcie_err_overflow_msg.c_str(), NULL);
 
-            if (cpuCount == 2)
-            {
-                if ((p0AlertProcessed == true) && (p1AlertProcessed == true))
-                {
-                    resetReady = true;
+                        runtimeError = true;
+                    }
+
+                    if (socNum == SOCKET_0)
+                    {
+                        p0AlertProcessed = true;
+                    }
+
+                    if (socNum == SOCKET_1)
+                    {
+                        p1AlertProcessed = true;
+                    }
+
+                    // Clear RAS status register
+                    // 0x4c is a SB-RMI register acting as write to clear
+                    // check PPR to determine whether potential bug in PPR or in
+                    // implementation of SMU?
+
+                    writeRegister(socNum, 0x4C, buf);
+
+                    uint8_t buffer;
+                    oob_status_t ret;
+
+                    ret = readRegister(socNum, SBRMI_STATUS_REGISTER, &buffer);
+
+                    if (ret == OOB_SUCCESS)
+                    {
+                        buffer = buffer & 0x8; /*Clear bit 3 (SwAsyncAlertSts)
+                                                 Write 1 to clear*/
+                        writeRegister(socNum, SBRMI_STATUS_REGISTER,
+                                      static_cast<uint32_t>(buffer));
+                    }
+
+                    if (fchHangError == true || runtimeError == true)
+                    {
+                        return true;
+                    }
+
+                    if (cpuCount == 2)
+                    {
+                        if ((p0AlertProcessed == true) &&
+                            (p1AlertProcessed == true))
+                        {
+                            resetReady = true;
+                        }
+                    }
+                    else
+                    {
+                        resetReady = true;
+                    }
+                    if (resetReady == true)
+                    {
+                        if (controlFabricError == false)
+                        {
+                            ras::cper::util::createCperFile(rcd, fatalErr, 2,
+                                                            errCount);
+
+                            exportCrashdumpToDBus(errCount - 1,
+                                                  rcd->Header.TimeStamp,
+                                                  objectServer, systemBus);
+                        }
+
+                        bool recoveryAction = true;
+
+                        amd::ras::config::Manager::AttributeValue aifsArmed =
+                            configMgr.getAttribute("AifsArmed");
+                        bool* aifsArmedFlag = std::get_if<bool>(&aifsArmed);
+
+                        amd::ras::config::Manager::AttributeValue configSigId =
+                            configMgr.getAttribute("AifsSignatureIdList");
+                        std::map<std::string, std::string>* configSigIdList =
+                            std::get_if<std::map<std::string, std::string>>(
+                                &configSigId);
+
+                        if ((*aifsArmedFlag == true) &&
+                            (ras::util::checkSignatureIdMatch(configSigIdList,
+                                                              rcd) == true))
+                        {
+                            lg2::info("AIFS armed for the system");
+
+                            std::ifstream inputFile(
+                                "/var/lib/bmcweb/eventservice_config.json");
+
+                            /*Check if there is any active subscriptions for
+                              the local AIFS flow*/
+                            if (inputFile.is_open())
+                            {
+                                nlohmann::json jsonData;
+                                inputFile >> jsonData;
+
+                                if (jsonData.find("Subscriptions") !=
+                                    jsonData.end())
+                                {
+                                    const auto& subscriptionsArray =
+                                        jsonData["Subscriptions"];
+                                    if (subscriptionsArray.is_array())
+                                    {
+                                        for (const auto& subscription :
+                                             subscriptionsArray)
+                                        {
+                                            const auto& messageIds =
+                                                subscription["MessageIds"];
+                                            if (messageIds.is_array())
+                                            {
+                                                bool messageIdFound = std::any_of(
+                                                    messageIds.begin(),
+                                                    messageIds.end(),
+                                                    [](const std::string&
+                                                           messageId) {
+                                                        return messageId ==
+                                                               "AifsFailureMatch";
+                                                    });
+                                                if (messageIdFound)
+                                                {
+                                                    recoveryAction = false;
+
+                                                    struct ras_override_delay
+                                                        d_in = {0, 0, 0};
+                                                    bool ack_resp;
+                                                    d_in.stop_delay_counter = 1;
+                                                    oob_status_t ret;
+
+                                                    amd::ras::config::Manager::AttributeValue
+                                                        disableResetCounter =
+                                                            configMgr.getAttribute(
+                                                                "DisableAifsResetOnSyncfloodCounter");
+                                                    bool* disableResetCntr =
+                                                        std::get_if<bool>(
+                                                            &disableResetCounter);
+
+                                                    if (*disableResetCntr ==
+                                                        true)
+                                                    {
+                                                        lg2::info(
+                                                            "Disable Aifs Delay Reset on Syncflood "
+                                                            "counter is true. Sending Delay Reset on "
+                                                            "Syncflood override APML command");
+                                                        ret =
+                                                            override_delay_reset_on_sync_flood(
+                                                                socNum, d_in,
+                                                                &ack_resp);
+
+                                                        if (ret)
+                                                        {
+                                                            lg2::error(
+                                                                "Failed to override delay value reset on "
+                                                                "syncflood Err:{ERRNO}",
+                                                                "ERRNO", ret);
+                                                        }
+                                                        else
+                                                        {
+                                                            lg2::info(
+                                                                "Successfully sent Reset delay on "
+                                                                "Syncflood command");
+                                                        }
+                                                    }
+                                                    sd_journal_send(
+                                                        "PRIORITY=%i", LOG_INFO,
+                                                        "REDFISH_MESSAGE_ID=%s",
+                                                        "OpenBMC.0.1."
+                                                        "AifsFailureMatch",
+                                                        NULL);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                inputFile.close();
+                            }
+                        }
+                        if (recoveryAction == true)
+                        {
+                            amd::ras::config::Manager::AttributeValue
+                                ResetSignalVal =
+                                    configMgr.getAttribute("ResetSignalType");
+                            std::string* resetSignal =
+                                std::get_if<std::string>(&ResetSignalVal);
+
+                            amd::ras::config::Manager::AttributeValue
+                                SystemRecoveryVal = configMgr.getAttribute(
+                                    "SystemRecoveryMode");
+                            std::string* systemRecovery =
+                                std::get_if<std::string>(&SystemRecoveryVal);
+
+                            ras::util::rasRecoveryAction(buf, systemRecovery,
+                                                         resetSignal);
+                        }
+
+                        if (rcd->SectionDescriptor != nullptr)
+                        {
+                            delete[] rcd->SectionDescriptor;
+                            rcd->SectionDescriptor = nullptr;
+                        }
+                        if (rcd->ErrorRecord != nullptr)
+                        {
+                            delete[] rcd->ErrorRecord;
+                            rcd->ErrorRecord = nullptr;
+                        }
+
+                        rcd = nullptr;
+
+                        p0AlertProcessed = false;
+                        p1AlertProcessed = false;
+                    }
                 }
             }
             else
             {
-                resetReady = true;
+                lg2::debug("Nothing to Harvest. Not RAS Error");
             }
-            if (resetReady == true)
-            {
-                if (controlFabricError == false)
-                {
-                    ras::cper::util::createCperFile(rcd, fatalErr, 2, errCount);
-
-                    exportCrashdumpToDBus(errCount - 1, rcd->Header.TimeStamp,
-                                          objectServer, systemBus);
-                }
-
-                bool recoveryAction = true;
-
-                amd::ras::config::Manager::AttributeValue aifsArmed =
-                    configMgr.getAttribute("AifsArmed");
-                bool* aifsArmedFlag = std::get_if<bool>(&aifsArmed);
-
-                amd::ras::config::Manager::AttributeValue configSigId =
-                    configMgr.getAttribute("AifsSignatureIdList");
-                std::map<std::string, std::string>* configSigIdList =
-                    std::get_if<std::map<std::string, std::string>>(
-                        &configSigId);
-
-                if ((*aifsArmedFlag == true) &&
-                    (ras::util::checkSignatureIdMatch(configSigIdList, rcd) ==
-                     true))
-                {
-                    lg2::info("AIFS armed for the system");
-
-                    std::ifstream inputFile(
-                        "/var/lib/bmcweb/eventservice_config.json");
-
-                    /*Check if there is any active subscriptions for
-                      the local AIFS flow*/
-                    if (inputFile.is_open())
-                    {
-                        nlohmann::json jsonData;
-                        inputFile >> jsonData;
-
-                        if (jsonData.find("Subscriptions") != jsonData.end())
-                        {
-                            const auto& subscriptionsArray =
-                                jsonData["Subscriptions"];
-                            if (subscriptionsArray.is_array())
-                            {
-                                for (const auto& subscription :
-                                     subscriptionsArray)
-                                {
-                                    const auto& messageIds =
-                                        subscription["MessageIds"];
-                                    if (messageIds.is_array())
-                                    {
-                                        bool messageIdFound = std::any_of(
-                                            messageIds.begin(),
-                                            messageIds.end(),
-                                            [](const std::string& messageId) {
-                                                return messageId ==
-                                                       "AifsFailureMatch";
-                                            });
-                                        if (messageIdFound)
-                                        {
-                                            recoveryAction = false;
-
-                                            struct ras_override_delay d_in = {
-                                                0, 0, 0};
-                                            bool ack_resp;
-                                            d_in.stop_delay_counter = 1;
-                                            oob_status_t ret;
-
-                                            amd::ras::config::Manager::AttributeValue
-                                                disableResetCounter =
-                                                    configMgr.getAttribute(
-                                                        "DisableAifsResetOnSyncfloodCounter");
-                                            bool* disableResetCntr =
-                                                std::get_if<bool>(
-                                                    &disableResetCounter);
-
-                                            if (*disableResetCntr == true)
-                                            {
-                                                lg2::info(
-                                                    "Disable Aifs Delay Reset on Syncflood counter is true. Sending Delay Reset on Syncflood override APML command");
-                                                ret =
-                                                    override_delay_reset_on_sync_flood(
-                                                        socNum, d_in,
-                                                        &ack_resp);
-
-                                                if (ret)
-                                                {
-                                                    lg2::error(
-                                                        "Failed to override delay value reset on syncflood Err:{ERRNO}",
-                                                        "ERRNO", ret);
-                                                }
-                                                else
-                                                {
-                                                    lg2::info(
-                                                        "Successfully sent Reset delay on Syncflood command");
-                                                }
-                                            }
-                                            sd_journal_send(
-                                                "PRIORITY=%i", LOG_INFO,
-                                                "REDFISH_MESSAGE_ID=%s",
-                                                "OpenBMC.0.1."
-                                                "AifsFailureMatch",
-                                                NULL);
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        inputFile.close();
-                    }
-                }
-                if (recoveryAction == true)
-                {
-                    amd::ras::config::Manager::AttributeValue ResetSignalVal =
-                        configMgr.getAttribute("ResetSignalType");
-                    std::string* resetSignal =
-                        std::get_if<std::string>(&ResetSignalVal);
-
-                    amd::ras::config::Manager::AttributeValue
-                        SystemRecoveryVal =
-                            configMgr.getAttribute("SystemRecoveryMode");
-                    std::string* systemRecovery =
-                        std::get_if<std::string>(&SystemRecoveryVal);
-
-                    ras::util::rasRecoveryAction(buf, systemRecovery,
-                                                 resetSignal);
-                }
-
-                if (rcd->SectionDescriptor != nullptr)
-                {
-                    delete[] rcd->SectionDescriptor;
-                    rcd->SectionDescriptor = nullptr;
-                }
-                if (rcd->ErrorRecord != nullptr)
-                {
-                    delete[] rcd->ErrorRecord;
-                    rcd->ErrorRecord = nullptr;
-                }
-
-                rcd = nullptr;
-
-                p0AlertProcessed = false;
-                p1AlertProcessed = false;
-            }
+        }
+        else
+        {
+            lg2::debug(
+                "The APML_ALERT_L assetion is not due to asyncrhonous event");
         }
     }
     else
     {
-        lg2::debug("Nothing to Harvest. Not RAS Error");
+        lg2::error("Failed to read status register");
+        return false;
     }
+
     return true;
 }
 
@@ -1434,7 +1487,7 @@ oob_status_t Manager::runTimeErrValidityCheck(
                                                    inst);
         if (ret)
         {
-            lg2::error("Failed to get bmc ras runtime error validity check");
+            lg2::debug("Failed to get bmc ras runtime error validity check");
         }
     }
 
@@ -2125,15 +2178,15 @@ void Manager::dumpProcErrorSection(
 }
 
 void Manager::harvestDramCeccErrorCounters(struct ras_rt_valid_err_inst inst,
-                                      uint8_t socNum)
+                                           uint8_t socNum)
 {
     uint32_t d_out = 0;
     struct run_time_err_d_in d_in;
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
 
-        amd::ras::config::Manager::AttributeValue apmlRetry =
-            configMgr.getAttribute("ApmlRetries");
-        int64_t* retryCount = std::get_if<int64_t>(&apmlRetry);
+    amd::ras::config::Manager::AttributeValue apmlRetry =
+        configMgr.getAttribute("ApmlRetries");
+    int64_t* retryCount = std::get_if<int64_t>(&apmlRetry);
 
     if (inst.number_of_inst != 0)
     {
@@ -2159,8 +2212,7 @@ void Manager::harvestDramCeccErrorCounters(struct ras_rt_valid_err_inst inst,
                     d_in.category = DRAM_CECC_ERR;
                     d_in.valid_inst_index = n;
 
-                    ret =
-                        get_bmc_ras_run_time_error_info(socNum, d_in, &d_out);
+                    ret = get_bmc_ras_run_time_error_info(socNum, d_in, &d_out);
                     if (ret == OOB_SUCCESS)
                     {
                         break;
@@ -2205,8 +2257,8 @@ void Manager::harvestDramCeccErrorCounters(struct ras_rt_valid_err_inst inst,
             {
                 DimmLabel = DimmLabel + std::to_string(DimmNumber);
             }
-            lg2::info("Dimm = {DIMM}","DIMM",DimmLabel);
-            lg2::info("Error count = {COUNT}","COUNT",error_count);
+            lg2::info("Dimm = {DIMM}", "DIMM", DimmLabel);
+            lg2::info("Error count = {COUNT}", "COUNT", error_count);
         }
     }
 }
