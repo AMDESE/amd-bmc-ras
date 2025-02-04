@@ -502,28 +502,48 @@ void clearSbrmiAlertMask()
 
     oob_status_t ret;
 
-    sd_journal_print(LOG_ERR,
-                     "Clear Alert Mask bit of SBRMI Control register \n");
-    uint8_t buffer;
-
-    ret = read_register(p0_info, SBRMI_CONTROL_REGISTER, &buffer);
-
-    if (ret == OOB_SUCCESS)
+    for (uint8_t socNum = 0; socNum < num_of_proc; socNum++)
     {
-        buffer = buffer & 0xFE;
-        write_register(p0_info, SBRMI_CONTROL_REGISTER,
-                       static_cast<uint32_t>(buffer));
-    }
+        sd_journal_print(
+            LOG_INFO,
+            "Clear Alert Mask bit of SBRMI Control register for socket %d\n",
+            socNum);
 
-    if (num_of_proc == TWO_SOCKET)
-    {
-        buffer = 0;
-        ret = read_register(p1_info, SBRMI_CONTROL_REGISTER, &buffer);
+        uint8_t buffer;
+
+        ret = read_register(socNum, SBRMI_CONTROL_REGISTER, &buffer);
+
         if (ret == OOB_SUCCESS)
         {
             buffer = buffer & 0xFE;
-            write_register(p1_info, SBRMI_CONTROL_REGISTER,
+            write_register(socNum, SBRMI_CONTROL_REGISTER,
                            static_cast<uint32_t>(buffer));
+        }
+
+        for (uint8_t i = 0; i < sizeof(alert_status); i++)
+        {
+            ret = read_register(socNum, alert_status[i], &buffer);
+
+            if (ret == OOB_SUCCESS)
+            {
+                if ((buffer & MASK_0X0F) != 0)
+                {
+                    sd_journal_print(
+                        LOG_INFO,
+                        "Socket%d: MCE Stat of SBRMIx[0x%x] is set to 0x%x\n",
+                        socNum, alert_status[i], buffer);
+
+                    buffer = buffer & INT_255;
+                    write_register(socNum, alert_status[i],
+                                   static_cast<uint32_t>(buffer));
+                }
+            }
+            else
+            {
+                sd_journal_print(LOG_ERR,
+                                 "Socket%d: Failed to read SBRMIx[0x%x]",
+                                 socNum, alert_status[i]);
+            }
         }
     }
 }
@@ -625,8 +645,6 @@ void performPlatformInitialization()
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     struct processor_info platInfo[INDEX_1];
 
-    std::cout << "perform performPlatformInitialization" << std::endl;
-
     if (platformInitialized == false)
     {
         while (ret != OOB_SUCCESS)
@@ -641,7 +659,6 @@ void performPlatformInitialization()
             }
             sleep(INDEX_1);
         }
-        std::cout << "platformInitialized " << std::endl;
 
         if (ret == OOB_SUCCESS)
         {
@@ -655,7 +672,6 @@ void performPlatformInitialization()
             }
             else if (platInfo->family == TURIN_FAMILY_ID)
             {
-                std::cout << "Turin platform " << std::endl;
                 currentHostStateMonitor();
 
                 clearSbrmiAlertMask();
@@ -667,6 +683,12 @@ void performPlatformInitialization()
                 RunTimeErrorPolling();
 
                 runtimeErrPollingSupported = true;
+            }
+            else
+            {
+                throw std::runtime_error(
+                    "This program is not supported for the platform 0x%x\n" +
+                    platInfo->family);
             }
             platformInitialized = true;
             apmlInitialized = true;
@@ -703,7 +725,7 @@ void apmlActiveMonitor()
     {
         ret = get_bmc_ras_oob_config(INDEX_0, &d_out);
 
-        if(ret == OOB_MAILBOX_CMD_UNKNOWN)
+        if (ret == OOB_MAILBOX_CMD_UNKNOWN)
         {
             ret = esmi_get_processor_info(INDEX_0, plat_info);
         }
