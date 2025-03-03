@@ -27,6 +27,7 @@ bool ValidSignatureID = false;
 
 #define HPM_FPGA_REGDUMP "/usr/sbin/hpm-fpga-dump.sh"
 #define HPM_FPGA_REGDUMP_FILE "/var/lib/amd-ras/fpga_dump.txt"
+#define ALERT_STATUS (1)
 
 void getLastTransAddr(uint8_t info)
 {
@@ -846,6 +847,58 @@ bool harvest_ras_errors(uint8_t info, std::string alert_name)
 
     uint8_t buf;
 
+    oob_status_t ret;
+
+    if (read_sbrmi_status(info, &buf) == OOB_SUCCESS)
+    {
+        sd_journal_print(LOG_DEBUG,
+                         "Socket %d Read Status register. Value: 0x%x\n", info,
+                         buf);
+
+        if (buf & ALERT_STATUS)
+        {
+
+            std::string err_msg =
+                "The APML_ALERT_L is asserted due to MCE error";
+            sd_journal_send("MESSAGE=%s", err_msg.c_str(), "PRIORITY=%i",
+                            LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            err_msg.c_str(), NULL);
+
+            uint8_t buffer;
+
+            for (uint8_t i = 0; i < sizeof(alert_status); i++)
+            {
+                ret = read_register(info, alert_status[i], &buffer);
+
+                if (ret == OOB_SUCCESS)
+                {
+                    if ((buffer & BITMASK_FF) != 0)
+                    {
+                        sd_journal_print(LOG_INFO,
+                                         "Socket%d: MCE Stat of SBRMIx[0x%x] "
+                                         "is set to 0x%x\n",
+                                         info, alert_status[i], buffer);
+
+                        buffer = buffer & BITMASK_FF;
+                        write_register(info, alert_status[i],
+                                       static_cast<uint32_t>(buffer));
+                    }
+                }
+                else
+                {
+                    sd_journal_print(LOG_ERR,
+                                     "Socket%d: Failed to read SBRMIx[0x%x]",
+                                     info, alert_status[i]);
+                }
+            }
+        }
+    }
+    else
+    {
+        sd_journal_print(LOG_ERR, "Unable to read status register\n");
+    }
+
     // Check if APML ALERT is because of RAS
     if (read_sbrmi_ras_status(info, &buf) == OOB_SUCCESS)
     {
@@ -1036,7 +1089,8 @@ bool harvest_ras_errors(uint8_t info, std::string alert_name)
                                         {
                                             recoveryAction = false;
 
-                                            struct ras_override_delay d_in = {0,0,0};
+                                            struct ras_override_delay d_in = {
+                                                0, 0, 0};
                                             bool ack_resp;
                                             d_in.stop_delay_counter = 1;
                                             oob_status_t ret;
