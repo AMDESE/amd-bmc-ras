@@ -140,6 +140,7 @@ template <typename T>
 void dump_proc_error_info_section(const std::shared_ptr<T>&, uint8_t, uint16_t,
                                   uint64_t*, uint32_t);
 void exportCrashdumpToDBus(int, const ERROR_TIME_STAMP&);
+oob_status_t read_register(uint8_t , uint32_t, uint8_t* );
 void write_register(uint8_t, uint32_t, uint32_t);
 template <typename T>
 T getProperty(sdbusplus::bus::bus& bus, const char* service, const char* path,

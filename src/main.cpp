@@ -526,14 +526,14 @@ void clearSbrmiAlertMask()
 
             if (ret == OOB_SUCCESS)
             {
-                if ((buffer & MASK_0X0F) != 0)
+                if ((buffer & BITMASK_FF) != 0)
                 {
                     sd_journal_print(
                         LOG_INFO,
                         "Socket%d: MCE Stat of SBRMIx[0x%x] is set to 0x%x\n",
                         socNum, alert_status[i], buffer);
 
-                    buffer = buffer & INT_255;
+                    buffer = buffer & BITMASK_FF;
                     write_register(socNum, alert_status[i],
                                    static_cast<uint32_t>(buffer));
                 }

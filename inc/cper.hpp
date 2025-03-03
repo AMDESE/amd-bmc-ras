@@ -27,6 +27,7 @@
 #define ENABLE_BIT (1)
 #define CHIP_SEL_NUM_POS (21)
 #define NIBBLE_MASK (0xF)
+#define BITMASK_FF (0xFF)
 
 /*
  * CPER section descriptor revision, used in revision field in struct
