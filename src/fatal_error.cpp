@@ -378,18 +378,27 @@ void write_register(uint8_t info, uint32_t reg, uint32_t value)
     sd_journal_print(LOG_DEBUG, "Write to register 0x%x is successful\n", reg);
 }
 
-void dump_processor_error_section(uint8_t info)
+void dump_processor_error_section(uint8_t info, uint16_t numbanks)
 {
 
-    rcd->P0_ErrorRecord.ProcError.ValidBits =
-        CPU_ID_VALID | LOCAL_APIC_ID_VALID;
-    rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_0] = p0_eax;
-    rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_2] = p0_ebx;
-    rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_4] = p0_ecx;
-    rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_6] = p0_edx;
-    rcd->P0_ErrorRecord.ProcError.CPUAPICId = ((p0_ebx >> SHIFT_24) & INT_255);
+    if (info == p0_info)
+    {
+        rcd->P0_ErrorRecord.ProcError.ValidBits =
+            CPU_ID_VALID | LOCAL_APIC_ID_VALID;
+        rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_0] = p0_eax;
+        rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_2] = p0_ebx;
+        rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_4] = p0_ecx;
+        rcd->P0_ErrorRecord.ProcError.CpuId[INDEX_6] = p0_edx;
+        rcd->P0_ErrorRecord.ProcError.CPUAPICId =
+            ((p0_ebx >> SHIFT_24) & INT_255);
 
-    if (num_of_proc == TWO_SOCKET)
+        if (numbanks != 0)
+        {
+            rcd->P0_ErrorRecord.ProcError.ValidBits |=
+                PROC_CONTEXT_STRUCT_VALID;
+        }
+    }
+    else if (info == p1_info)
     {
         rcd->P1_ErrorRecord.ProcError.ValidBits =
             CPU_ID_VALID | LOCAL_APIC_ID_VALID;
@@ -399,22 +408,19 @@ void dump_processor_error_section(uint8_t info)
         rcd->P1_ErrorRecord.ProcError.CpuId[INDEX_6] = p1_edx;
         rcd->P1_ErrorRecord.ProcError.CPUAPICId =
             ((p1_ebx >> SHIFT_24) & INT_255);
-    }
 
-    if (info == p0_info)
-    {
-        rcd->P0_ErrorRecord.ProcError.ValidBits |= PROC_CONTEXT_STRUCT_VALID;
-    }
-    if (info == p1_info)
-    {
-        rcd->P1_ErrorRecord.ProcError.ValidBits |= PROC_CONTEXT_STRUCT_VALID;
+        if (numbanks != 0)
+        {
+            rcd->P1_ErrorRecord.ProcError.ValidBits |=
+                PROC_CONTEXT_STRUCT_VALID;
+        }
     }
 }
 
 void dump_context_info(uint16_t numbanks, uint16_t bytespermca, uint8_t info)
 {
 
-    getLastTransAddr(p0_info);
+    getLastTransAddr(info);
 
     uint8_t blk_id;
 
@@ -422,39 +428,29 @@ void dump_context_info(uint16_t numbanks, uint16_t bytespermca, uint8_t info)
 
     for (blk_id = 0; blk_id < BlockId.size(); blk_id++)
     {
-        harvestDebugLogDump(p0_info, BlockId[blk_id]);
-    }
-
-    if (num_of_proc == TWO_SOCKET)
-    {
-        getLastTransAddr(p1_info);
-
-        DebugLogIdOffset = 0;
-
-        for (blk_id = 0; blk_id < BlockId.size(); blk_id++)
-        {
-            harvestDebugLogDump(p1_info, BlockId[blk_id]);
-        }
+        harvestDebugLogDump(info, BlockId[blk_id]);
     }
 
     if (info == p0_info)
     {
-        rcd->P0_ErrorRecord.ContextInfo.RegisterContextType = CTX_OOB_CRASH;
-        rcd->P0_ErrorRecord.ContextInfo.RegisterArraySize =
-            numbanks * bytespermca;
+        if (numbanks != 0)
+        {
+            rcd->P0_ErrorRecord.ContextInfo.RegisterContextType = CTX_OOB_CRASH;
+            rcd->P0_ErrorRecord.ContextInfo.RegisterArraySize =
+                numbanks * bytespermca;
+        }
+        rcd->P0_ErrorRecord.ContextInfo.MicrocodeVersion = p0_ucode;
+        rcd->P0_ErrorRecord.ContextInfo.Ppin = p0_ppin;
     }
     else if (info == p1_info)
     {
-        rcd->P1_ErrorRecord.ContextInfo.RegisterContextType = CTX_OOB_CRASH;
-        rcd->P1_ErrorRecord.ContextInfo.RegisterArraySize =
-            numbanks * bytespermca;
-    }
 
-    rcd->P0_ErrorRecord.ContextInfo.MicrocodeVersion = p0_ucode;
-    rcd->P0_ErrorRecord.ContextInfo.Ppin = p0_ppin;
-
-    if (num_of_proc == TWO_SOCKET)
-    {
+        if (numbanks != 0)
+        {
+            rcd->P1_ErrorRecord.ContextInfo.RegisterContextType = CTX_OOB_CRASH;
+            rcd->P1_ErrorRecord.ContextInfo.RegisterArraySize =
+                numbanks * bytespermca;
+        }
         rcd->P1_ErrorRecord.ContextInfo.MicrocodeVersion = p1_ucode;
         rcd->P1_ErrorRecord.ContextInfo.Ppin = p1_ppin;
     }
@@ -477,7 +473,7 @@ static bool harvest_mca_data_banks(uint8_t info, uint16_t numbanks,
 
     dump_error_descriptor_section(rcd, INDEX_2, FATAL_ERR, &Severity);
 
-    dump_processor_error_section(info);
+    dump_processor_error_section(info, numbanks);
 
     dump_context_info(numbanks, bytespermca, info);
 
@@ -737,10 +733,12 @@ void SystemRecovery(uint8_t buf)
 void harvest_fatal_errors(uint8_t info, uint16_t numbanks, uint16_t bytespermca)
 {
     // RAS MCA Validity Check
-    if (true == harvest_mca_validity_check(info, &numbanks, &bytespermca))
+    if (harvest_mca_validity_check(info, &numbanks, &bytespermca) == false)
     {
-        harvest_mca_data_banks(info, numbanks, bytespermca);
+        sd_journal_print(LOG_INFO, "No valid mca banks found. Harvesting "
+                                   "additional debug log ID dumps\n");
     }
+    harvest_mca_data_banks(info, numbanks, bytespermca);
 }
 
 std::vector<uint32_t> hexstring_to_vector(const std::string& hexString)
