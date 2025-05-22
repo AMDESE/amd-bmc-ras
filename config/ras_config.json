@@ -4,7 +4,7 @@
             "ApmlRetries": {
                 "Description": "Number of APML retry count",
                 "Value": 10,
-                "MaxBoundLimit": "50"
+                "MaxBoundLimit": 50
             }
         },
         {
