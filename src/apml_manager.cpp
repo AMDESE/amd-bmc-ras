@@ -520,6 +520,8 @@ void Manager::configure()
             "Failed to read GPIO_ALERT_LINES from gpio_config.json file");
     }
 
+    gpioEventDescriptors.reserve(cpuCount);
+
     for (size_t i = 0; i < cpuCount; ++i)
     {
         gpioEventDescriptors.emplace_back(io);
@@ -671,15 +673,15 @@ void Manager::alertEventHandler(
 
     apmlAlertEvent.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
-        [this, &apmlAlertEvent, &alertLine,
-         socket](const boost::system::error_code ec) {
+        [this, alertLine, socket, apmlAlertEventPtr = &apmlAlertEvent](
+            const boost::system::error_code& ec) mutable {
             if (ec)
             {
                 lg2::error("APML alert handler error: {ERROR}", "ERROR",
                            ec.message().c_str());
                 return;
             }
-            alertEventHandler(apmlAlertEvent, alertLine, socket);
+            alertEventHandler(*apmlAlertEventPtr, alertLine, socket);
         });
 }
 
