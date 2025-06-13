@@ -520,6 +520,8 @@ void Manager::configure()
             "Failed to read GPIO_ALERT_LINES from gpio_config.json file");
     }
 
+    gpioEventDescriptors.reserve(cpuCount);
+
     for (size_t i = 0; i < cpuCount; ++i)
     {
         gpioEventDescriptors.emplace_back(io);
@@ -671,15 +673,15 @@ void Manager::alertEventHandler(
 
     apmlAlertEvent.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
-        [this, &apmlAlertEvent, &alertLine,
-         socket](const boost::system::error_code ec) {
+        [this, alertLine, socket, apmlAlertEventPtr = &apmlAlertEvent](
+            const boost::system::error_code& ec) mutable {
             if (ec)
             {
                 lg2::error("APML alert handler error: {ERROR}", "ERROR",
                            ec.message().c_str());
                 return;
             }
-            alertEventHandler(apmlAlertEvent, alertLine, socket);
+            alertEventHandler(*apmlAlertEventPtr, alertLine, socket);
         });
 }
 
@@ -2347,13 +2349,21 @@ void Manager::harvestDramCeccErrorCounters(struct ras_rt_valid_err_inst inst,
 
             dimmErrCount = dataOut & 0xFFFF;
 
-            ch_num = (dataOut >> 16) & 0xF;
+            ch_num = (dataOut >> 16) & 0x1F;
+
+            lg2::info("Channel from the APML {CHN}", "CHN", ch_num);
 
             std::map<int, char> dimmPairSequence = {
-                {0, 'C'}, {1, 'E'}, {2, 'F'}, {3, 'A'}, {4, 'B'},  {5, 'D'},
-                {6, 'I'}, {7, 'K'}, {8, 'L'}, {9, 'G'}, {10, 'H'}, {11, 'J'}};
+                {0, 'H'},  {1, 'H'},  {2, 'D'},  {3, 'D'},  {4, 'F'},
+                {5, 'F'},  {6, 'B'},  {7, 'B'},  {8, 'G'},  {9, 'G'},
+                {10, 'C'}, {11, 'C'}, {12, 'E'}, {13, 'E'}, {14, 'A'},
+                {15, 'A'}, {16, 'P'}, {17, 'P'}, {18, 'L'}, {19, 'L'},
+                {20, 'N'}, {21, 'N'}, {22, 'J'}, {23, 'J'}, {24, 'O'},
+                {25, 'O'}, {26, 'K'}, {27, 'K'}, {28, 'M'}, {29, 'M'},
+                {30, 'I'}, {31, 'I'}};
 
             char channel = '\0';
+
             auto it = dimmPairSequence.find(ch_num);
 
             if (it != dimmPairSequence.end())
@@ -2362,7 +2372,7 @@ void Manager::harvestDramCeccErrorCounters(struct ras_rt_valid_err_inst inst,
             }
 
             std::string socNumStr = std::to_string(socNum);
-            std::string rootErrStatus = "P" + socNumStr + "_DIMM_" + channel;
+            std::string rootErrStatus = "P" + socNumStr + "_CHANNEL_" + channel;
 
             chip_sel_num = (dataOut >> chipSelNumPos) & 3;
 
@@ -2372,8 +2382,36 @@ void Manager::harvestDramCeccErrorCounters(struct ras_rt_valid_err_inst inst,
             {
                 rootErrStatus = rootErrStatus + std::to_string(DimmNumber);
             }
-            lg2::info("Dimm = {DIMM}", "DIMM", rootErrStatus);
+            lg2::info("Channel = {DIMM}", "DIMM", rootErrStatus);
             lg2::info("Error count = {COUNT}", "COUNT", dimmErrCount);
+
+            std::string objectPath =
+                "/xyz/openbmc_project/inventory/Memory/" + rootErrStatus;
+
+            sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+            uint16_t correctableErrorCount =
+                amd::ras::util::getProperty<uint16_t>(
+                    bus, "xyz.openbmc_project.PCIe", objectPath.c_str(),
+                    "xyz.openbmc_project.Inventory.Item.Dimm",
+                    "CorrectableErrorCount");
+
+            correctableErrorCount = correctableErrorCount + dimmErrCount;
+
+            boost::asio::io_context io_conn;
+            auto conn = std::make_shared<sdbusplus::asio::connection>(io_conn);
+            conn->async_method_call(
+                [this](boost::system::error_code ec) {
+                    if (ec)
+                    {
+                        sd_journal_print(
+                            LOG_ERR, "Failed to Set Dimm ecc error count \n");
+                    }
+                },
+                "xyz.openbmc_project.PCIe", objectPath.c_str(),
+                "org.freedesktop.DBus.Properties", "Set",
+                "xyz.openbmc_project.Inventory.Item.Dimm",
+                "CorrectableErrorCount",
+                std::variant<uint16_t>(correctableErrorCount));
         }
     }
 }
