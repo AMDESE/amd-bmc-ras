@@ -44,6 +44,16 @@ constexpr size_t pcieErrOverflow = 32;
 constexpr size_t base16 = 16;
 constexpr size_t byteMask = 0xFF;
 
+constexpr size_t mcaPspSynd1LoCode = 80;
+constexpr size_t mcaPspSynd1HiCode = 84;
+constexpr size_t mcaPspSynd2LoCode = 88;
+constexpr size_t mcaPspSynd2HiCode = 92;
+constexpr size_t offLo1 = 0;
+constexpr size_t offHi1 = 4;
+constexpr size_t offLo2 = 8;
+constexpr size_t offHi2 = 12;
+constexpr size_t copySize = 4;
+
 void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
 {
     oob_status_t ret;
@@ -1182,6 +1192,10 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
     uint32_t mcaIpidHi = 0;
     uint32_t mcaSyndLo = 0;
     uint32_t mcaSyndHi = 0;
+    uint32_t mcaPspSynd1Lo = 0;
+    uint32_t mcaPspSynd1Hi = 0;
+    uint32_t mcaPspSynd2Lo = 0;
+    uint32_t mcaPspSynd2Hi = 0;
 
     amd::ras::config::Manager::AttributeValue sigIdOffsetVal =
         configMgr.getAttribute("SigIdOffset");
@@ -1324,6 +1338,22 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
             {
                 mcaSyndHi = buffer;
             }
+            if (dfError.input[0] == mcaPspSynd1LoCode)
+            {
+                mcaPspSynd1Lo = buffer;
+            }
+            if (dfError.input[0] == mcaPspSynd1HiCode)
+            {
+                mcaPspSynd1Hi = buffer;
+            }
+            if (dfError.input[0] == mcaPspSynd2LoCode)
+            {
+                mcaPspSynd2Lo = buffer;
+            }
+            if (dfError.input[0] == mcaPspSynd2HiCode)
+            {
+                mcaPspSynd2Hi = buffer;
+            }
 
         } // for loop
 
@@ -1350,6 +1380,16 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
             mcaStatusLo = 0;
             mcaStatusHi = 0;
         }
+
+        memcpy(rcd->SectionDescriptor[socNum].FruString + offLo1,
+               &mcaPspSynd1Lo, copySize);
+        memcpy(rcd->SectionDescriptor[socNum].FruString + offHi1,
+               &mcaPspSynd1Hi, copySize);
+        memcpy(rcd->SectionDescriptor[socNum].FruString + offLo2,
+               &mcaPspSynd2Lo, copySize);
+        memcpy(rcd->SectionDescriptor[socNum].FruString + offHi2,
+               &mcaPspSynd2Hi, copySize);
+
         n++;
     }
 }
@@ -2118,8 +2158,13 @@ void Manager::dumpProcErrorSection(
     uint32_t dataOut = 0;
     uint64_t mcaStatusRegister = 0;
     uint32_t rootErrStatus = 0;
-    uint32_t offset;
+    uint32_t offset, baseOffset;
     oob_status_t ret;
+
+    uint32_t mcaPspSynd1Lo = 0;
+    uint32_t mcaPspSynd1Hi = 0;
+    uint32_t mcaPspSynd2Lo = 0;
+    uint32_t mcaPspSynd2Hi = 0;
 
     amd::ras::config::Manager::AttributeValue apmlRetry =
         configMgr.getAttribute("ApmlRetries");
@@ -2149,16 +2194,17 @@ void Manager::dumpProcErrorSection(
         if (category ==
             1) // For Dram Cecc error , the dump started from offset 4
         {
-            offset = 4;
+            baseOffset = 4;
         }
         else
         {
-            offset = 0;
+            baseOffset = 0;
         }
 
         uint32_t dumpIndex = 0;
 
-        for (; offset < inst.number_bytes; offset = offset + 4)
+        for (offset = baseOffset; offset < inst.number_bytes;
+             offset = offset + 4)
         {
             memset(&dataIn, 0, sizeof(dataIn));
             memset(&dataOut, 0, sizeof(dataOut));
@@ -2229,6 +2275,23 @@ void Manager::dumpProcErrorSection(
                     mcaStatusRegister = ((uint64_t)dataOut << 32) |
                                         mcaStatusRegister;
                 }
+
+                if (dataIn.offset == mcaPspSynd1LoCode + baseOffset)
+                {
+                    mcaPspSynd1Lo = dataOut;
+                }
+                else if (dataIn.offset == mcaPspSynd1HiCode + baseOffset)
+                {
+                    mcaPspSynd1Hi = dataOut;
+                }
+                else if (dataIn.offset == mcaPspSynd2LoCode + baseOffset)
+                {
+                    mcaPspSynd2Lo = dataOut;
+                }
+                else if (dataIn.offset == mcaPspSynd2HiCode + baseOffset)
+                {
+                    mcaPspSynd2Hi = dataOut;
+                }
             }
             else if (PciePtr)
             {
@@ -2254,6 +2317,15 @@ void Manager::dumpProcErrorSection(
 
         if ((category == 0) || (category == 1))
         {
+            memcpy(ProcPtr->SectionDescriptor[socNum].FruString + offLo1,
+                   &mcaPspSynd1Lo, copySize);
+            memcpy(ProcPtr->SectionDescriptor[socNum].FruString + offHi1,
+                   &mcaPspSynd1Hi, copySize);
+            memcpy(ProcPtr->SectionDescriptor[socNum].FruString + offLo2,
+                   &mcaPspSynd2Lo, copySize);
+            memcpy(ProcPtr->SectionDescriptor[socNum].FruString + offHi2,
+                   &mcaPspSynd2Hi, copySize);
+
             CheckInfo[section] = 0;
             CheckInfo[section] |= ((mcaStatusRegister >> 57) & 1ULL) << 19;
             CheckInfo[section] |= ((mcaStatusRegister >> 61) & 1ULL) << 20;
