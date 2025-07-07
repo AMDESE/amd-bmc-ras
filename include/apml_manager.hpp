@@ -4,7 +4,9 @@
 
 extern "C"
 {
+#include "apml_alertl_uevent.h"
 #include "esmi_mailbox.h"
+#include "linux/amd-apml.h"
 }
 
 #include <boost/asio/deadline_timer.hpp>
@@ -53,15 +55,34 @@ class Manager : public amd::ras::Manager
      */
     virtual void init();
 
-    /** @brief Request GPIO events for APML alert handling.
+    /** @brief Register udev or request GPIO event for APML alert handling.
      *
-     *  @details This function sets up GPIO event handling for APML alerts. It
-     *  requests GPIO events for  alert handling by binding the alert
-     * event handler to the specified GPIO line and event. The number of GPIO
-     * lines to be monitored is read from the amd_ras_gpio_config.json file
+     *  @details This function registers for udev events from Alertl_L driver on
+     *  RAS alerts or sets up GPIO event handling fot APML alerts based on
+     * apmlAlertFlag. If APML Alert_L is enabled, it uses the APML API to
+     * register for udev events. Otherwise, it requests GPIO events for alert
+     * handling by binding the alert event handler to the respective GPIO lines.
+     * The number of GPIO lines to be monitored and the flag apmlAlertFlag value
+     * is read from the amd_ras_gpio_config.json file.
      */
-
     virtual void configure();
+
+    /** @brief Unregister the APML Alert_L udev events.
+     *
+     *  @details This function invokes APML API to unregister for udev events on
+     *  RAS alerts.
+     */
+    void releaseUdevReSrc();
+
+    /** @brief apmlAlertlFlag getter function
+     *
+     *  @details This function returns the alertHandleMode. The value
+     *  is read from the amd_ras_gpio_config.json file
+     */
+    const std::string& getAlertHandleMode() const
+    {
+        return alertHandleMode;
+    }
 
   private:
     sdbusplus::asio::object_server& objectServer;
@@ -82,11 +103,25 @@ class Manager : public amd::ras::Manager
     boost::asio::deadline_timer* McaErrorPollingEvent;
     boost::asio::deadline_timer* DramCeccErrorPollingEvent;
     boost::asio::deadline_timer* PcieAerErrorPollingEvent;
+    boost::asio::deadline_timer* ApmlAlertEvent;
     std::mutex harvestMutex;
     std::mutex mcaErrorHarvestMtx;
     std::mutex dramErrorHarvestMtx;
     std::mutex pcieErrorHarvestMtx;
     std::vector<gpiod::line> gpioLines;
+    std::vector<apml_udev_monitor> ud;
+    std::string alertHandleMode;
+
+    /**
+     * @brief Handler for alert events.
+     *
+     * @details This function is invoked when an alert event occurs on P0 or P1.
+     * The function handles the event by processing the necessary response.
+     *
+     * @param[in] udev_mon - Udev monitor for monitoring event source from APML
+     * Alert_L driver.
+     */
+    void alertSrcHandler(struct apml_udev_monitor* udev_mon, uint8_t socket);
 
     /**
      * @brief Requests GPIO events for hardware alert handling.
@@ -231,7 +266,9 @@ class Manager : public amd::ras::Manager
      * actions.
      *
      *  @param[in] socNum - Socket number of the processor.
+     *  @param[in] src - Source of the APML Alert_L events.
      */
+    bool decodeInterrupt(uint8_t, uint32_t);
     bool decodeInterrupt(uint8_t);
 
     /** @brief Check the validity of MCA banks.
