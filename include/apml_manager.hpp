@@ -70,6 +70,7 @@ class Manager : public amd::ras::Manager
     size_t whFamilyId;
     size_t whModel;
     uint8_t progId;
+    size_t contextType;
     uint64_t recordId;
     size_t watchdogTimerCounter;
     boost::asio::io_context& io;

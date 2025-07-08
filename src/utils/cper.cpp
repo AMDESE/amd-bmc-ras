@@ -307,7 +307,7 @@ void dumpProcErrorInfoSection(
 void dumpContext(const std::shared_ptr<FatalCperRecord>& fatalPtr,
                  uint16_t numbanks, uint16_t bytespermca, uint8_t socNum,
                  const std::unique_ptr<uint64_t[]>& ppin,
-                 const std::unique_ptr<uint32_t[]>& uCode)
+                 const std::unique_ptr<uint32_t[]>& uCode, size_t contextType)
 {
     fatalPtr->ErrorRecord[socNum].Ppin = ppin[socNum];
     fatalPtr->ErrorRecord[socNum].MicrocodeVersion = uCode[socNum];
@@ -315,7 +315,7 @@ void dumpContext(const std::shared_ptr<FatalCperRecord>& fatalPtr,
     if (numbanks != 0)
     {
         fatalPtr->ErrorRecord[socNum].RegisterContextType =
-            singleBit; // MSR Registers
+            contextType; // MSR Registers
         fatalPtr->ErrorRecord[socNum].RegisterArraySize =
             numbanks * bytespermca;
     }

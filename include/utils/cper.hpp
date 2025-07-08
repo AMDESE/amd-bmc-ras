@@ -171,7 +171,7 @@ void dumpProcErrorInfoSection(const std::shared_ptr<McaRuntimeCperRecord>&,
 void dumpContext(const std::shared_ptr<FatalCperRecord>&, uint16_t numbanks,
                  uint16_t bytespermca, uint8_t,
                  const std::unique_ptr<uint64_t[]>&,
-                 const std::unique_ptr<uint32_t[]>&);
+                 const std::unique_ptr<uint32_t[]>&, size_t);
 
 /** @brief Dumps PCIe error information into the PCIe runtime CPER record.
  *
