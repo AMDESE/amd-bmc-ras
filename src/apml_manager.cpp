@@ -23,6 +23,7 @@ namespace apml
 {
 constexpr size_t sbrmiControlRegister = 0x1;
 constexpr size_t sysMgmtCtrlErr = 0x4;
+constexpr size_t shutdownError = 0x40;
 
 constexpr size_t socket0 = 0;
 constexpr size_t socket1 = 1;
@@ -53,6 +54,8 @@ constexpr size_t offHi1 = 4;
 constexpr size_t offLo2 = 8;
 constexpr size_t offHi2 = 12;
 constexpr size_t copySize = 4;
+constexpr size_t crashdump = 1;
+constexpr size_t shutdown = 2;
 
 void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
 {
@@ -1209,12 +1212,18 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
     uint16_t sectionCount = 2;  // Standard section count is 2
     uint32_t errorSeverity = 1; // Error severity for fatal error is 1
 
-    rcd->SectionDescriptor = new EFI_ERROR_SECTION_DESCRIPTOR[sectionCount];
-    std::memset(rcd->SectionDescriptor, 0,
-                2 * sizeof(EFI_ERROR_SECTION_DESCRIPTOR));
+    if (rcd->SectionDescriptor == nullptr)
+    {
+        rcd->SectionDescriptor = new EFI_ERROR_SECTION_DESCRIPTOR[sectionCount];
+        std::memset(rcd->SectionDescriptor, 0,
+                    2 * sizeof(EFI_ERROR_SECTION_DESCRIPTOR));
+    }
 
-    rcd->ErrorRecord = new EFI_AMD_FATAL_ERROR_DATA[sectionCount];
-    std::memset(rcd->ErrorRecord, 0, 2 * sizeof(EFI_AMD_FATAL_ERROR_DATA));
+    if (rcd->ErrorRecord == nullptr)
+    {
+        rcd->ErrorRecord = new EFI_AMD_FATAL_ERROR_DATA[sectionCount];
+        std::memset(rcd->ErrorRecord, 0, 2 * sizeof(EFI_AMD_FATAL_ERROR_DATA));
+    }
 
     amd::ras::util::cper::dumpHeader(rcd, sectionCount, errorSeverity, fatalErr,
                                      boardId, recordId);
@@ -1224,7 +1233,7 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
                                              errorCheck.df_block_instances);
     amd::ras::util::cper::dumpContext(rcd, errorCheck.df_block_instances,
                                       errorCheck.err_log_len, socNum, ppin,
-                                      uCode);
+                                      uCode, contextType);
 
     uint8_t blkId;
 
@@ -1450,6 +1459,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     bool controlFabricError = false;
     bool resetReady = false;
     bool runtimeError = false;
+    bool nonMcaShutdownError = false;
 
     if (read_sbrmi_status(socNum, &buf) == OOB_SUCCESS)
     {
@@ -1548,9 +1558,24 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             }
             else if (buf & fatalError)
             {
-                std::string rasErrMsg = "RAS FATAL Error detected. "
-                                        "System may reset after harvesting "
-                                        "MCA data based on policy set. ";
+                std::string rasErrMsg;
+
+                if (buf & shutdownError)
+                {
+                    rasErrMsg =
+                        "MCA CPU shutdown error detected."
+                        "System may reset after harvesting MCA data based on policy set.";
+
+                    contextType = shutdown;
+                }
+                else
+                {
+                    rasErrMsg = "RAS FATAL Error detected. "
+                                "System may reset after harvesting "
+                                "MCA data based on policy set. ";
+
+                    contextType = crashdump;
+                }
 
                 sd_journal_send(
                     "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
@@ -1563,6 +1588,18 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         "No valid mca banks found. Harvesting additional debug log ID dumps");
                 }
                 harvestMcaDataBanks(socNum, errorCheck);
+            }
+            else if (buf & nonMcaShutdownError)
+            {
+                std::string rasErrMsg =
+                    "Non MCA Shutdown error detected in the system";
+
+                sd_journal_send(
+                    "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
+                    "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
+                    "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+
+                nonMcaShutdownError = true;
             }
             else if (buf & mcaErrOverflow)
             {
@@ -1624,7 +1661,8 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
             writeOobRegister(socNum, 0x4C, buf);
 
-            if (fchHangError == true || runtimeError == true)
+            if (fchHangError == true || runtimeError == true ||
+                nonMcaShutdownError == true)
             {
                 return true;
             }
