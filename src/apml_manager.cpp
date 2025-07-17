@@ -1589,7 +1589,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                 }
                 harvestMcaDataBanks(socNum, errorCheck);
             }
-            else if (buf & nonMcaShutdownError)
+            else if (buf & shutdownError)
             {
                 std::string rasErrMsg =
                     "Non MCA Shutdown error detected in the system";
