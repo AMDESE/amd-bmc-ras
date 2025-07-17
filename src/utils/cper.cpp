@@ -507,6 +507,9 @@ void dumpHeader(const std::shared_ptr<PtrType>& data, uint16_t sectionCount,
             sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
             (sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount) +
             (sizeof(EFI_AMD_FATAL_ERROR_DATA) * sectionCount);
+
+            memcpy(&data->Header.NotificationType,
+                   &gEfiEventNotificationTypeMceGuid, sizeof(EFI_GUID));
     }
 
     /*TimeStamp when OOB controller received the event*/
