@@ -1514,6 +1514,7 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
     bool controlFabricError = false;
     bool resetReady = false;
     bool runtimeError = false;
+    bool nonMcaShutdownError = false;
 
     // check RAS Status Register
     if (src & 0xFF)
@@ -1554,9 +1555,23 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
         }
         else if (src & APML_FATAL_ALERT)
         {
-            std::string rasErrMsg = "RAS FATAL Error detected. "
-                                    "System may reset after harvesting "
-                                    "MCA data based on policy set. ";
+            std::string rasErrMsg;
+
+            if (src & APML_CPU_SHUTDOWN_ALERT)
+            {
+                rasErrMsg =
+                    "MCA CPU shutdown error detected."
+                    "System may reset after harvesting MCA data based on policy set.";
+
+                contextType = shutdown;
+            }
+            else
+            {
+                rasErrMsg = "RAS FATAL Error detected. "
+                            "System may reset after harvesting "
+                            "MCA data based on policy set. ";
+                contextType = crashdump;
+            }
 
             sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i",
                             LOG_ERR, "REDFISH_MESSAGE_ID=%s",
@@ -1569,6 +1584,18 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                     "No valid mca banks found. Harvesting additional debug log ID dumps");
             }
             harvestMcaDataBanks(socNum, errorCheck);
+        }
+        else if (src & APML_CPU_SHUTDOWN_ALERT)
+        {
+            std::string rasErrMsg =
+                "Non MCA Shutdown error detected in the system";
+
+            sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i",
+                            LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            rasErrMsg.c_str(), NULL);
+
+            nonMcaShutdownError = true;
         }
         else if (src & APML_MCA_ALERT)
         {
@@ -1623,7 +1650,8 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
             p1AlertProcessed = true;
         }
 
-        if (fchHangError == true || runtimeError == true)
+        if (fchHangError == true || runtimeError == true ||
+            nonMcaShutdownError == true)
         {
             return true;
         }
