@@ -6,6 +6,7 @@ static constexpr std::string_view runtimeMcaErr = "RUNTIME_MCA_ERROR";
 static constexpr std::string_view runtimePcieErr = "RUNTIME_PCIE_ERROR";
 static constexpr std::string_view runtimeDramErr = "RUNTIME_DRAM_ERROR";
 static constexpr std::string_view fatalErr = "FATAL";
+static constexpr std::string_view mpxTracelog = "MPX_TRACE_LOG";
 
 namespace amd
 {
@@ -25,6 +26,8 @@ constexpr uint8_t addcGenNumber3 = 0x03;
 constexpr uint8_t familyId1ah = 0x1A;
 constexpr uint16_t pcieVendorId = 0x1022;
 constexpr uint8_t minorRevision = 0xB;
+constexpr size_t maxByte = 0xFF;
+constexpr size_t quadBit = 4;
 
 /** @brief Finds a filename in the RAS directory that matches a given pattern.
  *
@@ -171,7 +174,7 @@ void dumpProcErrorInfoSection(const std::shared_ptr<McaRuntimeCperRecord>&,
 void dumpContext(const std::shared_ptr<FatalCperRecord>&, uint16_t numbanks,
                  uint16_t bytespermca, uint8_t,
                  const std::unique_ptr<uint64_t[]>&,
-                 const std::unique_ptr<uint32_t[]>&, size_t);
+                 const std::unique_ptr<uint32_t[]>&);
 
 /** @brief Dumps PCIe error information into the PCIe runtime CPER record.
  *
@@ -198,7 +201,7 @@ void dumpPcieErrorInfo(const std::shared_ptr<PcieRuntimeCperRecord>& data,
  */
 template <typename T>
 void createFile(const std::shared_ptr<T>&, const std::string_view&, uint16_t,
-                size_t&);
+                size_t&, const std::string& tbaiFileName = "");
 
 /** @brief Checks if the signature ID matches the configuration list.
  *

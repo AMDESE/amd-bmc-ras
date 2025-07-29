@@ -1,5 +1,7 @@
 #pragma once
 
+#include <fstream>
+
 extern "C"
 {
 #include "libcper/Cper.h"
@@ -11,6 +13,7 @@ constexpr size_t length4 = 4;
 constexpr size_t length8 = 8;
 constexpr size_t length32 = 32;
 constexpr size_t length96 = 96;
+constexpr size_t traceBufferDataLen = 2048;
 
 struct CrashdumpData
 {
@@ -50,6 +53,13 @@ struct AmdFatalErrorData
 
 using EFI_AMD_FATAL_ERROR_DATA = AmdFatalErrorData;
 
+struct AmdMpTraceBufferData
+{
+    uint32_t TracelogData[traceBufferDataLen];
+} __attribute__((packed));
+
+using EFI_AMD_MP_TRACELOG_DATA = AmdMpTraceBufferData;
+
 struct RuntimeErrorInfo
 {
     EFI_IA32_X64_PROCESSOR_ERROR_RECORD ProcError;
@@ -65,6 +75,11 @@ struct FatalCperRecord
     EFI_COMMON_ERROR_RECORD_HEADER Header;
     EFI_ERROR_SECTION_DESCRIPTOR* SectionDescriptor;
     EFI_AMD_FATAL_ERROR_DATA* ErrorRecord;
+    EFI_AMD_MP_TRACELOG_DATA* TraceBufferRecord;
+    FatalCperRecord() :
+        SectionDescriptor(nullptr), ErrorRecord(nullptr),
+        TraceBufferRecord(nullptr)
+    {}
 } __attribute__((packed));
 
 struct McaRuntimeCperRecord

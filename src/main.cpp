@@ -1,6 +1,7 @@
 #include "config_manager.hpp"
 #ifdef APML
 #include "apml_manager.hpp"
+#include "tbai_manager.hpp"
 #endif
 #include "base_manager.hpp"
 
@@ -25,12 +26,16 @@ int main()
     amd::ras::config::Manager manager(objectServer, systemBus);
 
 #ifdef APML
+
+    amd::ras::tbai::Manager tbaiManager(objectServer, systemBus, io);
+
     amd::ras::Manager* errorMgr =
         new amd::ras::apml::Manager(manager, objectServer, systemBus, io);
 
     errorMgr->init();
 
     errorMgr->configure();
+
 #endif
 
 #ifdef PLDM

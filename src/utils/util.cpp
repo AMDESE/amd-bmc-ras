@@ -6,6 +6,7 @@ extern "C"
 #include "esmi_rmi.h"
 }
 
+#include <nlohmann/json.hpp>
 #include <phosphor-logging/lg2.hpp>
 
 #include <algorithm>
@@ -314,6 +315,72 @@ bool checkObjPath(std::string dbusPath)
     }
 
     return filePathExist;
+}
+
+void getCpuCount(size_t& cpuCount)
+{
+    // Try to copy the platform default file, throw exception if it fails
+    try
+    {
+        std::filesystem::copy_file(
+            SRC_PLATFORM_DEFAULT_FILE, PLATFORM_DEFAULT_FILE,
+            std::filesystem::copy_options::overwrite_existing);
+    }
+    catch (const std::filesystem::filesystem_error& e)
+    {
+        lg2::error("Failed to copy platform default file : {ERROR}", "ERROR",
+                   strerror(errno));
+        throw std::runtime_error("Failed to copy platform default file");
+    }
+
+    std::ifstream file("/var/lib/platform-config/platform.json");
+
+    if (!file.is_open())
+    {
+        file.open(PLATFORM_DEFAULT_FILE);
+    }
+
+    nlohmann::json jsonData = nlohmann::json::parse(file);
+
+    if (jsonData.contains("CpuCount"))
+    {
+        cpuCount = jsonData["CpuCount"];
+    }
+    else
+    {
+        throw std::runtime_error("Unable to read the CPU count");
+    }
+
+    file.close();
+}
+
+void mpTraceLogInfo(std::vector<std::pair<std::string, int>>& mpToIndexMap)
+{
+    // Try to copy the MP info file, throw exception if it fails
+    try
+    {
+        std::filesystem::copy_file(
+            SRC_MP_INFO_FILE, MP_INFO_FILE,
+            std::filesystem::copy_options::overwrite_existing);
+    }
+    catch (const std::filesystem::filesystem_error& e)
+    {
+        lg2::error("Failed to copy platform default file : {ERROR}", "ERROR",
+                   strerror(errno));
+        throw std::runtime_error("Failed to copy MP info file");
+    }
+
+    std::ifstream file(MP_INFO_FILE);
+
+    nlohmann::json jsonData;
+    file >> jsonData;
+
+    for (const auto& item : jsonData)
+    {
+        std::string name = item["Name"];
+        int index = item["Index"];
+        mpToIndexMap.emplace_back(name, index);
+    }
 }
 
 } // namespace util

@@ -24,39 +24,7 @@ constexpr std::string_view inventoryInterface =
 
 void Manager::getCpuSocketInfo()
 {
-    // Try to copy the platform default file, throw exception if it fails
-    try
-    {
-        std::filesystem::copy_file(
-            SRC_PLATFORM_DEFAULT_FILE, PLATFORM_DEFAULT_FILE,
-            std::filesystem::copy_options::overwrite_existing);
-    }
-    catch (const std::filesystem::filesystem_error& e)
-    {
-        lg2::error("Failed to copy platform default file : {ERROR}", "ERROR",
-                   strerror(errno));
-        throw std::runtime_error("Failed to copy platform default file");
-    }
-
-    std::ifstream file("/var/lib/platform-config/platform.json");
-
-    if (!file.is_open())
-    {
-        file.open(PLATFORM_DEFAULT_FILE);
-    }
-
-    nlohmann::json jsonData = nlohmann::json::parse(file);
-
-    if (jsonData.contains("CpuCount"))
-    {
-        cpuCount = jsonData["CpuCount"];
-    }
-    else
-    {
-        throw std::runtime_error("Unable to read the CPU count");
-    }
-
-    file.close();
+    amd::ras::util::getCpuCount(cpuCount);
 
     cpuId = std::make_unique<CpuId[]>(cpuCount);
 

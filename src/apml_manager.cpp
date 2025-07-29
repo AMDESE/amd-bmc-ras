@@ -23,7 +23,6 @@ namespace apml
 {
 constexpr size_t sbrmiControlRegister = 0x1;
 constexpr size_t sysMgmtCtrlErr = 0x4;
-constexpr size_t shutdownError = 0x40;
 
 constexpr size_t socket0 = 0;
 constexpr size_t socket1 = 1;
@@ -54,8 +53,6 @@ constexpr size_t offHi1 = 4;
 constexpr size_t offLo2 = 8;
 constexpr size_t offHi2 = 12;
 constexpr size_t copySize = 4;
-constexpr size_t crashdump = 1;
-constexpr size_t shutdown = 2;
 
 void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
 {
@@ -358,6 +355,8 @@ void Manager::init()
     uint32_t dataOut = 0;
 
     getCpuSocketInfo();
+
+    amd::ras::util::mpTraceLogInfo(mpToIndexMap);
 
     // Try to copy the GPIO config file, throw exception if it fails
     try
@@ -1173,6 +1172,86 @@ void Manager::harvestDebugLogDump(
     }
 }
 
+void Manager::harvestMpxTraceLog(
+    const std::shared_ptr<FatalCperRecord>& fatalPtr, uint8_t socNum,
+    std::vector<std::string>& mpList, uint8_t baseSectionCount)
+{
+    uint8_t lutIndex;
+    uint8_t dwNum = 1; // Number of double words to be read
+    struct trace_buf_data_in dataIn = {0, 0, 0};
+    uint32_t buffer;
+    uint16_t maxOffset = 2048;
+    size_t index = 0, offset = 0;
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
+
+    for (const std::string& item : mpList)
+    {
+        auto it = std::find_if(mpToIndexMap.begin(), mpToIndexMap.end(),
+                               [&](const auto& p) { return p.first == item; });
+
+        if (it != mpToIndexMap.end())
+        {
+            std::string fruText;
+            if (socNum == socket0)
+            {
+                fruText = "SOC_0_" + item;
+            }
+            else if (socNum == socket1)
+            {
+                fruText = "SOC_1_" + item;
+            }
+
+            size_t len = fruText.size();
+
+            memcpy(fatalPtr->SectionDescriptor[2 + baseSectionCount + index]
+                       .FruString,
+                   fruText.c_str(), len + 1);
+
+            lutIndex = it->second;
+
+            fatalPtr->SectionDescriptor[2 + baseSectionCount + index]
+                .SectionType.Data1 |= (lutIndex << 11);
+
+            fatalPtr->SectionDescriptor[2 + baseSectionCount + index]
+                .SectionType.Data2 |= 0x1022;
+
+            dataIn.entry_off = offset;
+            dataIn.lut_index = lutIndex;
+            dataIn.dw_num = dwNum;
+
+            for (offset = 0; offset < maxOffset; offset++)
+            {
+                memset(&buffer, 0, sizeof(buffer));
+                dataIn.entry_off = offset * 4;
+
+                ret = esmi_oob_tbai_read_dw(socNum, dataIn, &buffer);
+                ret = esmi_oob_tbai_read_dw(socNum, dataIn, &buffer);
+
+                if (ret != OOB_SUCCESS)
+                {
+                    lg2::error(
+                        "Socket {SOCKET} : Failed to get TBAI trace data "
+                        "from LutIndex:{LUT}, Offset:{OFFSET}",
+                        "SOCKET", socNum, "LUT", item, "OFFSET", lg2::hex,
+                        offset);
+                    continue;
+
+                    fatalPtr->TraceBufferRecord[baseSectionCount + index]
+                        .TracelogData[offset] =
+                        badData; // Write BAADDA7A pattern on error
+                }
+                else
+                {
+                    fatalPtr->TraceBufferRecord[baseSectionCount + index]
+                        .TracelogData[offset] = buffer;
+                }
+                usleep(3);
+            }
+            index++;
+        }
+    }
+}
+
 void Manager::harvestMcaDataBanks(uint8_t socNum,
                                   struct ras_df_err_chk errorCheck)
 {
@@ -1181,6 +1260,7 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
     uint32_t buffer;
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     bool validSignatureId = false;
+    uint16_t tbSectionCount;
 
     uint32_t syndOffsetLo = 0;
     uint32_t syndOffsetHi = 0;
@@ -1209,31 +1289,60 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
         configMgr.getAttribute("ApmlRetries");
     int64_t* apmlRetryCount = std::get_if<int64_t>(&apmlRetry);
 
-    uint16_t sectionCount = 2;  // Standard section count is 2
+    amd::ras::config::Manager::AttributeValue p0MpListVal =
+        configMgr.getAttribute("Soc0MPList");
+    std::vector<std::string>* p0MpList =
+        std::get_if<std::vector<std::string>>(&p0MpListVal);
+
+    amd::ras::config::Manager::AttributeValue p1MpListVal =
+        configMgr.getAttribute("Soc1MPList");
+    std::vector<std::string>* p1MpList =
+        std::get_if<std::vector<std::string>>(&p1MpListVal);
+
+    tbSectionCount = p0MpList->size() + (cpuCount == 2 ? p1MpList->size() : 0);
+
+    fatalSectionCount = 2 + tbSectionCount; // Standard section count is 2
     uint32_t errorSeverity = 1; // Error severity for fatal error is 1
 
     if (rcd->SectionDescriptor == nullptr)
     {
-        rcd->SectionDescriptor = new EFI_ERROR_SECTION_DESCRIPTOR[sectionCount];
+        rcd->SectionDescriptor =
+            new EFI_ERROR_SECTION_DESCRIPTOR[fatalSectionCount];
         std::memset(rcd->SectionDescriptor, 0,
-                    2 * sizeof(EFI_ERROR_SECTION_DESCRIPTOR));
+                    fatalSectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR));
     }
 
     if (rcd->ErrorRecord == nullptr)
     {
-        rcd->ErrorRecord = new EFI_AMD_FATAL_ERROR_DATA[sectionCount];
+        rcd->ErrorRecord = new EFI_AMD_FATAL_ERROR_DATA[2];
         std::memset(rcd->ErrorRecord, 0, 2 * sizeof(EFI_AMD_FATAL_ERROR_DATA));
     }
 
-    amd::ras::util::cper::dumpHeader(rcd, sectionCount, errorSeverity, fatalErr,
-                                     boardId, recordId);
-    amd::ras::util::cper::dumpErrorDescriptor(rcd, sectionCount, fatalErr,
+    if (rcd->TraceBufferRecord == nullptr)
+    {
+        rcd->TraceBufferRecord = new EFI_AMD_MP_TRACELOG_DATA[tbSectionCount];
+        std::memset(rcd->TraceBufferRecord, 0,
+                    tbSectionCount * sizeof(EFI_AMD_MP_TRACELOG_DATA));
+    }
+
+    amd::ras::util::cper::dumpHeader(rcd, fatalSectionCount, errorSeverity,
+                                     fatalErr, boardId, recordId);
+    amd::ras::util::cper::dumpErrorDescriptor(rcd, fatalSectionCount, fatalErr,
                                               &errorSeverity, progId);
     amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, cpuCount,
                                              errorCheck.df_block_instances);
     amd::ras::util::cper::dumpContext(rcd, errorCheck.df_block_instances,
                                       errorCheck.err_log_len, socNum, ppin,
-                                      uCode, contextType);
+                                      uCode);
+
+    if (socNum == socket0)
+    {
+        harvestMpxTraceLog(rcd, socNum, *p0MpList, 0);
+    }
+    else if (socNum == socket1)
+    {
+        harvestMpxTraceLog(rcd, socNum, *p1MpList, p0MpList->size());
+    }
 
     uint8_t blkId;
 
@@ -1459,7 +1568,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     bool controlFabricError = false;
     bool resetReady = false;
     bool runtimeError = false;
-    bool nonMcaShutdownError = false;
 
     if (read_sbrmi_status(socNum, &buf) == OOB_SUCCESS)
     {
@@ -1558,24 +1666,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             }
             else if (buf & fatalError)
             {
-                std::string rasErrMsg;
-
-                if (buf & shutdownError)
-                {
-                    rasErrMsg =
-                        "MCA CPU shutdown error detected."
-                        "System may reset after harvesting MCA data based on policy set.";
-
-                    contextType = shutdown;
-                }
-                else
-                {
-                    rasErrMsg = "RAS FATAL Error detected. "
-                                "System may reset after harvesting "
-                                "MCA data based on policy set. ";
-
-                    contextType = crashdump;
-                }
+                std::string rasErrMsg = "RAS FATAL Error detected. "
+                                        "System may reset after harvesting "
+                                        "MCA data based on policy set. ";
 
                 sd_journal_send(
                     "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
@@ -1588,18 +1681,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         "No valid mca banks found. Harvesting additional debug log ID dumps");
                 }
                 harvestMcaDataBanks(socNum, errorCheck);
-            }
-            else if (buf & shutdownError)
-            {
-                std::string rasErrMsg =
-                    "Non MCA Shutdown error detected in the system";
-
-                sd_journal_send(
-                    "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
-                    "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                    "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
-
-                nonMcaShutdownError = true;
             }
             else if (buf & mcaErrOverflow)
             {
@@ -1661,8 +1742,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
             writeOobRegister(socNum, 0x4C, buf);
 
-            if (fchHangError == true || runtimeError == true ||
-                nonMcaShutdownError == true)
+            if (fchHangError == true || runtimeError == true)
             {
                 return true;
             }
@@ -1681,8 +1761,8 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             {
                 if (controlFabricError == false)
                 {
-                    amd::ras::util::cper::createFile(rcd, fatalErr, 2,
-                                                     errCount);
+                    amd::ras::util::cper::createFile(
+                        rcd, fatalErr, fatalSectionCount, errCount);
 
                     amd::ras::util::cper::exportToDBus(errCount - 1,
                                                        rcd->Header.TimeStamp,
@@ -1819,6 +1899,12 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                 {
                     delete[] rcd->ErrorRecord;
                     rcd->ErrorRecord = nullptr;
+                }
+
+                if (rcd->TraceBufferRecord != nullptr)
+                {
+                    delete[] rcd->TraceBufferRecord;
+                    rcd->TraceBufferRecord = nullptr;
                 }
 
                 rcd = nullptr;

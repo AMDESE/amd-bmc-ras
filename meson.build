@@ -10,6 +10,8 @@ config_file = get_option('config_file')
 platform_default_file = get_option('platform_default_file')
 src_platform_default_file = get_option('src_platform_default_file')
 gpio_config_file = get_option('gpio_config_file')
+mp_info_file = get_option('mp_info_file')
+src_mp_info_file = get_option('src_mp_info_file')
 src_config_file = get_option('src_config_file')
 src_gpio_config_file = get_option('src_gpio_config_file')
 ras_dir = get_option('ras_dir')
@@ -24,6 +26,8 @@ cpp_args = [
     '-DINDEX_FILE="' + index_file + '"',
     '-DSRC_CONFIG_FILE="' + src_config_file + '"',
     '-DSRC_GPIO_CONFIG_FILE="' + src_gpio_config_file + '"',
+    '-DMP_INFO_FILE="' + mp_info_file + '"',
+    '-DSRC_MP_INFO_FILE="' + src_mp_info_file + '"',
     '-DRAS_DIR="' + ras_dir + '"',
 ]
 
@@ -62,6 +66,7 @@ endif
 
 sources = [
     'src/config_manager.cpp',
+    'src/tbai_manager.cpp',
     'src/main.cpp',
     'src/base_manager.cpp',
     'src/apml_manager.cpp',
@@ -102,6 +107,12 @@ install_data(
     join_paths(meson.current_source_dir(), 'config', 'amd_ras_gpio_config.json'),
     install_dir: ras_config_dir,
     rename: 'amd_ras_gpio_config.json',
+)
+
+install_data(
+    join_paths(meson.current_source_dir(), 'config', 'mp_info.json'),
+    install_dir: ras_config_dir,
+    rename: 'mp_info.json',
 )
 
 systemd = dependency('systemd')
