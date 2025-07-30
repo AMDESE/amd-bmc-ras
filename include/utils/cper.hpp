@@ -173,18 +173,6 @@ void dumpContext(const std::shared_ptr<FatalCperRecord>&, uint16_t numbanks,
                  const std::unique_ptr<uint64_t[]>&,
                  const std::unique_ptr<uint32_t[]>&, size_t);
 
-/** @brief Dumps PCIe error information into the PCIe runtime CPER record.
- *
- *  @details Populates the PCIe runtime CPER record with error information,
- * including Port type, Version and vendor ID.
- *
- *  @param[in] data - Shared pointer to the PCIe runtime CPER record.
- *  @param[in] sectionStart - Start of the section.
- *  @param[in] sectionCount - Number of sections.
- */
-void dumpPcieErrorInfo(const std::shared_ptr<PcieRuntimeCperRecord>& data,
-                       uint16_t sectionStart, uint16_t sectionCount);
-
 /** @brief Creates a CPER file based on the error type and section count.
  *
  *  @details Removes existing CPER files in the RAS directory, sets the filename

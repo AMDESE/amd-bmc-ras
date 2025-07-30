@@ -321,19 +321,6 @@ void dumpContext(const std::shared_ptr<FatalCperRecord>& fatalPtr,
     }
 }
 
-void dumpPcieErrorInfo(const std::shared_ptr<PcieRuntimeCperRecord>& data,
-                       uint16_t sectionStart, uint16_t sectionCount)
-{
-    for (size_t i = sectionStart; i < sectionCount; i++)
-    {
-        data->PcieErrorData[i].ValidFields |=
-            1ULL | (1ULL << singleBit) | (1ULL << tripleBit) | (1ULL << 7);
-        data->PcieErrorData[i].PortType = quadBit;   // Root Port
-        data->PcieErrorData[i].Version = 0x02000000; // Major = 2, Minor = 0
-        data->PcieErrorData[i].DevBridge.VendorId = pcieVendorId;
-    }
-}
-
 std::string getCperFilename(size_t num)
 {
     return "ras-error" + std::to_string(num) + ".cper";
@@ -496,7 +483,7 @@ void dumpHeader(const std::shared_ptr<PtrType>& data, uint16_t sectionCount,
         data->Header.RecordLength =
             sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
             (sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount) +
-            (sizeof(EFI_PCIE_ERROR_DATA) * sectionCount);
+            (sizeof(EFI_AMD_PCIE_ERROR_DATA) * sectionCount);
 
         memcpy(&data->Header.NotificationType,
                &gEfiEventNotificationTypePcieGuid, sizeof(EFI_GUID));
@@ -508,8 +495,8 @@ void dumpHeader(const std::shared_ptr<PtrType>& data, uint16_t sectionCount,
             (sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount) +
             (sizeof(EFI_AMD_FATAL_ERROR_DATA) * sectionCount);
 
-            memcpy(&data->Header.NotificationType,
-                   &gEfiEventNotificationTypeMceGuid, sizeof(EFI_GUID));
+        memcpy(&data->Header.NotificationType,
+               &gEfiEventNotificationTypeMceGuid, sizeof(EFI_GUID));
     }
 
     /*TimeStamp when OOB controller received the event*/
@@ -586,10 +573,10 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
             data->SectionDescriptor[i].SectionOffset =
                 sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
                 (sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount) +
-                (i * sizeof(EFI_PCIE_ERROR_DATA));
+                (i * sizeof(EFI_AMD_PCIE_ERROR_DATA));
 
             data->SectionDescriptor[i].SectionLength =
-                sizeof(EFI_PCIE_ERROR_DATA);
+                sizeof(EFI_AMD_PCIE_ERROR_DATA);
 
             data->SectionDescriptor[i].SectionType = gEfiPcieErrorSectionGuid;
 
@@ -728,7 +715,7 @@ void createFile(const std::shared_ptr<PtrType>& data,
                sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount, singleBit,
                file);
         fwrite(pciePtr->PcieErrorData,
-               sizeof(EFI_PCIE_ERROR_DATA) * sectionCount, singleBit, file);
+               sizeof(EFI_AMD_PCIE_ERROR_DATA) * sectionCount, singleBit, file);
         // exportCrashdumpToDBus(err_count, PciePtr->Header.TimeStamp);
     }
     fclose(file);
