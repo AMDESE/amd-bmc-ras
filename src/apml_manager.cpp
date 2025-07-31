@@ -56,6 +56,7 @@ constexpr size_t offHi2 = 12;
 constexpr size_t copySize = 4;
 constexpr size_t crashdump = 1;
 constexpr size_t shutdown = 2;
+constexpr size_t index28 = 28;
 
 void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
 {
@@ -845,8 +846,8 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         sectionDesSize = sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount;
         memset(pciePtr->SectionDescriptor, 0, sectionDesSize);
 
-        pciePtr->PcieErrorData = new EFI_PCIE_ERROR_DATA[sectionCount];
-        sectionSize = sizeof(EFI_PCIE_ERROR_DATA) * sectionCount;
+        pciePtr->PcieErrorData = new EFI_AMD_PCIE_ERROR_DATA[sectionCount];
+        sectionSize = sizeof(EFI_AMD_PCIE_ERROR_DATA) * sectionCount;
         memset(pciePtr->PcieErrorData, 0, sectionSize);
 
         uint16_t sectionStart = 0;
@@ -855,9 +856,6 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         {
             dumpProcErrorSection(pciePtr, 0, p0Inst, pcieErr, sectionStart,
                                  severity, checkInfo);
-
-            amd::ras::util::cper::dumpPcieErrorInfo(pciePtr, sectionStart,
-                                                    p0Inst.number_of_inst);
         }
         if (p1Inst.number_of_inst != 0)
         {
@@ -865,9 +863,6 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
 
             dumpProcErrorSection(pciePtr, 0, p1Inst, pcieErr, sectionStart,
                                  severity, checkInfo);
-
-            amd::ras::util::cper::dumpPcieErrorInfo(pciePtr, sectionStart,
-                                                    p1Inst.number_of_inst);
         }
 
         amd::ras::util::cper::calculateSeverity(
@@ -2103,6 +2098,7 @@ oob_status_t Manager::setPcieOobRegisters()
     getRasOobConfig(&oob_config);
 
     oob_config.pcie_err_reporting_en = 1;
+    oob_config.core_mca_err_reporting_en = 1;
 
     ret = setRasOobConfig(oob_config);
     return ret;
@@ -2286,18 +2282,10 @@ void Manager::dumpProcErrorSection(
                 }
                 else if (PciePtr)
                 {
-                    PciePtr->PcieErrorData[section]
-                        .AerInfo.PcieAer[dumpIndex * 4 + 0] =
-                        (badData >> 24) & 0xFF;
-                    PciePtr->PcieErrorData[section]
-                        .AerInfo.PcieAer[dumpIndex * 4 + 1] =
-                        (badData >> 16) & 0xFF;
-                    PciePtr->PcieErrorData[section]
-                        .AerInfo.PcieAer[dumpIndex * 4 + 2] =
-                        (badData >> 8) & 0xFF;
-                    PciePtr->PcieErrorData[section]
-                        .AerInfo.PcieAer[dumpIndex * 4 + 3] = badData & 0xFF;
+                    PciePtr->PcieErrorData[section].PcieData[dumpIndex] =
+                        badData;
                 }
+                dumpIndex++;
                 continue;
             }
             if (ProcPtr)
@@ -2333,20 +2321,22 @@ void Manager::dumpProcErrorSection(
             }
             else if (PciePtr)
             {
-                PciePtr->PcieErrorData[section]
-                    .AerInfo.PcieAer[dumpIndex * 4 + 0] =
-                    (dataOut >> 24) & 0xFF;
-                PciePtr->PcieErrorData[section]
-                    .AerInfo.PcieAer[dumpIndex * 4 + 1] =
-                    (dataOut >> 16) & 0xFF;
-                PciePtr->PcieErrorData[section]
-                    .AerInfo.PcieAer[dumpIndex * 4 + 2] = (dataOut >> 8) & 0xFF;
-                PciePtr->PcieErrorData[section]
-                    .AerInfo.PcieAer[dumpIndex * 4 + 3] = dataOut & 0xFF;
+                if (dumpIndex == index28)
+                {
+                    PciePtr->PcieErrorData[section].PcieData[dumpIndex] =
+                        rootErrStatus;
+                    dumpIndex++;
+                }
 
-                if (dataIn.offset == 52)
+                if (dataIn.offset == 0)
                 {
                     rootErrStatus = dataOut;
+                    continue;
+                }
+                else
+                {
+                    PciePtr->PcieErrorData[section].PcieData[dumpIndex] =
+                        dataOut;
                 }
             }
             dumpIndex++;
@@ -2385,18 +2375,7 @@ void Manager::dumpProcErrorSection(
         }
         else if (category == 2) // PCIE error
         {
-            if (rootErrStatus & (1 << 6))
-            {
-                Severity[section] = 1; // Fatal error
-            }
-            else if (rootErrStatus & (1 << 5))
-            {
-                Severity[section] = 0; // Non datal uncorrected
-            }
-            else if (rootErrStatus & 1)
-            {
-                Severity[section] = 2; // Non fatal corrected
-            }
+            Severity[section] = rootErrStatus & 0xFF;
         }
         n++;
         section++;
