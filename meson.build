@@ -60,6 +60,11 @@ if pldm
     add_project_arguments('-DPLDM', language: 'cpp')
 endif
 
+apml_nda = get_option('apml-nda')
+if apml_nda
+    add_project_arguments('-DAPML_NDA', language: 'cpp')
+endif
+
 sources = [
     'src/config_manager.cpp',
     'src/main.cpp',
