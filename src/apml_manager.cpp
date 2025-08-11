@@ -8,6 +8,9 @@
 extern "C"
 {
 #include "esmi_cpuid_msr.h"
+#ifdef APML_NDA
+#include "esmi_mailbox_nda.h"
+#endif
 #include "esmi_rmi.h"
 }
 
@@ -57,6 +60,7 @@ constexpr size_t copySize = 4;
 constexpr size_t crashdump = 1;
 constexpr size_t shutdown = 2;
 constexpr size_t index28 = 28;
+constexpr size_t blockId25 = 25;
 
 void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
 {
@@ -1037,6 +1041,135 @@ void Manager::getLastTransAddr(const std::shared_ptr<FatalCperRecord>& fatalPtr,
     }
 }
 
+inline bool retryUncoreDump(uint8_t socNum, uint16_t instanceNum,
+                     int64_t* apmlRetryCount, uncore_ift_validity_check& resp,
+                     uncore_dbg_log_dump_din& dataIn,
+                     uncore_dbg_log_dump_dout& dataOut)
+{
+    uint16_t retryCount = *apmlRetryCount;
+
+    while (retryCount > 0)
+    {
+        memset(&dataIn, 0, sizeof(dataIn));
+
+        dataIn.offsets = resp.bytes / BIT(2);
+        dataIn.index = instanceNum;
+
+        int ret = get_ras_uncore_dbg_log_dump(socNum, dataIn, &dataOut);
+
+        if (ret == OOB_SUCCESS)
+        {
+            return true;
+        }
+
+        retryCount--;
+        usleep(1);
+    }
+
+    return false;
+}
+
+void Manager::harvestUncoreIftDump(
+    const std::shared_ptr<FatalCperRecord>& fatalPtr, uint8_t socNum,
+    int64_t* apmlRetryCount, uint16_t& debugLogIdOffset)
+{
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
+    uint16_t retries = 0;
+    uint16_t instanceNum = 0;
+    struct uncore_ift_validity_check resp;
+    struct uncore_dbg_log_dump_din dataIn;
+    struct uncore_dbg_log_dump_dout dataOut;
+
+    while (ret != OOB_SUCCESS)
+    {
+        retries++;
+
+        ret = get_bmc_ras_uncore_ift_validity_check(socNum, &resp);
+
+        if (ret == OOB_SUCCESS)
+        {
+            lg2::info("Socket: {SOCKET},Debug Log ID : {ID} read successful",
+                      "ID", blockId25, "SOCKET", socNum);
+            break;
+        }
+
+        if (retries > *apmlRetryCount)
+        {
+            lg2::error("Socket: {SOCKET},Debug Log ID : {ID} read failed", "ID",
+                       blockId25, "SOCKET", socNum);
+
+            /*If 5Bh command fails ,0xBAADDA7A is written thrice in the PCIE
+             * dump region*/
+            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
+                blockId25;
+            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
+                badData;
+            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
+                badData;
+            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
+                badData;
+
+            break;
+        }
+    }
+    if (ret == OOB_SUCCESS)
+    {
+        if (resp.instances != 0)
+        {
+            uint32_t debugLogIdHeader =
+                (static_cast<uint32_t>(resp.bytes) << 16) |
+                (static_cast<uint32_t>(resp.instances) << 8) |
+                static_cast<uint32_t>(blockId25);
+
+            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
+                debugLogIdHeader;
+
+            while (instanceNum < resp.instances)
+            {
+                memset(&dataIn, 0, sizeof(dataIn));
+
+                // Convert bytes to 32-bit word offsets (BIT(2) = 4)
+                dataIn.offsets = resp.bytes / BIT(2);
+                /* DF block ID instance */
+                dataIn.index = instanceNum;
+
+                std::unique_ptr<uint32_t[]> offsets_data_ptr(
+                    new uint32_t[dataIn.offsets]);
+                dataOut.offsets_data = offsets_data_ptr.get();
+
+                ret = get_ras_uncore_dbg_log_dump(socNum, dataIn, &dataOut);
+
+                if (ret)
+                {
+                    bool success =
+                        retryUncoreDump(socNum, instanceNum, apmlRetryCount,
+                                        resp, dataIn, dataOut);
+
+                    if (!success)
+                    {
+                        lg2::error("Failed to read debug log dump for "
+                                   "debug log ID : 25");
+
+                        for (size_t i = 0; i < dataIn.offsets; i++)
+                        {
+                            dataOut.offsets_data[i] = badData;
+                        }
+                    }
+                }
+
+                for (size_t i = 0; i < dataIn.offsets; i++)
+                {
+                    fatalPtr->ErrorRecord[socNum]
+                        .DebugLogIdData[debugLogIdOffset++] =
+                        dataOut.offsets_data[i];
+                }
+
+                instanceNum++;
+            }
+        }
+    }
+}
+
 void Manager::harvestDebugLogDump(
     const std::shared_ptr<FatalCperRecord>& fatalPtr, uint8_t socNum,
     uint8_t blkId, int64_t* apmlRetryCount, uint16_t& debugLogIdOffset)
@@ -1239,8 +1372,15 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
 
     for (blkId = 0; blkId < blockId.size(); blkId++)
     {
-        harvestDebugLogDump(rcd, socNum, blockId[blkId], apmlRetryCount,
-                            debugLogIdOffset);
+        if (blockId[blkId] == blockId25)
+        {
+            harvestUncoreIftDump(rcd, socNum, apmlRetryCount, debugLogIdOffset);
+        }
+        else
+        {
+            harvestDebugLogDump(rcd, socNum, blockId[blkId], apmlRetryCount,
+                                debugLogIdOffset);
+        }
     }
 
     syndOffsetLo = std::stoul((*sigIDOffset)[0], nullptr, base16);

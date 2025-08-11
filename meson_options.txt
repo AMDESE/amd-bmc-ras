@@ -1,4 +1,5 @@
 option('apml-interface', type: 'boolean', value: true, description: 'Enable APML interface')
+option('apml-nda', type: 'boolean', value: true, description: 'Build the RAS application with APML NDA library')
 option('pldm-interface', type: 'boolean', value: false, description: 'Enable PLDM interface')
 option('config_file', type: 'string', value: '/var/lib/amd-bmc-ras/ras_config.json', description: 'Path to the RAS config file')
 option('platform_default_file', type: 'string', value: '/var/lib/amd-bmc-ras/platform_default.json', description: 'Path to the default platform configuration file')

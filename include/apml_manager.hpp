@@ -323,6 +323,20 @@ class Manager : public amd::ras::Manager
     void harvestDebugLogDump(const std::shared_ptr<FatalCperRecord>&, uint8_t,
                              uint8_t, int64_t*, uint16_t&);
 
+    /** @brief Harvests uncore IFT dump data
+     *
+     * @details This function harvests the dump data for debug log ID 25
+     *
+     * @param[in] fatalPtr - Shared pointer to a FatalCperRecord object.
+     * @param[in] socNum - The SoC number.
+     * @param[in] apmlRetryCount - Pointer to the APML retry count.
+     * @param[out] debugLogIdOffset - Reference to the debug log ID offset.
+     *
+     */
+    void harvestUncoreIftDump(const std::shared_ptr<FatalCperRecord>& fatalPtr,
+                              uint8_t socNum, int64_t* apmlRetryCount,
+                              uint16_t& debugLogIdOffset);
+
     /** @brief Dumps the processor error section of the CPER record
      *
      * @details This function dumps the processor error section for
