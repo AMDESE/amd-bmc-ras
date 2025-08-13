@@ -1,3 +1,14 @@
 {
-    "GPIO_ALERT_LINES": ["P0_I3C_APML_ALERT_L", "P1_I3C_APML_ALERT_L"]
+    "Alert_Config": [
+        {
+            "AlertHandle": {
+                "Description": "Modes to handle RAS alert",
+                "Value": "UEVENT",
+                "ValidOptions": ["UEVENT", "GPIO"]
+            }
+        },
+        {
+            "GPIO_ALERT_LINES": ["P0_I3C_APML_ALERT_L", "P1_I3C_APML_ALERT_L"]
+        }
+    ]
 }
