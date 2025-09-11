@@ -1,4 +1,5 @@
 #include "config_manager.hpp"
+#include "utils/cper.hpp"
 
 #include "xyz/openbmc_project/Common/File/error.hpp"
 #include "xyz/openbmc_project/Common/error.hpp"
@@ -20,7 +21,9 @@ void Manager::setAttribute(AttributeName attribute, AttributeValue value)
 
     auto configMap = rasConfigTable();
 
-    std::ifstream jsonFile(CONFIG_FILE);
+    std::string configFile = CONFIG_FILE + node + ".json";
+
+    std::ifstream jsonFile(configFile);
     if (!jsonFile.is_open())
     {
         throw sdbusplus::xyz::openbmc_project::Common::File::Error::Open();
@@ -108,7 +111,7 @@ void Manager::setAttribute(AttributeName attribute, AttributeValue value)
             }
         }
 
-        std::ofstream jsonFileOut(CONFIG_FILE);
+        std::ofstream jsonFileOut(configFile);
 
         if (!jsonFileOut.is_open())
         {
@@ -158,9 +161,11 @@ Manager::AttributeValue Manager::getAttribute(AttributeName attribute)
 
 void Manager::updateConfigToDbus()
 {
-    if (!fs::exists(CONFIG_FILE))
+    std::string configFile = CONFIG_FILE + node + ".json";
+
+    if (!fs::exists(configFile))
     { // Check if the config file exists
-        fs::path destDir = fs::path(CONFIG_FILE).parent_path();
+        fs::path destDir = fs::path(configFile).parent_path();
         if (!fs::exists(destDir))
         {
             if (!fs::create_directories(destDir))
@@ -175,7 +180,7 @@ void Manager::updateConfigToDbus()
         // Try to copy the config file, throw exception if it fails
         try
         {
-            fs::copy_file(SRC_CONFIG_FILE, CONFIG_FILE,
+            fs::copy_file(SRC_CONFIG_FILE, configFile,
                           fs::copy_options::overwrite_existing);
         }
         catch (const fs::filesystem_error& e)
@@ -186,7 +191,7 @@ void Manager::updateConfigToDbus()
         }
     }
 
-    std::ifstream jsonRead(CONFIG_FILE);
+    std::ifstream jsonRead(configFile);
     nlohmann::json data = nlohmann::json::parse(jsonRead);
 
     if (!jsonRead.is_open())
@@ -300,9 +305,10 @@ void Manager::updateConfigToDbus()
 }
 
 Manager::Manager(sdbusplus::asio::object_server& objectServer,
-                 std::shared_ptr<sdbusplus::asio::connection>& systemBus) :
-    sdbusplus::com::amd::RAS::server::Configuration(*systemBus, objectPath),
-    objServer(objectServer), systemBus(systemBus)
+                 std::shared_ptr<sdbusplus::asio::connection>& systemBus,
+                 std::string& node) :
+    amd::ras::config::ConfigIface(*systemBus, objectPath),
+    objServer(objectServer), systemBus(systemBus), node(node)
 {
     updateConfigToDbus();
 }

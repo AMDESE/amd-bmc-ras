@@ -1,0 +1,12 @@
+[Unit]
+Description=AMD RAS Manager
+After=multi-host-config.service
+After=amd-host-mgr@.service
+ConditionPathExists=/etc/amd/hosts.d/host%i.conf
+
+[Service]
+Restart=always
+ExecStart=/usr/bin/amd-ras-manager %i
+
+[Install]
+WantedBy=multi-user.target

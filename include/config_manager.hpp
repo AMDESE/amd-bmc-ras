@@ -52,9 +52,11 @@ class Manager : public Configuration
      *
      *  @param[in] objectServer  - object server
      *  @param[in] systemBus - bus connection
+     *  @param[in] node - host node number to determine single or multi host.
      */
     Manager(sdbusplus::asio::object_server& objectServer,
-            std::shared_ptr<sdbusplus::asio::connection>& systemBus);
+            std::shared_ptr<sdbusplus::asio::connection>& systemBus,
+            std::string& node);
 
     /** @brief Updates the rasConfigTable with the user input.
      *
@@ -94,6 +96,7 @@ class Manager : public Configuration
   private:
     sdbusplus::asio::object_server& objServer;
     std::shared_ptr<sdbusplus::asio::connection>& systemBus;
+    std::string node;
 };
 
 } // namespace config

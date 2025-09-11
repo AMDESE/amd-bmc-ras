@@ -14,7 +14,8 @@ using CrashdumpBase = sdbusplus::com::amd::server::Crashdump;
  * into the D-Bus interface and overrides the getAttribute()
  * and setAttribute() of the RAS configuration interface.
  */
-class CrashdumpInterface : virtual public sdbusplus::server::object_t<CrashdumpBase>
+class CrashdumpInterface :
+    virtual public sdbusplus::server::object_t<CrashdumpBase>
 {
   public:
     CrashdumpInterface() = delete;

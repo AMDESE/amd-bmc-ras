@@ -110,17 +110,29 @@ template void dumpErrorDescriptor(const std::shared_ptr<PcieRuntimeCperRecord>&,
                                   uint8_t);
 
 template void createFile(const std::shared_ptr<FatalCperRecord>&,
-                         const std::string_view&, uint16_t, size_t&);
+                         const std::string_view&, uint16_t, size_t&,
+                         const std::string&);
 
 template void createFile(const std::shared_ptr<McaRuntimeCperRecord>&,
-                         const std::string_view&, uint16_t, size_t&);
+                         const std::string_view&, uint16_t, size_t&,
+                         const std::string&);
 
 template void createFile(const std::shared_ptr<PcieRuntimeCperRecord>&,
-                         const std::string_view&, uint16_t, size_t&);
+                         const std::string_view&, uint16_t, size_t&,
+                         const std::string&);
 
-std::string findCperFilename(size_t number)
+std::string findCperFilename(size_t number, const std::string& node)
 {
-    std::regex pattern(".*" + std::to_string(number) + "\\.cper");
+    std::regex pattern;
+    if (node == "1" || node == "2")
+    {
+        pattern = std::regex(
+            ".*" + node + ".*error" + std::to_string(number) + "\\.cper");
+    }
+    else
+    {
+        pattern = std::regex(".*" + std::to_string(number) + "\\.cper");
+    }
 
     for (const auto& entry : std::filesystem::directory_iterator(RAS_DIR))
     {
@@ -134,9 +146,9 @@ std::string findCperFilename(size_t number)
     return "";
 }
 
-void createIndexFile(size_t& errCount)
+void createIndexFile(size_t& errCount, const std::string& node)
 {
-    std::string indexFile = INDEX_FILE;
+    std::string indexFile = std::string(INDEX_FILE) + "_" + node;
     std::string rasDir = RAS_DIR;
 
     amd::ras::util::createFile(rasDir, indexFile);
@@ -158,7 +170,8 @@ void createIndexFile(size_t& errCount)
 
 void exportToDBus(size_t num, const EFI_ERROR_TIME_STAMP& TimeStampStr,
                   sdbusplus::asio::object_server& objectServer,
-                  std::shared_ptr<sdbusplus::asio::connection>& systemBus)
+                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
+                  const std::string& node)
 {
     if (num >= 10)
     {
@@ -166,7 +179,7 @@ void exportToDBus(size_t num, const EFI_ERROR_TIME_STAMP& TimeStampStr,
         return;
     }
 
-    const std::string filename = findCperFilename(num);
+    const std::string filename = findCperFilename(num, node);
     const std::string fullFilePath = RAS_DIR + filename;
 
     // Use ISO-8601 as the timestamp format
@@ -200,12 +213,23 @@ void exportToDBus(size_t num, const EFI_ERROR_TIME_STAMP& TimeStampStr,
 }
 
 void createRecord(sdbusplus::asio::object_server& objectServer,
-                  std::shared_ptr<sdbusplus::asio::connection>& systemBus)
+                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
+                  const std::string& node)
 {
     // Check if any crashdump already exists.
+    std::regex pattern;
+
     if (std::filesystem::exists(std::filesystem::path(RAS_DIR)))
     {
-        std::regex pattern(".*ras-error([[:digit:]]+).cper");
+        if (node == "1" || node == "2")
+        {
+            pattern =
+                std::regex("node" + node + ".*ras-error([[:digit:]]+).cper");
+        }
+        else
+        {
+            pattern = std::regex(".*ras-error([[:digit:]]+).cper");
+        }
         std::smatch match;
         for (const auto& p : std::filesystem::directory_iterator(
                  std::filesystem::path(RAS_DIR)))
@@ -236,16 +260,16 @@ void createRecord(sdbusplus::asio::object_server& objectServer,
             }
 
             fin.close();
-            exportToDBus(kNum, timestamp, objectServer, systemBus);
+            exportToDBus(kNum, timestamp, objectServer, systemBus, node);
         }
     }
 }
 
 void dumpProcessorError(const std::shared_ptr<FatalCperRecord>& fatalPtr,
                         uint8_t socNum, const std::unique_ptr<CpuId[]>& cpuId,
-                        uint8_t cpuCount, uint16_t numbanks)
+                        std::vector<size_t>& socIndex, uint16_t numbanks)
 {
-    for (size_t i = 0; i < cpuCount; i++)
+    for (size_t i : socIndex)
     {
         if (i == socNum)
         {
@@ -283,16 +307,17 @@ void dumpProcErrorInfoSection(
         procPtr->McaErrorInfo[i].ProcError.ValidFields =
             0b11 | (sectionCount << doubleBit) | (sectionCount << hexBit);
 
-        for (size_t i = 0; i < cpuCount; i++)
+        for (size_t rec = 0; rec < cpuCount; rec++)
         {
-            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[0] = cpuId[i].eax;
+            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[0] = cpuId[rec].eax;
             procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[doubleBit] =
-                cpuId[i].ebx;
+                cpuId[rec].ebx;
             procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[quadBit] =
-                cpuId[i].ecx;
-            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[hexBit] = cpuId[i].edx;
+                cpuId[rec].ecx;
+            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[hexBit] =
+                cpuId[rec].edx;
             procPtr->McaErrorInfo[i].ProcError.ApicId =
-                ((cpuId[i].ebx >> 24) & maxByte);
+                ((cpuId[rec].ebx >> 24) & maxByte);
         }
 
         memcpy(&procPtr->McaErrorInfo[i].ErrorInfo.ErrorType,
@@ -604,7 +629,7 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
 template <typename PtrType>
 void createFile(const std::shared_ptr<PtrType>& data,
                 const std::string_view& errorType, uint16_t sectionCount,
-                size_t& errCount)
+                size_t& errCount, const std::string& node)
 {
     static std::mutex index_file_mtx;
     std::unique_lock lock(index_file_mtx);
@@ -631,17 +656,6 @@ void createFile(const std::shared_ptr<PtrType>& data,
 
     cperFileName = getCperFilename(errCount);
 
-    for (const auto& entry : std::filesystem::directory_iterator(RAS_DIR))
-    {
-        std::string filename = entry.path().filename().string();
-        if (filename.size() >= cperFileName.size() &&
-            filename.substr(filename.size() - cperFileName.size()) ==
-                cperFileName)
-        {
-            std::filesystem::remove(entry.path());
-        }
-    }
-
     if (errorType == runtimeMcaErr)
     {
         cperFileName = "mca-runtime-" + cperFileName;
@@ -653,6 +667,22 @@ void createFile(const std::shared_ptr<PtrType>& data,
     else if (errorType == runtimePcieErr)
     {
         cperFileName = "pcie-runtime-" + cperFileName;
+    }
+
+    if (node == "1" || node == "2")
+    {
+        cperFileName = "node" + node + "-" + cperFileName;
+    }
+
+    for (const auto& entry : std::filesystem::directory_iterator(RAS_DIR))
+    {
+        std::string filename = entry.path().filename().string();
+        if (filename.size() >= cperFileName.size() &&
+            filename.substr(filename.size() - cperFileName.size()) ==
+                cperFileName)
+        {
+            std::filesystem::remove(entry.path());
+        }
     }
 
     std::string cperFilePath = RAS_DIR + cperFileName;
@@ -729,7 +759,9 @@ void createFile(const std::shared_ptr<PtrType>& data,
         errCount = (errCount % maxCperCount);
     }
 
-    file = fopen(INDEX_FILE, "w");
+    std::string indexFile = std::string(INDEX_FILE) + "/" + node;
+
+    file = fopen(indexFile.c_str(), "w");
     if (file != nullptr)
     {
         fprintf(file, "%lu", errCount);

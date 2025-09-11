@@ -28,6 +28,7 @@ namespace apml
  *  @param[in] objectServer - The D-Bus object server.
  *  @param[in] systemBus - Shared pointer to the D-Bus system bus connection.
  *  @param[in] io - Boost ASIO I/O context for asynchronous operations.
+ *  @param[in] node - host node number to determine single or multi host.
  */
 class Manager : public amd::ras::Manager
 {
@@ -41,7 +42,7 @@ class Manager : public amd::ras::Manager
 
     Manager(amd::ras::config::Manager&, sdbusplus::asio::object_server&,
             std::shared_ptr<sdbusplus::asio::connection>&,
-            boost::asio::io_context&);
+            boost::asio::io_context&, std::string&);
 
     /** @brief Perform initilization for the error monitoring.
      *

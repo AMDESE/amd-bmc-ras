@@ -27,6 +27,7 @@ struct CpuId
  * functionalities.
  *
  *  @param[in] manager - Reference to the configuration manager.
+ *  @param[in] node - host node number to determine single or multi host.
  */
 class Manager
 {
@@ -35,7 +36,7 @@ class Manager
     Manager(const Manager&) = delete;
     Manager(Manager&&) = delete;
     Manager& operator=(Manager&&) = delete;
-    Manager(amd::ras::config::Manager&);
+    Manager(amd::ras::config::Manager&, std::string&);
     ~Manager() = default;
 
     /** @brief Initializes the RAS manager class.
@@ -70,6 +71,8 @@ class Manager
     std::shared_ptr<McaRuntimeCperRecord> mcaPtr;
     std::shared_ptr<McaRuntimeCperRecord> dramPtr;
     std::shared_ptr<PcieRuntimeCperRecord> pciePtr;
+    std::string node;
+    std::vector<size_t> socIndex;
 
     /** @brief Get the CPU socket information.
      *
