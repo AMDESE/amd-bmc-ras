@@ -201,15 +201,21 @@ void triggerColdReset(const std::string* resetSignal)
     }
 }
 
-void triggerWarmReset()
+void triggerWarmReset(std::string& node)
 {
     oob_status_t ret;
     uint32_t ackResp = 0;
+    uint8_t socNum = 0;
     /* In a 2P config, it is recommended to only send this command to P0
     Hence, sending the Signal only to socket 0*/
 
+    if (node == "1" || node == "2")
+    {
+        socNum = std::stoul(node) - 1;
+    }
+
 #ifdef APML
-    ret = reset_on_sync_flood(socket0, &ackResp);
+    ret = reset_on_sync_flood(socNum, &ackResp);
 
     if (ret)
     {
@@ -217,14 +223,15 @@ void triggerWarmReset()
     }
     else
     {
-        lg2::info("Warm reset triggered");
+        lg2::info("Warm reset triggered for socket {SOC}", "SOC", socNum);
     }
 #else
     lg2::error("TODO: Warm reset pending as APML is not supported");
 #endif
 }
 
-void rasRecoveryAction(uint8_t buf, const std::string* systemRecovery,
+void rasRecoveryAction(std::string& node, uint8_t buf,
+                       const std::string* systemRecovery,
                        const std::string* resetSignal)
 {
     if (*systemRecovery == "WARM_RESET")
@@ -235,7 +242,7 @@ void rasRecoveryAction(uint8_t buf, const std::string* systemRecovery,
         }
         else
         {
-            triggerWarmReset();
+            triggerWarmReset(node);
         }
     }
     else if (*systemRecovery == "COLD_RESET")

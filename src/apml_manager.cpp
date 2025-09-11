@@ -105,8 +105,8 @@ oob_status_t readOobRegister(uint8_t info, uint32_t reg, uint8_t* value)
 Manager::Manager(amd::ras::config::Manager& manager,
                  sdbusplus::asio::object_server& objectServer,
                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
-                 boost::asio::io_context& io) :
-    amd::ras::Manager(manager), objectServer(objectServer),
+                 boost::asio::io_context& io, std::string& node) :
+    amd::ras::Manager(manager, node), objectServer(objectServer),
     systemBus(systemBus), progId(1), recordId(1), watchdogTimerCounter(0),
     io(io), apmlInitialized(false), platformInitialized(false),
     runtimeErrPollingSupported(false), p0AlertProcessed(false),
@@ -209,7 +209,7 @@ void Manager::platformInitialize()
                 (platInfo->model == whModel))
             {
                 currentHostStateMonitor();
-                for (size_t i = 0; i < cpuCount; i++)
+                for (size_t i : socIndex)
                 {
                     clearSbrmiAlertMask(i);
                 }
@@ -237,7 +237,7 @@ void Manager::platformInitialize()
     {
         apmlInitialized = true;
 
-        for (size_t i = 0; i < cpuCount; i++)
+        for (size_t i : socIndex)
         {
             clearSbrmiAlertMask(i);
         }
@@ -367,8 +367,13 @@ void Manager::init()
     // Try to copy the GPIO config file, throw exception if it fails
     try
     {
+        std::string srcPath =
+            "/usr/share/amd-bmc-ras/amd_ras_gpio_config" + node + ".json";
+        std::string destPath =
+            "/var/lib/amd-bmc-ras/amd_ras_gpio_config" + node + ".json";
+
         std::filesystem::copy_file(
-            SRC_GPIO_CONFIG_FILE, GPIO_CONFIG_FILE,
+            srcPath, destPath,
             std::filesystem::copy_options::overwrite_existing);
     }
     catch (const std::filesystem::filesystem_error& e)
@@ -500,7 +505,7 @@ void Manager::init()
         cpuId[i].ecx = 0;
         cpuId[i].edx = 0;
 
-        ret = esmi_oob_cpuid(i, coreId, &cpuId[i].eax, &cpuId[i].ebx,
+        ret = esmi_oob_cpuid(socIndex[i], coreId, &cpuId[i].eax, &cpuId[i].ebx,
                              &cpuId[i].ecx, &cpuId[i].edx);
 
         if (ret)
@@ -512,9 +517,12 @@ void Manager::init()
 
 void Manager::configure()
 {
-    amd::ras::util::cper::createRecord(objectServer, systemBus);
+    amd::ras::util::cper::createRecord(objectServer, systemBus, node);
 
-    std::ifstream jsonFile(GPIO_CONFIG_FILE);
+    std::string gpioConfigFile =
+        "/var/lib/amd-bmc-ras/amd_ras_gpio_config" + node + ".json";
+
+    std::ifstream jsonFile(gpioConfigFile);
     if (!jsonFile.is_open())
     {
         throw sdbusplus::xyz::openbmc_project::Common::File::Error::Open();
@@ -547,7 +555,7 @@ void Manager::configure()
         requestGPIOEvents(socketNames[i],
                           std::bind(&ras::apml::Manager::alertEventHandler,
                                     this, std::ref(gpioEventDescriptors[i]),
-                                    std::ref(gpioLines[i]), i),
+                                    std::ref(gpioLines[i]), socIndex[i]),
                           gpioLines[i], gpioEventDescriptors[i]);
     }
 }
@@ -735,8 +743,8 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
 
         if (p0Inst.number_of_inst != 0)
         {
-            dumpProcErrorSection(mcaPtr, 0, p0Inst, mcaErr, sectionStart,
-                                 severity, checkInfo);
+            dumpProcErrorSection(mcaPtr, socIndex[0], p0Inst, mcaErr,
+                                 sectionStart, severity, checkInfo);
 
             amd::ras::util::cper::dumpProcErrorInfoSection(
                 mcaPtr, p0Inst.number_of_inst, checkInfo, sectionStart,
@@ -746,8 +754,9 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         {
             sectionStart = sectionCount - p1Inst.number_of_inst;
 
-            dumpProcErrorSection(mcaPtr, 1, p1Inst, mcaErr, sectionStart,
-                                 severity, checkInfo);
+            dumpProcErrorSection(mcaPtr, socIndex[1], p1Inst, mcaErr,
+                                 sectionStart, severity, checkInfo);
+
             amd::ras::util::cper::dumpProcErrorInfoSection(
                 mcaPtr, p1Inst.number_of_inst, checkInfo, sectionStart,
                 cpuCount, cpuId);
@@ -763,10 +772,11 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
             mcaPtr, sectionCount, runtimeMcaErr, severity, progId);
 
         amd::ras::util::cper::createFile(mcaPtr, runtimeMcaErr, sectionCount,
-                                         errCount);
+                                         errCount, node);
 
-        amd::ras::util::cper::exportToDBus(
-            errCount - 1, mcaPtr->Header.TimeStamp, objectServer, systemBus);
+        amd::ras::util::cper::exportToDBus(errCount - 1,
+                                           mcaPtr->Header.TimeStamp,
+                                           objectServer, systemBus, node);
 
         if (mcaPtr->SectionDescriptor != nullptr)
         {
@@ -824,10 +834,11 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
             dramPtr, sectionCount, runtimeDramErr, severity, progId);
 
         amd::ras::util::cper::createFile(dramPtr, runtimeDramErr, sectionCount,
-                                         errCount);
+                                         errCount, node);
 
-        amd::ras::util::cper::exportToDBus(
-            errCount - 1, dramPtr->Header.TimeStamp, objectServer, systemBus);
+        amd::ras::util::cper::exportToDBus(errCount - 1,
+                                           dramPtr->Header.TimeStamp,
+                                           objectServer, systemBus, node);
 
         if (dramPtr->SectionDescriptor != nullptr)
         {
@@ -879,10 +890,11 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
             pciePtr, sectionCount, runtimePcieErr, severity, progId);
 
         amd::ras::util::cper::createFile(pciePtr, runtimePcieErr, sectionCount,
-                                         errCount);
+                                         errCount, node);
 
-        amd::ras::util::cper::exportToDBus(
-            errCount - 1, pciePtr->Header.TimeStamp, objectServer, systemBus);
+        amd::ras::util::cper::exportToDBus(errCount - 1,
+                                           pciePtr->Header.TimeStamp,
+                                           objectServer, systemBus, node);
 
         if (pciePtr->SectionDescriptor != nullptr)
         {
@@ -943,11 +955,12 @@ void Manager::runTimeErrorInfoCheck(uint8_t errType, uint8_t reqType)
     memset(&p0_inst, 0, sizeof(p0_inst));
     memset(&p1_inst, 0, sizeof(p1_inst));
 
-    p0_ret = runTimeErrValidityCheck(0, rt_err_category, &p0_inst);
+    p0_ret = runTimeErrValidityCheck(socIndex[0], rt_err_category, &p0_inst);
 
     if (cpuCount == 2)
     {
-        p1_ret = runTimeErrValidityCheck(1, rt_err_category, &p1_inst);
+        p1_ret =
+            runTimeErrValidityCheck(socIndex[1], rt_err_category, &p1_inst);
     }
 
     if (((p0_ret == OOB_SUCCESS) && (p0_inst.number_of_inst > 0)) ||
@@ -1041,10 +1054,10 @@ void Manager::getLastTransAddr(const std::shared_ptr<FatalCperRecord>& fatalPtr,
     }
 }
 
-inline bool retryUncoreDump(uint8_t socNum, uint16_t instanceNum,
-                     int64_t* apmlRetryCount, uncore_ift_validity_check& resp,
-                     uncore_dbg_log_dump_din& dataIn,
-                     uncore_dbg_log_dump_dout& dataOut)
+inline bool retryUncoreDump(
+    uint8_t socNum, uint16_t instanceNum, int64_t* apmlRetryCount,
+    uncore_ift_validity_check& resp, uncore_dbg_log_dump_din& dataIn,
+    uncore_dbg_log_dump_dout& dataOut)
 {
     uint16_t retryCount = *apmlRetryCount;
 
@@ -1357,7 +1370,7 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
                                      boardId, recordId);
     amd::ras::util::cper::dumpErrorDescriptor(rcd, sectionCount, fatalErr,
                                               &errorSeverity, progId);
-    amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, cpuCount,
+    amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
                                              errorCheck.df_block_instances);
     amd::ras::util::cper::dumpContext(rcd, errorCheck.df_block_instances,
                                       errorCheck.err_log_len, socNum, ppin,
@@ -1816,12 +1829,12 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             {
                 if (controlFabricError == false)
                 {
-                    amd::ras::util::cper::createFile(rcd, fatalErr, 2,
-                                                     errCount);
+                    amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount,
+                                                     node);
 
-                    amd::ras::util::cper::exportToDBus(errCount - 1,
-                                                       rcd->Header.TimeStamp,
-                                                       objectServer, systemBus);
+                    amd::ras::util::cper::exportToDBus(
+                        errCount - 1, rcd->Header.TimeStamp, objectServer,
+                        systemBus, node);
                 }
 
                 bool recoveryAction = true;
@@ -1941,7 +1954,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                     std::string* systemRecovery =
                         std::get_if<std::string>(&SystemRecoveryVal);
 
-                    amd::ras::util::rasRecoveryAction(buf, systemRecovery,
+                    amd::ras::util::rasRecoveryAction(node, buf, systemRecovery,
                                                       resetSignal);
                 }
 
@@ -1983,7 +1996,7 @@ oob_status_t Manager::setRasOobConfig(struct oob_config_d_in oob_config)
         while (*retryCount > 0)
         {
             --(*retryCount);
-            ret = set_bmc_ras_oob_config(i, oob_config);
+            ret = set_bmc_ras_oob_config(socIndex[i], oob_config);
 
             if (ret == OOB_SUCCESS || ret == OOB_MAILBOX_CMD_UNKNOWN)
             {
@@ -2272,7 +2285,7 @@ oob_status_t Manager::setRasErrThreshold(struct run_time_threshold th)
         while (*retryCount > 0)
         {
             --(*retryCount);
-            ret = set_bmc_ras_err_threshold(i, th);
+            ret = set_bmc_ras_err_threshold(socIndex[i], th);
 
             if (ret != OOB_SUCCESS)
             {

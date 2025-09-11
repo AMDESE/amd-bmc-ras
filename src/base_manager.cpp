@@ -56,6 +56,20 @@ void Manager::getCpuSocketInfo()
         throw std::runtime_error("Unable to read the CPU count");
     }
 
+    if (node == "0")
+    {
+        for (size_t i = 0; i < cpuCount; i++)
+        {
+            socIndex.push_back(i);
+        }
+    }
+    else
+    {
+        cpuCount = 1;
+        size_t socNum = std::stoul(node) - 1;
+        socIndex.push_back(socNum);
+    }
+
     file.close();
 
     cpuId = std::make_unique<CpuId[]>(cpuCount);
@@ -71,7 +85,7 @@ void Manager::getCpuSocketInfo()
     for (size_t i = 0; i < cpuCount; i++)
     {
         inventoryPath[i] = "/xyz/openbmc_project/inventory/system/processor/P" +
-                           std::to_string(i);
+                           std::to_string(socIndex[i]);
     }
 
     amd::ras::config::Manager::AttributeValue uCodeVersion =
@@ -123,12 +137,12 @@ void Manager::getCpuSocketInfo()
             }
         }
     }
-    amd::ras::util::cper::createIndexFile(errCount);
+    amd::ras::util::cper::createIndexFile(errCount, node);
 }
 
-Manager::Manager(amd::ras::config::Manager& manager) :
+Manager::Manager(amd::ras::config::Manager& manager, std::string& node) :
     errCount(0), configMgr(manager), rcd(nullptr), mcaPtr(nullptr),
-    dramPtr(nullptr), pciePtr(nullptr)
+    dramPtr(nullptr), pciePtr(nullptr), node(node)
 {}
 
 } // namespace ras
