@@ -23,7 +23,7 @@ int main(int argc, char* argv[])
     lg2::info("Start amd ras service for host : {NODE}", "NODE", node);
 
     // Setup connection to D-Bus
-    boost::asio::io_service io;
+    boost::asio::io_context io;
 
     // Create a shared connection to the system bus
     auto systemBus = std::make_shared<sdbusplus::asio::connection>(io);
