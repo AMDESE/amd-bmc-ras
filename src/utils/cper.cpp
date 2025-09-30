@@ -265,6 +265,11 @@ void createRecord(sdbusplus::asio::object_server& objectServer,
     }
 }
 
+void deleteCrashdumpInterface()
+{
+    managers.clear();
+}
+
 void dumpProcessorError(const std::shared_ptr<FatalCperRecord>& fatalPtr,
                         uint8_t socNum, const std::unique_ptr<CpuId[]>& cpuId,
                         std::vector<size_t>& socIndex, uint16_t numbanks)
