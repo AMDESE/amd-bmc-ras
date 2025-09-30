@@ -1,6 +1,6 @@
 #include "config_manager.hpp"
-#include "utils/cper.hpp"
 
+#include "utils/cper.hpp"
 #include "xyz/openbmc_project/Common/File/error.hpp"
 #include "xyz/openbmc_project/Common/error.hpp"
 
@@ -302,6 +302,33 @@ void Manager::updateConfigToDbus()
     rasConfigTable(configMap);
 
     jsonRead.close();
+}
+
+void Manager::deleteAll()
+{
+    for (const auto& entry : std::filesystem::directory_iterator(RAS_DIR))
+    {
+        std::string filename = entry.path().filename().string();
+
+        if (node == "1" || node == "2")
+        {
+            if (filename.starts_with("node" + node) &&
+                filename.starts_with("node" + node))
+            {
+                lg2::info("{FILE} deleted", "FILE", filename);
+                fs::remove(entry.path());
+            }
+        }
+        else
+        {
+            if (filename.ends_with(".cper"))
+            {
+                lg2::info("{FILE} deleted", "FILE", filename);
+                fs::remove(entry.path());
+            }
+        }
+    }
+    amd::ras::util::cper::deleteCrashdumpInterface();
 }
 
 Manager::Manager(sdbusplus::asio::object_server& objectServer,

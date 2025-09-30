@@ -76,6 +76,8 @@ void exportToDBus(size_t, const EFI_ERROR_TIME_STAMP&,
                   std::shared_ptr<sdbusplus::asio::connection>&,
                   const std::string&);
 
+void deleteCrashdumpInterface();
+
 /** @brief Creates D-Bus records for existing crashdumps.
  *
  *  @details Checks for existing crashdump files in the RAS directory, reads
