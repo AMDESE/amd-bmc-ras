@@ -1314,6 +1314,58 @@ void Manager::harvestDebugLogDump(
     }
 }
 
+void Manager::harvestBreakEvent(uint8_t socNum)
+{
+    constexpr uint16_t sectionCount = 2; // Standard section count is 2
+    uint32_t errorSeverity = 1;          // Error severity for fatal error is 1
+    uint8_t baseReg = 0x80;
+    int regCount = 8;
+    uint8_t buff;
+    oob_status_t ret;
+
+    if (rcd->SectionDescriptor == nullptr)
+    {
+        rcd->SectionDescriptor = new EFI_ERROR_SECTION_DESCRIPTOR[sectionCount];
+        std::memset(rcd->SectionDescriptor, 0,
+                    sectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR));
+    }
+
+    if (rcd->ErrorRecord == nullptr)
+    {
+        rcd->ErrorRecord = new EFI_AMD_FATAL_ERROR_DATA[sectionCount];
+        std::memset(rcd->ErrorRecord, 0,
+                    sectionCount * sizeof(EFI_AMD_FATAL_ERROR_DATA));
+    }
+
+    amd::ras::util::cper::dumpHeader(rcd, sectionCount, errorSeverity, fatalErr,
+                                     boardId, recordId);
+    amd::ras::util::cper::dumpErrorDescriptor(rcd, sectionCount, fatalErr,
+                                              &errorSeverity, progId);
+    amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex, 0);
+    amd::ras::util::cper::dumpContext(rcd, 0, 0, socNum, ppin, uCode,
+                                      crashdump);
+    memcpy(rcd->SectionDescriptor[socNum].FruString, &socNum, sizeof(socNum));
+
+    for (int offset : std::views::iota(0, regCount))
+    {
+        ret = readOobRegister(socNum, baseReg + offset, &buff);
+        if (ret != OOB_SUCCESS)
+        {
+            lg2::error("Socket {SOC}: Failed to read register: {REGISTER}\n",
+                       "SOC", socNum, "REGISTER", lg2::hex, baseReg + offset);
+            rcd->ErrorRecord[socNum].CrashDumpData[0].McaData[offset] = badData;
+            continue;
+        }
+        rcd->ErrorRecord[socNum].CrashDumpData[0].McaData[offset] = buff;
+
+        lg2::debug("Register {REG}: Read Value: {VAL}\n", "REG", lg2::hex,
+                   baseReg + offset, "VAL", lg2::hex, buff);
+    }
+
+    constexpr uint8_t crashDataSize = 32;
+    rcd->ErrorRecord[socNum].RegisterArraySize = crashDataSize;
+}
+
 void Manager::harvestMcaDataBanks(uint8_t socNum,
                                   struct ras_df_err_chk errorCheck)
 {
@@ -1604,7 +1656,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     struct ras_df_err_chk errorCheck;
     uint8_t buf;
     bool fchHangError = false;
-    bool controlFabricError = false;
     bool resetReady = false;
     bool runtimeError = false;
     bool nonMcaShutdownError = false;
@@ -1687,9 +1738,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                     "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
                     "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
 
+                harvestBreakEvent(socNum);
                 p0AlertProcessed = true;
                 p1AlertProcessed = true;
-                controlFabricError = true;
             }
             else if (buf & resetHangErr)
             {
@@ -1827,15 +1878,12 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             }
             if (resetReady == true)
             {
-                if (controlFabricError == false)
-                {
-                    amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount,
-                                                     node);
+                amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount,
+                                                 node);
 
-                    amd::ras::util::cper::exportToDBus(
-                        errCount - 1, rcd->Header.TimeStamp, objectServer,
-                        systemBus, node);
-                }
+                amd::ras::util::cper::exportToDBus(
+                    errCount - 1, rcd->Header.TimeStamp, objectServer,
+                    systemBus, node);
 
                 bool recoveryAction = true;
 
