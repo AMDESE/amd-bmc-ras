@@ -284,6 +284,21 @@ class Manager : public amd::ras::Manager
      */
     void runTimeErrorInfoCheck(uint8_t, uint8_t);
 
+    /** @brief Harvest break event data for a given socket.
+     *
+     * @details This function collects and logs register data related to
+     * a break event from a specific SoC (socket). It initializes the
+     * error record and section descriptor structures if not already
+     * allocated, and populates them with CPER-compliant data including
+     * processor error and context information. It reads a set of
+     * registers via OOB access and stores the resulting 64-bit value
+     * into the MCA data fields of the error record.
+     *
+     * @param[in] socNum - The socket number for which the break event
+     *                     data is to be harvested.
+     */
+    void harvestBreakEvent(uint8_t socNum);
+
     /** @brief Harvest MCA data banks.
      *
      * @details This function collects data from the MCA banks.
