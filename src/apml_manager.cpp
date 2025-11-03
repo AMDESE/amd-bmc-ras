@@ -47,6 +47,7 @@ constexpr size_t dramCeccErrOverflow = 16;
 constexpr size_t pcieErrOverflow = 32;
 constexpr size_t base16 = 16;
 constexpr size_t byteMask = 0xFF;
+constexpr size_t cfError = 0x6;
 
 constexpr size_t mcaPspSynd1LoCode = 80;
 constexpr size_t mcaPspSynd1HiCode = 84;
@@ -1723,124 +1724,137 @@ bool Manager::decodeInterrupt(uint8_t socNum)
         {
             lg2::error("The alert signaled is due to a RAS fatal error");
 
-            if (buf & sysMgmtCtrlErr)
+            if (buf & cfError)
             {
-                /*if RasStatus[reset_ctrl_err] is set in any of the processors,
-                  proceed to cold reset, regardless of the status of the other P
-                */
-
-                std::string rasErrMsg =
-                    "Fatal error detected in the control fabric. "
-                    "BMC may trigger a reset based on policy set. ";
-
-                sd_journal_send(
-                    "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
-                    "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                    "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
-
-                harvestBreakEvent(socNum);
-                p0AlertProcessed = true;
-                p1AlertProcessed = true;
-            }
-            else if (buf & resetHangErr)
-            {
-                std::string rasErrMsg =
-                    "System hang while resetting in syncflood."
-                    "Suggested next step is to do an additional manual "
-                    "immediate reset";
-                sd_journal_send(
-                    "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
-                    "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                    "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
-
-                fchHangError = true;
-            }
-            else if (buf & fatalError)
-            {
-                std::string rasErrMsg;
-
-                if (buf & shutdownError)
+                if (buf & sysMgmtCtrlErr)
                 {
-                    rasErrMsg =
-                        "MCA CPU shutdown error detected."
-                        "System may reset after harvesting MCA data based on policy set.";
+                    /*if RasStatus[reset_ctrl_err] is set in any of the
+                      processors, proceed to cold reset, regardless of the
+                      status of the other P
+                    */
 
-                    contextType = shutdown;
+                    std::string rasErrMsg =
+                        "Fatal error detected in the control fabric. "
+                        "BMC may trigger a reset based on policy set. ";
+
+                    sd_journal_send(
+                        "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
+                        "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
+                        "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+
+                    harvestBreakEvent(socNum);
+                    p0AlertProcessed = true;
+                    p1AlertProcessed = true;
+                }
+                else if (buf & resetHangErr)
+                {
+                    std::string rasErrMsg =
+                        "System hang while resetting in syncflood."
+                        "Suggested next step is to do an additional manual "
+                        "immediate reset";
+                    sd_journal_send(
+                        "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
+                        "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
+                        "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+
+                    fchHangError = true;
+                }
+            }
+            else
+            {
+                if (buf & fatalError)
+                {
+                    std::string rasErrMsg;
+
+                    if (buf & shutdownError)
+                    {
+                        rasErrMsg =
+                            "MCA CPU shutdown error detected."
+                            "System may reset after harvesting MCA data based on policy set.";
+
+                        contextType = shutdown;
+                    }
+                    else
+                    {
+                        rasErrMsg = "RAS FATAL Error detected. "
+                                    "System may reset after harvesting "
+                                    "MCA data based on policy set. ";
+
+                        contextType = crashdump;
+                    }
+
+                    sd_journal_send(
+                        "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
+                        "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
+                        "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+
+                    if (false == harvestMcaValidityCheck(socNum, &errorCheck))
+                    {
+                        lg2::info(
+                            "No valid mca banks found. Harvesting additional debug log ID dumps");
+                    }
+                    harvestMcaDataBanks(socNum, errorCheck);
+                }
+                else if (buf & shutdownError)
+                {
+                    std::string rasErrMsg =
+                        "Non MCA Shutdown error detected in the system";
+
+                    sd_journal_send(
+                        "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
+                        "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
+                        "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+
+                    nonMcaShutdownError = true;
                 }
                 else
                 {
-                    rasErrMsg = "RAS FATAL Error detected. "
-                                "System may reset after harvesting "
-                                "MCA data based on policy set. ";
+                    if (buf & mcaErrOverflow)
+                    {
+                        runTimeErrorInfoCheck(mcaErr, interruptMode);
 
-                    contextType = crashdump;
+                        std::string mcaErrOverflowMsg =
+                            "MCA runtime error counter overflow occured";
+
+                        sd_journal_send(
+                            "MESSAGE=%s", mcaErrOverflowMsg.c_str(),
+                            "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            mcaErrOverflowMsg.c_str(), NULL);
+
+                        runtimeError = true;
+                    }
+                    if (buf & dramCeccErrOverflow)
+                    {
+                        runTimeErrorInfoCheck(dramCeccErr, interruptMode);
+
+                        std::string dramErrOverlowMsg =
+                            "DRAM CECC runtime error counter overflow occured";
+
+                        sd_journal_send(
+                            "MESSAGE=%s", dramErrOverlowMsg.c_str(),
+                            "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            dramErrOverlowMsg.c_str(), NULL);
+
+                        runtimeError = true;
+                    }
+                    if (buf & pcieErrOverflow)
+                    {
+                        runTimeErrorInfoCheck(pcieErr, interruptMode);
+
+                        std::string pcieErrOverlowMsg =
+                            "PCIE runtime error counter overflow occured";
+
+                        sd_journal_send(
+                            "MESSAGE=%s", pcieErrOverlowMsg.c_str(),
+                            "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            pcieErrOverlowMsg.c_str(), NULL);
+
+                        runtimeError = true;
+                    }
                 }
-
-                sd_journal_send(
-                    "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
-                    "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                    "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
-
-                if (false == harvestMcaValidityCheck(socNum, &errorCheck))
-                {
-                    lg2::info(
-                        "No valid mca banks found. Harvesting additional debug log ID dumps");
-                }
-                harvestMcaDataBanks(socNum, errorCheck);
-            }
-            else if (buf & shutdownError)
-            {
-                std::string rasErrMsg =
-                    "Non MCA Shutdown error detected in the system";
-
-                sd_journal_send(
-                    "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
-                    "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                    "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
-
-                nonMcaShutdownError = true;
-            }
-            else if (buf & mcaErrOverflow)
-            {
-                runTimeErrorInfoCheck(mcaErr, interruptMode);
-
-                std::string mcaErrOverflowMsg =
-                    "MCA runtime error counter overflow occured";
-
-                sd_journal_send(
-                    "MESSAGE=%s", mcaErrOverflowMsg.c_str(), "PRIORITY=%i",
-                    LOG_ERR, "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                    "REDFISH_MESSAGE_ARGS=%s", mcaErrOverflowMsg.c_str(), NULL);
-
-                runtimeError = true;
-            }
-            else if (buf & dramCeccErrOverflow)
-            {
-                runTimeErrorInfoCheck(dramCeccErr, interruptMode);
-
-                std::string dramErrOverlowMsg =
-                    "DRAM CECC runtime error counter overflow occured";
-
-                sd_journal_send(
-                    "MESSAGE=%s", dramErrOverlowMsg.c_str(), "PRIORITY=%i",
-                    LOG_ERR, "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                    "REDFISH_MESSAGE_ARGS=%s", dramErrOverlowMsg.c_str(), NULL);
-
-                runtimeError = true;
-            }
-            else if (buf & pcieErrOverflow)
-            {
-                runTimeErrorInfoCheck(pcieErr, interruptMode);
-
-                std::string pcieErrOverlowMsg =
-                    "PCIE runtime error counter overflow occured";
-
-                sd_journal_send(
-                    "MESSAGE=%s", pcieErrOverlowMsg.c_str(), "PRIORITY=%i",
-                    LOG_ERR, "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                    "REDFISH_MESSAGE_ARGS=%s", pcieErrOverlowMsg.c_str(), NULL);
-
-                runtimeError = true;
             }
 
             if (socNum == socket0)
