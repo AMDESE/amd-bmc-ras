@@ -764,7 +764,7 @@ void createFile(const std::shared_ptr<PtrType>& data,
         errCount = (errCount % maxCperCount);
     }
 
-    std::string indexFile = std::string(INDEX_FILE) + "/" + node;
+    std::string indexFile = std::string(INDEX_FILE) + "_" + node;
 
     file = fopen(indexFile.c_str(), "w");
     if (file != nullptr)
