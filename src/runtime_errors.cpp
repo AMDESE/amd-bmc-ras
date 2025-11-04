@@ -240,7 +240,7 @@ oob_status_t PcieErrThresholdEnable()
 
 oob_status_t SetMcaOobConfig()
 {
-    oob_status_t ret;
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     struct oob_config_d_in oob_config;
 
     memset(&oob_config, 0, sizeof(oob_config));
@@ -259,7 +259,10 @@ oob_status_t SetMcaOobConfig()
             ENABLE_BIT; /*Enabled in No leak mode*/
     }
 
-    ret = BmcRasOobConfig(oob_config);
+    if ((Configuration::getMcaPollingEn() == true) || (Configuration::getDramCeccPollingEn() == true))
+    {
+        ret = BmcRasOobConfig(oob_config);
+    }
 
     return ret;
 }
