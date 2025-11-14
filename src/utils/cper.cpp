@@ -20,17 +20,16 @@ namespace cper
 {
 
 constexpr std::string_view objectPath = "/com/amd/RAS";
-constexpr size_t maxByte = 0xFF;
 constexpr size_t singleBit = 1;
 constexpr size_t doubleBit = 2;
 constexpr size_t tripleBit = 3;
-constexpr size_t quadBit = 4;
 constexpr size_t hexBit = 6;
 constexpr size_t octet = 8;
 constexpr size_t nineteen = 19;
 constexpr uint16_t hundred = 100;
 constexpr uint16_t value256 = 0x100;
 constexpr size_t maxCperCount = 10;
+constexpr size_t informational = 3;
 
 EFI_GUID gEfiEventCreatorIdGuid = {
     0x61FA3FAC,
@@ -80,6 +79,12 @@ EFI_GUID gEfiEventNotificationTypeMceGuid = {
     0x4cc5,
     {0xBA, 0x88, 0x65, 0xAB, 0xE1, 0x49, 0x13, 0xBB}};
 
+EFI_GUID gEfiAmdTraceBufferGuid = {
+    0x2327BCA9,
+    0x9490,
+    0x4696,
+    {0xAD, 0xDE, 0x4C, 0x99, 0x46, 0xB8, 0x03, 0x00}};
+
 std::map<int, std::unique_ptr<CrashdumpInterface>> managers;
 
 template void dumpHeader(const std::shared_ptr<FatalCperRecord>& data,
@@ -111,15 +116,15 @@ template void dumpErrorDescriptor(const std::shared_ptr<PcieRuntimeCperRecord>&,
 
 template void createFile(const std::shared_ptr<FatalCperRecord>&,
                          const std::string_view&, uint16_t, size_t&,
-                         const std::string&);
+                         const std::string&, const std::string&);
 
 template void createFile(const std::shared_ptr<McaRuntimeCperRecord>&,
                          const std::string_view&, uint16_t, size_t&,
-                         const std::string&);
+                         const std::string&, const std::string&);
 
 template void createFile(const std::shared_ptr<PcieRuntimeCperRecord>&,
                          const std::string_view&, uint16_t, size_t&,
-                         const std::string&);
+                         const std::string&, const std::string&);
 
 std::string findCperFilename(size_t number, const std::string& node)
 {
@@ -473,7 +478,7 @@ void dumpHeader(const std::shared_ptr<PtrType>& data, uint16_t sectionCount,
     /*Number of valid sections associated with the record*/
     data->Header.SectionCount = sectionCount;
 
-    /*0 - Non-fatal uncorrected ; 1 - Fatal ; 2 - Corrected*/
+    /*0 - Non-fatal uncorrected ; 1 - Fatal ; 2 - Corrected; 3 - Informational*/
     data->Header.ErrorSeverity = errorSeverity;
 
     /*Bit 0 = 1 -> PlatformID field contains valid info
@@ -528,6 +533,16 @@ void dumpHeader(const std::shared_ptr<PtrType>& data, uint16_t sectionCount,
         memcpy(&data->Header.NotificationType,
                &gEfiEventNotificationTypeMceGuid, sizeof(EFI_GUID));
     }
+    else if (errorType == mpxTracelog)
+    {
+        data->Header.RecordLength =
+            sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
+            (sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount) +
+            (sizeof(EFI_AMD_MP_TRACELOG_DATA) * sectionCount);
+
+        memcpy(&data->Header.NotificationType, &gEfiAmdTraceBufferGuid,
+               sizeof(EFI_GUID));
+    }
 
     /*TimeStamp when OOB controller received the event*/
     calculateTimestamp(data);
@@ -543,24 +558,39 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
     {
         if (errorType == fatalErr)
         {
-            /*offset in bytes of the corresponding section body
-              from the base of the record header*/
-            data->SectionDescriptor[i].SectionOffset =
-                sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
-                (sectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR)) +
-                (i * sizeof(EFI_AMD_FATAL_ERROR_DATA));
+            if (i < 2) // Populate data for Fatal error descriptors which is 2
+                       // by default
+            {
+                /*offset in bytes of the corresponding section body
+                  from the base of the record header*/
+                data->SectionDescriptor[i].SectionOffset =
+                    sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
+                    (sectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR)) +
+                    (i * sizeof(EFI_AMD_FATAL_ERROR_DATA));
 
-            /*The length in bytes of the section body*/
-            data->SectionDescriptor[i].SectionLength =
-                sizeof(EFI_AMD_FATAL_ERROR_DATA);
+                /*The length in bytes of the section body*/
+                data->SectionDescriptor[i].SectionLength =
+                    sizeof(EFI_AMD_FATAL_ERROR_DATA);
 
-            memcpy(&data->SectionDescriptor[i].SectionType,
-                   &gEfiAmdCrashdumpGuid, sizeof(EFI_GUID));
+                memcpy(&data->SectionDescriptor[i].SectionType,
+                       &gEfiAmdCrashdumpGuid, sizeof(EFI_GUID));
 
-            data->SectionDescriptor[i].Severity = singleBit; // 1 = Fatal
+                data->SectionDescriptor[i].Severity = singleBit; // 1 = Fatal
+            }
+            else
+            {
+                data->SectionDescriptor[i].SectionOffset =
+                    sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
+                    (sectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR)) +
+                    (2 * sizeof(EFI_AMD_FATAL_ERROR_DATA)) +
+                    ((i - 2) * sizeof(EFI_AMD_MP_TRACELOG_DATA));
 
-            data->SectionDescriptor[i].FruString[0] = 'P';
-            data->SectionDescriptor[i].FruString[1] = '0' + i;
+                data->SectionDescriptor[i].SectionLength =
+                    sizeof(EFI_AMD_MP_TRACELOG_DATA);
+
+                data->SectionDescriptor[i].Severity =
+                    informational; // 3 = informational
+            }
         }
         else if ((errorType == runtimeMcaErr) || (errorType == runtimeDramErr))
         {
@@ -634,7 +664,8 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
 template <typename PtrType>
 void createFile(const std::shared_ptr<PtrType>& data,
                 const std::string_view& errorType, uint16_t sectionCount,
-                size_t& errCount, const std::string& node)
+                size_t& errCount, const std::string& node,
+                const std::string& tbaiFileName)
 {
     static std::mutex index_file_mtx;
     std::unique_lock lock(index_file_mtx);
@@ -672,6 +703,10 @@ void createFile(const std::shared_ptr<PtrType>& data,
     else if (errorType == runtimePcieErr)
     {
         cperFileName = "pcie-runtime-" + cperFileName;
+    }
+    else if (errorType == mpxTracelog)
+    {
+        cperFileName = tbaiFileName;
     }
 
     if (node == "1" || node == "2")
@@ -728,11 +763,12 @@ void createFile(const std::shared_ptr<PtrType>& data,
                    sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount,
                    singleBit, file);
 
-            fwrite(fatalPtr->ErrorRecord,
-                   sizeof(EFI_AMD_FATAL_ERROR_DATA) * sectionCount, singleBit,
-                   file);
+            fwrite(fatalPtr->ErrorRecord, sizeof(EFI_AMD_FATAL_ERROR_DATA) * 2,
+                   singleBit, file);
 
-            // exportCrashdumpToDBus(err_count, FatalPtr->Header.TimeStamp);
+            fwrite(fatalPtr->TraceBufferRecord,
+                   sizeof(EFI_AMD_MP_TRACELOG_DATA) * (sectionCount - 2),
+                   singleBit, file);
 
             std::string rasErrMsg = "CPER file generated for fatal error";
 
@@ -751,8 +787,26 @@ void createFile(const std::shared_ptr<PtrType>& data,
                file);
         fwrite(pciePtr->PcieErrorData,
                sizeof(EFI_AMD_PCIE_ERROR_DATA) * sectionCount, singleBit, file);
-        // exportCrashdumpToDBus(err_count, PciePtr->Header.TimeStamp);
     }
+    else if (errorType == mpxTracelog)
+    {
+        if ((fatalPtr) && (file != nullptr))
+        {
+            fwrite(&fatalPtr->Header, sizeof(EFI_COMMON_ERROR_RECORD_HEADER),
+                   singleBit, file);
+
+            fwrite(fatalPtr->SectionDescriptor,
+                   sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount,
+                   singleBit, file);
+
+            fwrite(fatalPtr->TraceBufferRecord,
+                   sizeof(EFI_AMD_MP_TRACELOG_DATA) * sectionCount, singleBit,
+                   file);
+
+            lg2::info("CPER file generated for MPX tracelogs");
+        }
+    }
+
     fclose(file);
 
     errCount++;

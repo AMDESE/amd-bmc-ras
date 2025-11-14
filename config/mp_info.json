@@ -1,0 +1,106 @@
+[
+    {
+        "Name": "IOD0_MPART",
+        "Index": 0
+    },
+    {
+        "Name": "IOD0_MPASP",
+        "Index": 1
+    },
+    {
+        "Name": "IOD0_MP1",
+        "Index": 2
+    },
+    {
+        "Name": "IOD0_MPIO",
+        "Index": 3
+    },
+    {
+        "Name": "IOD0_MPRAS",
+        "Index": 4
+    },
+    {
+        "Name": "IOD0_MPM",
+        "Index": 5
+    },
+    {
+        "Name": "IOD0_MPDACC0",
+        "Index": 6
+    },
+    {
+        "Name": "IOD0_MPDACC1",
+        "Index": 7
+    },
+    {
+        "Name": "IOD0_MPDACC2",
+        "Index": 8
+    },
+    {
+        "Name": "IOD0_CCD0_MP5",
+        "Index": 9
+    },
+    {
+        "Name": "IOD0_CCD1_MP5",
+        "Index": 10
+    },
+    {
+        "Name": "IOD0_CCD2_MP5",
+        "Index": 11
+    },
+    {
+        "Name": "IOD0_CCD3_MP5",
+        "Index": 12
+    },
+    {
+        "Name": "IOD1_MPART",
+        "Index": 13
+    },
+    {
+        "Name": "IOD1_MPASP",
+        "Index": 14
+    },
+    {
+        "Name": "IOD1_MP1",
+        "Index": 15
+    },
+    {
+        "Name": "IOD1_MPIO",
+        "Index": 16
+    },
+    {
+        "Name": "IOD1_MPRAS",
+        "Index": 17
+    },
+    {
+        "Name": "IOD1_MPM",
+        "Index": 18
+    },
+    {
+        "Name": "IOD1_MPDACC0",
+        "Index": 19
+    },
+    {
+        "Name": "IOD1_MPDACC1",
+        "Index": 20
+    },
+    {
+        "Name": "IOD1_MPDACC2",
+        "Index": 21
+    },
+    {
+        "Name": "IOD1_CCD0_MP5",
+        "Index": 22
+    },
+    {
+        "Name": "IOD1_CCD1_MP5",
+        "Index": 23
+    },
+    {
+        "Name": "IOD1_CCD2_MP5",
+        "Index": 24
+    },
+    {
+        "Name": "IOD1_CCD3_MP5",
+        "Index": 25
+    }
+]

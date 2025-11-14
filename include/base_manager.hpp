@@ -3,6 +3,8 @@
 #include "config_manager.hpp"
 #include "oem_cper.hpp"
 
+#include <map>
+
 constexpr size_t socket1 = 1;
 constexpr size_t socket2 = 2;
 
@@ -71,6 +73,7 @@ class Manager
     std::shared_ptr<McaRuntimeCperRecord> mcaPtr;
     std::shared_ptr<McaRuntimeCperRecord> dramPtr;
     std::shared_ptr<PcieRuntimeCperRecord> pciePtr;
+    std::vector<std::pair<std::string, int>> mpToIndexMap;
     std::string node;
     std::vector<size_t> socIndex;
 

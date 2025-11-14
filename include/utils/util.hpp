@@ -134,6 +134,10 @@ ReturnType getProperty(sdbusplus::bus::bus&, const char*, const char*,
  */
 bool checkObjPath(std::string);
 
+void getCpuCount(size_t&, std::string&, std::vector<size_t>&);
+
+void mpTraceLogInfo(std::vector<std::pair<std::string, int>>&);
+
 } // namespace util
 } // namespace ras
 } // namespace amd

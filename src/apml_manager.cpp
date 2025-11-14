@@ -365,6 +365,8 @@ void Manager::init()
 
     getCpuSocketInfo();
 
+    amd::ras::util::mpTraceLogInfo(mpToIndexMap);
+
     // Try to copy the GPIO config file, throw exception if it fails
     try
     {
@@ -1375,6 +1377,7 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
     uint32_t buffer;
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     bool validSignatureId = false;
+    uint16_t tbSectionCount;
 
     uint32_t syndOffsetLo = 0;
     uint32_t syndOffsetHi = 0;
@@ -1403,31 +1406,80 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
         configMgr.getAttribute("ApmlRetries");
     int64_t* apmlRetryCount = std::get_if<int64_t>(&apmlRetry);
 
-    uint16_t sectionCount = 2;  // Standard section count is 2
-    uint32_t errorSeverity = 1; // Error severity for fatal error is 1
+    amd::ras::config::Manager::AttributeValue p0MpListVal =
+        configMgr.getAttribute("Soc0MPList");
+    std::vector<std::string>* p0MpList =
+        std::get_if<std::vector<std::string>>(&p0MpListVal);
+
+    amd::ras::config::Manager::AttributeValue p1MpListVal =
+        configMgr.getAttribute("Soc1MPList");
+    std::vector<std::string>* p1MpList =
+        std::get_if<std::vector<std::string>>(&p1MpListVal);
+
+    if (node == "1")
+    {
+        tbSectionCount = p0MpList->size();
+    }
+    else if (node == "2")
+    {
+        tbSectionCount = p1MpList->size();
+    }
+    else
+    {
+        tbSectionCount =
+            p0MpList->size() + (cpuCount == 2 ? p1MpList->size() : 0);
+    }
+
+    lg2::info("TB section count {TB}", "TB", tbSectionCount);
+
+    uint16_t sectionCount = 2;         // Standard section count is 2
+    fatalSectionCount =
+        sectionCount + tbSectionCount; // Standard section count is 2
+
+    uint32_t errorSeverity = 1;        // Error severity for fatal error is 1
 
     if (rcd->SectionDescriptor == nullptr)
     {
-        rcd->SectionDescriptor = new EFI_ERROR_SECTION_DESCRIPTOR[sectionCount];
+        rcd->SectionDescriptor =
+            new EFI_ERROR_SECTION_DESCRIPTOR[fatalSectionCount];
         std::memset(rcd->SectionDescriptor, 0,
-                    2 * sizeof(EFI_ERROR_SECTION_DESCRIPTOR));
+                    fatalSectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR));
     }
 
     if (rcd->ErrorRecord == nullptr)
     {
-        rcd->ErrorRecord = new EFI_AMD_FATAL_ERROR_DATA[sectionCount];
-        std::memset(rcd->ErrorRecord, 0, 2 * sizeof(EFI_AMD_FATAL_ERROR_DATA));
+        rcd->ErrorRecord = new EFI_AMD_FATAL_ERROR_DATA[2];
+        std::memset(rcd->ErrorRecord, 0,
+                    sectionCount * sizeof(EFI_AMD_FATAL_ERROR_DATA));
     }
 
-    amd::ras::util::cper::dumpHeader(rcd, sectionCount, errorSeverity, fatalErr,
-                                     boardId, recordId);
-    amd::ras::util::cper::dumpErrorDescriptor(rcd, sectionCount, fatalErr,
+    if (rcd->TraceBufferRecord == nullptr)
+    {
+        rcd->TraceBufferRecord = new EFI_AMD_MP_TRACELOG_DATA[tbSectionCount];
+        std::memset(rcd->TraceBufferRecord, 0,
+                    tbSectionCount * sizeof(EFI_AMD_MP_TRACELOG_DATA));
+    }
+
+    amd::ras::util::cper::dumpHeader(rcd, fatalSectionCount, errorSeverity,
+                                     fatalErr, boardId, recordId);
+    amd::ras::util::cper::dumpErrorDescriptor(rcd, fatalSectionCount, fatalErr,
                                               &errorSeverity, progId);
     amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
                                              errorCheck.df_block_instances);
     amd::ras::util::cper::dumpContext(rcd, errorCheck.df_block_instances,
                                       errorCheck.err_log_len, socNum, ppin,
                                       uCode, contextType);
+
+    // Call harvestMpxTraceLog based on socket
+    if ((socNum == socket0) && (node == "0" || node == "1"))
+    {
+        harvestMpxTraceLog(rcd, socNum, *p0MpList, 0);
+    }
+    else if ((socNum == socket1))
+    {
+        harvestMpxTraceLog(rcd, socNum, *p1MpList,
+                           node == "0" ? p0MpList->size() : 0);
+    }
 
     uint8_t blkId;
 
@@ -1515,6 +1567,10 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
 
             } // if (ret != OOB_SUCCESS)
 
+            lg2::info("Socket {SOCKET} : Failed to get MCA bank data "
+                      "from Bank:{N}, Offset:{OFFSET}",
+                      "SOCKET", socNum, "N", n, "OFFSET", lg2::hex, offset);
+
             rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[offset] = buffer;
 
             if (dfError.input[0] == statusOffsetLo)
@@ -1601,6 +1657,90 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
                &mcaPspSynd2Hi, copySize);
 
         n++;
+    }
+}
+
+void Manager::harvestMpxTraceLog(
+    const std::shared_ptr<FatalCperRecord>& fatalPtr, uint8_t socNum,
+    std::vector<std::string>& mpList, uint8_t baseSectionCount)
+{
+    uint8_t lutIndex;
+    uint8_t dwNum = 1; // Number of double words to be read
+    struct trace_buf_data_in dataIn = {0, 0, 0};
+    uint32_t buffer;
+    uint16_t maxOffset = 2048;
+    size_t index = 0, offset = 0;
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
+
+    for (const std::string& item : mpList)
+    {
+        auto it = std::find_if(mpToIndexMap.begin(), mpToIndexMap.end(),
+                               [&](const auto& p) { return p.first == item; });
+
+        if (it != mpToIndexMap.end())
+        {
+            std::string fruText;
+
+            lg2::info("Harvesting tracelog data for Socket : {SOC}, MP: {MP}",
+                      "SOC", socNum, "MP", item);
+
+            if (socNum == socket0)
+            {
+                fruText = "SOC_0_" + item;
+            }
+            else if (socNum == socket1)
+            {
+                fruText = "SOC_1_" + item;
+            }
+
+            size_t len = fruText.size();
+
+            memcpy(fatalPtr->SectionDescriptor[2 + baseSectionCount + index]
+                       .FruString,
+                   fruText.c_str(), len + 1);
+
+            lutIndex = it->second;
+
+            fatalPtr->SectionDescriptor[2 + baseSectionCount + index]
+                .SectionType.Data1 |= (lutIndex << 11);
+
+            fatalPtr->SectionDescriptor[2 + baseSectionCount + index]
+                .SectionType.Data2 |= 0x1022;
+
+            dataIn.entry_off = offset;
+            dataIn.lut_index = lutIndex;
+            dataIn.dw_num = dwNum;
+
+            for (offset = 0; offset < maxOffset; offset++)
+            {
+                memset(&buffer, 0, sizeof(buffer));
+                dataIn.entry_off = offset * 4;
+
+                ret = esmi_oob_tbai_read_dw(socNum, dataIn, &buffer);
+                ret = esmi_oob_tbai_read_dw(socNum, dataIn, &buffer);
+
+                if (ret != OOB_SUCCESS)
+                {
+                    lg2::error(
+                        "Socket {SOCKET} : Failed to get TBAI trace data "
+                        "from LutIndex:{LUT}, Offset:{OFFSET}",
+                        "SOCKET", socNum, "LUT", item, "OFFSET", lg2::hex,
+                        offset);
+                    continue;
+
+                    fatalPtr->TraceBufferRecord[baseSectionCount + index]
+                        .TracelogData[offset] =
+                        badData; // Write BAADDA7A pattern on error
+                }
+                else
+                {
+                    fatalPtr->TraceBufferRecord[baseSectionCount + index]
+                        .TracelogData[offset] = buffer;
+                }
+                usleep(3);
+            }
+            index++;
+        }
     }
 }
 
@@ -1892,8 +2032,8 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             }
             if (resetReady == true)
             {
-                amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount,
-                                                 node);
+                amd::ras::util::cper::createFile(
+                    rcd, fatalErr, fatalSectionCount, errCount, node);
 
                 amd::ras::util::cper::exportToDBus(
                     errCount - 1, rcd->Header.TimeStamp, objectServer,
@@ -2029,6 +2169,11 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                 {
                     delete[] rcd->ErrorRecord;
                     rcd->ErrorRecord = nullptr;
+                }
+                if (rcd->TraceBufferRecord != nullptr)
+                {
+                    delete[] rcd->TraceBufferRecord;
+                    rcd->TraceBufferRecord = nullptr;
                 }
 
                 rcd = nullptr;
