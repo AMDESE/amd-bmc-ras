@@ -73,6 +73,7 @@ class Manager : public amd::ras::Manager
     uint8_t progId;
     size_t contextType;
     uint64_t recordId;
+    uint16_t fatalSectionCount;
     size_t watchdogTimerCounter;
     boost::asio::io_context& io;
     std::vector<uint8_t> blockId;
@@ -323,6 +324,22 @@ class Manager : public amd::ras::Manager
      *
      */
     void getLastTransAddr(const std::shared_ptr<FatalCperRecord>&, uint8_t);
+
+    /** @brief Harvests MPX trace logs.
+     *
+     * @details This function collects MPX trace logs from the system
+     * when a fatal error occurs.
+     *
+     * @param[in] fatalPtr - Shared pointer to a FatalCperRecord.
+     * @param[in] socNum - The SoC number for which the trace logs are
+     * harvested.
+     * @param[out] mpList - List of MP's for which trace data is collected.
+     * @param[in] baseSectionCount - The base section count used for cper offset
+     * calculation
+     */
+
+    void harvestMpxTraceLog(const std::shared_ptr<FatalCperRecord>&, uint8_t,
+                            std::vector<std::string>&, uint8_t);
 
     /** @brief Harvests debug log ID dump data
      *

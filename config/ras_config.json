@@ -139,6 +139,24 @@
                 "Description": "Error threshold count for PCIE AER errors",
                 "Value": 1
             }
+        },
+        {
+            "Soc0MPList": {
+                "Description": "List of Socket 0 MP's where tracelogs are enabled",
+                "Value": [
+                    "IOD0_MPART",
+                    "IOD0_MPASP"
+                ]
+            }
+        },
+        {
+            "Soc1MPList": {
+                "Description": "List ofSocket 1 MP's where tracelogs are enabled",
+                "Value": [
+                    "IOD0_MPART",
+                    "IOD0_MPASP"
+                ]
+            }
         }
     ]
 }
