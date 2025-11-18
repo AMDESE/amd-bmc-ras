@@ -427,18 +427,18 @@ void dump_proc_error_section(const std::shared_ptr<T>& data, uint8_t soc_num,
                 ProcPtr->ProcErrorSection[Section]
                     .ProcContextStruct.DumpData[DumpIndex] = d_out;
 
-                if (d_in.offset == INDEX_8)
-                {
-                    mca_status_register =
-                        mca_status_register | ((uint64_t)d_out);
-                }
-                else if (d_in.offset == INDEX_12)
-                {
-                    mca_status_register =
-                        ((uint64_t)d_out << INDEX_32) | mca_status_register;
-                }
                 if (category == MCA_ERR)
                 {
+                    if (d_in.offset == INDEX_8)
+                    {
+                        mca_status_register =
+                            mca_status_register | ((uint64_t)d_out);
+                    }
+                    if (d_in.offset == INDEX_12)
+                    {
+                        mca_status_register =
+                            ((uint64_t)d_out << INDEX_32) | mca_status_register;
+                    }
                     if (d_in.offset == INDEX_40)
                     {
                         mca_ipid_lo_register = d_out;
@@ -454,6 +454,16 @@ void dump_proc_error_section(const std::shared_ptr<T>& data, uint8_t soc_num,
                 }
                 if (category == DRAM_CECC_ERR)
                 {
+                    if (d_in.offset == INDEX_12)
+                    {
+                        mca_status_register =
+                            mca_status_register | ((uint64_t)d_out);
+                    }
+                    if (d_in.offset == INDEX_16)
+                    {
+                        mca_status_register =
+                            ((uint64_t)d_out << INDEX_32) | mca_status_register;
+                    }
                     if (d_in.offset == INDEX_44)
                     {
                         mca_ipid_lo_register = d_out;
