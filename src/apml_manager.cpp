@@ -1102,8 +1102,10 @@ void Manager::harvestUncoreIftDump(
 
         if (ret == OOB_SUCCESS)
         {
-            lg2::info("Socket: {SOCKET},Debug Log ID : {ID} read successful",
-                      "ID", blockId25, "SOCKET", socNum);
+            lg2::info("Socket: {SOCKET},Debug Log ID : {ID} read successful,"
+                      "Block instance : {INST} , Err log length : {LEN}",
+                      "SOCKET", socNum, "ID", blockId25, "INST", resp.instances,
+                      "LEN", resp.bytes);
             break;
         }
 
@@ -1204,9 +1206,11 @@ void Manager::harvestDebugLogDump(
 
         if (ret == OOB_SUCCESS)
         {
-            lg2::info(
-                "Socket: {SOCKET},Debug Log ID : {DBG_ID} read successful",
-                "SOCKET", socNum, "DBG_ID", blkId);
+            lg2::info("Socket: {SOCKET},Debug Log ID : {ID} read successful,"
+                      "Block instance : {INST} , Err log length : {LEN}",
+                      "SOCKET", socNum, "ID", blkId, "INST",
+                      static_cast<unsigned short>(err_chk.df_block_instances),
+                      "LEN", static_cast<unsigned short>(err_chk.err_log_len));
             break;
         }
 
