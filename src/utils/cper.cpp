@@ -691,7 +691,6 @@ void createFile(const std::shared_ptr<PtrType>& data,
     }
 
     std::string cperFilePath = RAS_DIR + cperFileName;
-    lg2::info("Saving CPER file to {CPER}", "CPER", cperFilePath);
 
     file = fopen(cperFilePath.c_str(), "w");
 
@@ -714,7 +713,13 @@ void createFile(const std::shared_ptr<PtrType>& data,
             fwrite(procPtr->McaErrorInfo,
                    sizeof(RUNTIME_ERROR_INFO) * sectionCount, singleBit, file);
 
-            // exportCrashdumpToDBus(err_count, ProcPtr->Header.TimeStamp);
+            std::string rasErrMsg = "Generated runtime CPER file : ";
+            rasErrMsg.append(cperFilePath);
+
+            sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i",
+                            LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.AtScaleDebugConnected",
+                            "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
         }
     }
     else if (errorType == fatalErr)
@@ -732,9 +737,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
                    sizeof(EFI_AMD_FATAL_ERROR_DATA) * sectionCount, singleBit,
                    file);
 
-            // exportCrashdumpToDBus(err_count, FatalPtr->Header.TimeStamp);
-
-            std::string rasErrMsg = "CPER file generated for fatal error";
+            std::string rasErrMsg = "Generated Fatal CPER file : ";
+            rasErrMsg.append(cperFilePath);
 
             sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i",
                             LOG_ERR, "REDFISH_MESSAGE_ID=%s",
@@ -751,7 +755,14 @@ void createFile(const std::shared_ptr<PtrType>& data,
                file);
         fwrite(pciePtr->PcieErrorData,
                sizeof(EFI_AMD_PCIE_ERROR_DATA) * sectionCount, singleBit, file);
-        // exportCrashdumpToDBus(err_count, PciePtr->Header.TimeStamp);
+
+        std::string rasErrMsg = "Generated runtime CPER file : ";
+        rasErrMsg.append(cperFilePath);
+
+        sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
+                        "REDFISH_MESSAGE_ID=%s",
+                        "OpenBMC.0.1.AtScaleDebugConnected",
+                        "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
     }
     fclose(file);
 
