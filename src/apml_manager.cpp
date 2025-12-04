@@ -60,6 +60,7 @@ constexpr size_t offHi2 = 12;
 constexpr size_t copySize = 4;
 constexpr size_t crashdump = 1;
 constexpr size_t shutdown = 2;
+constexpr size_t breakEvent = 3;
 constexpr size_t index28 = 28;
 constexpr size_t blockId25 = 25;
 
@@ -1348,7 +1349,7 @@ void Manager::harvestBreakEvent(uint8_t socNum)
                                               &errorSeverity, progId);
     amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex, 0);
     amd::ras::util::cper::dumpContext(rcd, 0, 0, socNum, ppin, uCode,
-                                      crashdump);
+                                      breakEvent);
     memcpy(rcd->SectionDescriptor[socNum].FruString, &socNum, sizeof(socNum));
 
     for (int offset : std::views::iota(0, regCount))
