@@ -74,7 +74,8 @@ void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
         lg2::error("Failed to write register: {REG}", "REG", lg2::hex, reg);
         return;
     }
-    lg2::debug("Write to register {REGISTER} is successful", "REGISTER", reg);
+    lg2::debug("Write to register {REGISTER} is successful", "REGISTER",
+               lg2::hex, reg);
 }
 
 oob_status_t readOobRegister(uint8_t info, uint32_t reg, uint8_t* value)
@@ -599,7 +600,7 @@ void Manager::clearSbrmiAlertMask(uint8_t socNum)
     }
 
     lg2::debug("Write to register {REGISTER} is successful", "REGISTER",
-               sbrmiControlRegister);
+               lg2::hex, sbrmiControlRegister);
 
     for (size_t i = 0; i < sizeof(alert_status); i++)
     {
@@ -1669,7 +1670,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     if (read_sbrmi_status(socNum, &buf) == OOB_SUCCESS)
     {
         lg2::debug("Socket {SOC}: Read status register. Value: 0x{BUF}", "SOC",
-                   socNum, "BUF", buf);
+                   socNum, "BUF", lg2::hex, buf);
 
         /*Check if Alert Status bit is set and clear AlertSts*/
         if (buf & 0x1)
@@ -1722,7 +1723,8 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     // Check if APML ALERT is because of RAS
     if (read_sbrmi_ras_status(socNum, &buf) == OOB_SUCCESS)
     {
-        lg2::debug("Read RAS status register. Value: {BUF}", "BUF", buf);
+        lg2::debug("Read RAS status register. Value: {BUF}", "BUF", lg2::hex,
+                   buf);
 
         // check RAS Status Register
         if (buf & 0xFF)
