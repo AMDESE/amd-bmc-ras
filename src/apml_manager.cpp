@@ -112,8 +112,7 @@ Manager::Manager(amd::ras::config::Manager& manager,
     amd::ras::Manager(manager, node), objectServer(objectServer),
     systemBus(systemBus), progId(1), recordId(1), watchdogTimerCounter(0),
     io(io), apmlInitialized(false), platformInitialized(false),
-    runtimeErrPollingSupported(false), p0AlertProcessed(false),
-    p1AlertProcessed(false), McaErrorPollingEvent(nullptr),
+    runtimeErrPollingSupported(false), McaErrorPollingEvent(nullptr),
     DramCeccErrorPollingEvent(nullptr), PcieAerErrorPollingEvent(nullptr),
     mcaErrorHarvestMtx(), dramErrorHarvestMtx(), pcieErrorHarvestMtx()
 {}
@@ -1657,6 +1656,26 @@ bool Manager::harvestMcaValidityCheck(uint8_t info,
     return mcaValidityCheck;
 }
 
+bool Manager::checkIfCPUAlertsProcessed()
+{
+    size_t alertProcessedCount = 0;
+
+    for (size_t i = 0; i < cpuCount; i++)
+    {
+        if (cpuAlertProcessed[i] == true)
+        {
+            alertProcessedCount++;
+        }
+    }
+
+    if (alertProcessedCount == cpuCount)
+    {
+        return true;
+    }
+
+    return false;
+}
+
 bool Manager::decodeInterrupt(uint8_t socNum)
 {
     std::unique_lock lock(harvestMutex);
@@ -1666,6 +1685,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     bool resetReady = false;
     bool runtimeError = false;
     bool nonMcaShutdownError = false;
+    cpuAlertProcessed.resize(cpuCount, false);
 
     if (read_sbrmi_status(socNum, &buf) == OOB_SUCCESS)
     {
@@ -1750,8 +1770,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
 
                     harvestBreakEvent(socNum);
-                    p0AlertProcessed = true;
-                    p1AlertProcessed = true;
+                    cpuAlertProcessed.assign(cpuCount, true);
                 }
                 else if (buf & resetHangErr)
                 {
@@ -1864,15 +1883,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                 }
             }
 
-            if (socNum == socket0)
-            {
-                p0AlertProcessed = true;
-            }
-
-            if (socNum == socket1)
-            {
-                p1AlertProcessed = true;
-            }
+            cpuAlertProcessed[socNum] = true;
 
             // Clear RAS status register
             // 0x4c is a SB-RMI register acting as write to clear
@@ -1886,14 +1897,8 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             {
                 return true;
             }
-            if (cpuCount == 2)
-            {
-                if ((p0AlertProcessed == true) && (p1AlertProcessed == true))
-                {
-                    resetReady = true;
-                }
-            }
-            else
+
+            if (checkIfCPUAlertsProcessed() == true)
             {
                 resetReady = true;
             }
@@ -2040,8 +2045,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
                 rcd = nullptr;
 
-                p0AlertProcessed = false;
-                p1AlertProcessed = false;
+                cpuAlertProcessed.assign(cpuCount, false);
             }
         }
     }

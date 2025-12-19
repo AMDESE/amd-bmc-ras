@@ -79,8 +79,7 @@ class Manager : public amd::ras::Manager
     bool apmlInitialized;
     bool platformInitialized;
     bool runtimeErrPollingSupported;
-    bool p0AlertProcessed;
-    bool p1AlertProcessed;
+    std::vector<bool> cpuAlertProcessed;
     boost::asio::deadline_timer* McaErrorPollingEvent;
     boost::asio::deadline_timer* DramCeccErrorPollingEvent;
     boost::asio::deadline_timer* PcieAerErrorPollingEvent;
@@ -447,6 +446,17 @@ class Manager : public amd::ras::Manager
      *  dram_cecc_leak_rate, pcie_err_reporting_en,
      */
     oob_status_t getOobRegisters(struct oob_config_d_in*);
+
+    /** @brief Check if CPU alerts have been processed.
+     *
+     * @details This function verifies whether all CPU alerts have been
+     *          handled by the alert processing logic.
+     *
+     * @return true  If all CPU alerts have been processed successfully.
+     * @return false If there are pending CPU alerts that have not been
+     * processed.
+     */
+    bool checkIfCPUAlertsProcessed();
 };
 
 } // namespace apml
