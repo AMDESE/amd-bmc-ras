@@ -55,13 +55,6 @@ int main(int argc, char* argv[])
 #endif
 
     io.run();
-#ifdef APML
-    auto* apmlMgr = dynamic_cast<amd::ras::apml::Manager*>(errorMgr);
-    if (apmlMgr && apmlMgr->getAlertHandleMode() == "UEVENT")
-    {
-        apmlMgr->releaseUdevReSrc();
-    }
-#endif
 
     return 0;
 }
