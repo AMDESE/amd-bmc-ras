@@ -206,7 +206,8 @@ void Manager::updateConfigToDbus()
     lg2::info("PARSE CONFIGURATION");
     for (const auto& item : data["Configuration"])
     {
-        AttributeType attributeType;
+        AttributeType attributeType = sdbusplus::common::com::amd::ras::
+                     Configuration::AttributeType::Boolean;
         std::string key;
         std::string description;
         std::variant<bool, std::string, int64_t, std::vector<std::string>,
