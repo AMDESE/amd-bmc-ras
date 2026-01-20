@@ -166,14 +166,21 @@ void Manager::updateConfigToDbus()
     if (!fs::exists(configFile))
     { // Check if the config file exists
         fs::path destDir = fs::path(configFile).parent_path();
-        if (!fs::exists(destDir))
+        std::error_code ec;
+        fs::create_directories(destDir, ec);
+        if (ec)
         {
-            if (!fs::create_directories(destDir))
+            if (ec == std::errc::file_exists)
             {
-                lg2::error("Failed to create directory: {ERROR}", "ERROR",
-                           strerror(errno));
-                throw std::runtime_error(
-                    "Failed to create directory: " + destDir.string());
+                ec.clear();
+            }
+            else
+            {
+                lg2::error("Failed to create directory: {DIR}, ec={EC}", "DIR",
+                           destDir.string(), "EC", ec.message());
+                throw std::runtime_error("Failed to create directory: " +
+                                         destDir.string() + " (" +
+                                         ec.message() + ")");
             }
         }
 
