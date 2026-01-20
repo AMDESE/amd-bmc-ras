@@ -128,7 +128,7 @@ void Manager::currentHostStateMonitor()
         "interface='org.freedesktop.DBus.Properties', "
         "arg0='xyz.openbmc_project.State.Host'",
         [this](sdbusplus::message::message& message) {
-            oob_status_t ret;
+            oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
             std::string intfName;
             std::map<std::string, std::variant<std::string>> properties;
 
@@ -2347,7 +2347,7 @@ oob_status_t Manager::setPcieOobConfig()
 
 oob_status_t Manager::setRasErrThreshold(struct run_time_threshold th)
 {
-    oob_status_t ret;
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
 
     for (size_t i = 0; i < cpuCount; i++)
     {

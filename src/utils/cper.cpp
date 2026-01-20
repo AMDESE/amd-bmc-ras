@@ -748,21 +748,25 @@ void createFile(const std::shared_ptr<PtrType>& data,
     }
     else if (errorType == runtimePcieErr)
     {
-        fwrite(&pciePtr->Header, sizeof(EFI_COMMON_ERROR_RECORD_HEADER),
-               singleBit, file);
-        fwrite(pciePtr->SectionDescriptor,
-               sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount, singleBit,
-               file);
-        fwrite(pciePtr->PcieErrorData,
-               sizeof(EFI_AMD_PCIE_ERROR_DATA) * sectionCount, singleBit, file);
+        if ((pciePtr) && (file != nullptr))
+        {
+            fwrite(&pciePtr->Header, sizeof(EFI_COMMON_ERROR_RECORD_HEADER),
+                   singleBit, file);
+            fwrite(pciePtr->SectionDescriptor,
+                   sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount,
+                   singleBit, file);
+            fwrite(pciePtr->PcieErrorData,
+                   sizeof(EFI_AMD_PCIE_ERROR_DATA) * sectionCount, singleBit,
+                   file);
 
-        std::string rasErrMsg = "Generated runtime CPER file : ";
-        rasErrMsg.append(cperFilePath);
+            std::string rasErrMsg = "Generated runtime CPER file : ";
+            rasErrMsg.append(cperFilePath);
 
-        sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
-                        "REDFISH_MESSAGE_ID=%s",
-                        "OpenBMC.0.1.AtScaleDebugConnected",
-                        "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+            sd_journal_send(
+                "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
+                "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.AtScaleDebugConnected",
+                "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+        }
     }
     fclose(file);
 
