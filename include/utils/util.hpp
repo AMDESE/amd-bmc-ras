@@ -86,8 +86,10 @@ void triggerColdReset(const std::string*);
 /** @brief Initiates a warm reset.
  *
  * @details trigger warm reset using apml command.
+ *
+ * @param[in] socNum - Socket number of the processor.
  */
-void triggerWarmReset();
+void triggerWarmReset(std::string& node);
 
 /** @brief Performs a RAS recovery action.
  *
@@ -95,10 +97,12 @@ void triggerWarmReset();
  * fatal error.
  *
  *  @param[in] buf - Status buffer indicating error conditions.
+ * @param[in] socNum - Socket number of the processor.
  *  @param[in] systemRecovery - Pointer to the system recovery policy string.
  *  @param[in] resetSignal - Pointer to the reset signal string.
  */
-void rasRecoveryAction(uint8_t, const std::string*, const std::string*);
+void rasRecoveryAction(std::string&, uint8_t, const std::string*,
+                       const std::string*);
 
 /** @brief Gets value from D-Bus property.
  *

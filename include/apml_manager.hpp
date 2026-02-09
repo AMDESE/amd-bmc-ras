@@ -28,6 +28,7 @@ namespace apml
  *  @param[in] objectServer - The D-Bus object server.
  *  @param[in] systemBus - Shared pointer to the D-Bus system bus connection.
  *  @param[in] io - Boost ASIO I/O context for asynchronous operations.
+ *  @param[in] node - host node number to determine single or multi host.
  */
 class Manager : public amd::ras::Manager
 {
@@ -41,7 +42,7 @@ class Manager : public amd::ras::Manager
 
     Manager(amd::ras::config::Manager&, sdbusplus::asio::object_server&,
             std::shared_ptr<sdbusplus::asio::connection>&,
-            boost::asio::io_context&);
+            boost::asio::io_context&, std::string&);
 
     /** @brief Perform initilization for the error monitoring.
      *
@@ -78,8 +79,7 @@ class Manager : public amd::ras::Manager
     bool apmlInitialized;
     bool platformInitialized;
     bool runtimeErrPollingSupported;
-    bool p0AlertProcessed;
-    bool p1AlertProcessed;
+    std::vector<bool> cpuAlertProcessed;
     boost::asio::deadline_timer* McaErrorPollingEvent;
     boost::asio::deadline_timer* DramCeccErrorPollingEvent;
     boost::asio::deadline_timer* PcieAerErrorPollingEvent;
@@ -283,6 +283,21 @@ class Manager : public amd::ras::Manager
      */
     void runTimeErrorInfoCheck(uint8_t, uint8_t);
 
+    /** @brief Harvest break event data for a given socket.
+     *
+     * @details This function collects and logs register data related to
+     * a break event from a specific SoC (socket). It initializes the
+     * error record and section descriptor structures if not already
+     * allocated, and populates them with CPER-compliant data including
+     * processor error and context information. It reads a set of
+     * registers via OOB access and stores the resulting 64-bit value
+     * into the MCA data fields of the error record.
+     *
+     * @param[in] socNum - The socket number for which the break event
+     *                     data is to be harvested.
+     */
+    void harvestBreakEvent(uint8_t socNum);
+
     /** @brief Harvest MCA data banks.
      *
      * @details This function collects data from the MCA banks.
@@ -325,6 +340,20 @@ class Manager : public amd::ras::Manager
      */
     void harvestDebugLogDump(const std::shared_ptr<FatalCperRecord>&, uint8_t,
                              uint8_t, int64_t*, uint16_t&);
+
+    /** @brief Harvests uncore IFT dump data
+     *
+     * @details This function harvests the dump data for debug log ID 25
+     *
+     * @param[in] fatalPtr - Shared pointer to a FatalCperRecord object.
+     * @param[in] socNum - The SoC number.
+     * @param[in] apmlRetryCount - Pointer to the APML retry count.
+     * @param[out] debugLogIdOffset - Reference to the debug log ID offset.
+     *
+     */
+    void harvestUncoreIftDump(const std::shared_ptr<FatalCperRecord>& fatalPtr,
+                              uint8_t socNum, int64_t* apmlRetryCount,
+                              uint16_t& debugLogIdOffset);
 
     /** @brief Dumps the processor error section of the CPER record
      *
@@ -420,6 +449,17 @@ class Manager : public amd::ras::Manager
      *  dram_cecc_leak_rate, pcie_err_reporting_en,
      */
     oob_status_t getOobRegisters(struct oob_config_d_in*);
+
+    /** @brief Check if CPU alerts have been processed.
+     *
+     * @details This function verifies whether all CPU alerts have been
+     *          handled by the alert processing logic.
+     *
+     * @return true  If all CPU alerts have been processed successfully.
+     * @return false If there are pending CPU alerts that have not been
+     * processed.
+     */
+    bool checkIfCPUAlertsProcessed();
 };
 
 } // namespace apml

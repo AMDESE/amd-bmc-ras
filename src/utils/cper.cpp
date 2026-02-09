@@ -126,9 +126,18 @@ template void createFile(const std::shared_ptr<PcieRuntimeCperRecord>&,
                          const std::string_view&, uint16_t, size_t&,
                          const std::string&);
 
-std::string findCperFilename(size_t number)
+std::string findCperFilename(size_t number, const std::string& node)
 {
-    std::regex pattern(".*" + std::to_string(number) + "\\.cper");
+    std::regex pattern;
+    if (node == "1" || node == "2")
+    {
+        pattern = std::regex(
+            ".*" + node + ".*error" + std::to_string(number) + "\\.cper");
+    }
+    else
+    {
+        pattern = std::regex(".*" + std::to_string(number) + "\\.cper");
+    }
 
     for (const auto& entry : std::filesystem::directory_iterator(RAS_DIR))
     {
@@ -142,9 +151,9 @@ std::string findCperFilename(size_t number)
     return "";
 }
 
-void createIndexFile(size_t& errCount)
+void createIndexFile(size_t& errCount, const std::string& node)
 {
-    std::string indexFile = INDEX_FILE;
+    std::string indexFile = std::string(INDEX_FILE) + "_" + node;
     std::string rasDir = RAS_DIR;
 
     amd::ras::util::createFile(rasDir, indexFile);
@@ -166,7 +175,8 @@ void createIndexFile(size_t& errCount)
 
 void exportToDBus(size_t num, const EFI_ERROR_TIME_STAMP& TimeStampStr,
                   sdbusplus::asio::object_server& objectServer,
-                  std::shared_ptr<sdbusplus::asio::connection>& systemBus)
+                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
+                  const std::string& node)
 {
     if (num >= 10)
     {
@@ -174,7 +184,7 @@ void exportToDBus(size_t num, const EFI_ERROR_TIME_STAMP& TimeStampStr,
         return;
     }
 
-    const std::string filename = findCperFilename(num);
+    const std::string filename = findCperFilename(num, node);
     const std::string fullFilePath = RAS_DIR + filename;
 
     // Use ISO-8601 as the timestamp format
@@ -208,12 +218,23 @@ void exportToDBus(size_t num, const EFI_ERROR_TIME_STAMP& TimeStampStr,
 }
 
 void createRecord(sdbusplus::asio::object_server& objectServer,
-                  std::shared_ptr<sdbusplus::asio::connection>& systemBus)
+                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
+                  const std::string& node)
 {
     // Check if any crashdump already exists.
+    std::regex pattern;
+
     if (std::filesystem::exists(std::filesystem::path(RAS_DIR)))
     {
-        std::regex pattern(".*ras-error([[:digit:]]+).cper");
+        if (node == "1" || node == "2")
+        {
+            pattern =
+                std::regex("node" + node + ".*ras-error([[:digit:]]+).cper");
+        }
+        else
+        {
+            pattern = std::regex(".*ras-error([[:digit:]]+).cper");
+        }
         std::smatch match;
         for (const auto& p : std::filesystem::directory_iterator(
                  std::filesystem::path(RAS_DIR)))
@@ -244,16 +265,21 @@ void createRecord(sdbusplus::asio::object_server& objectServer,
             }
 
             fin.close();
-            exportToDBus(kNum, timestamp, objectServer, systemBus);
+            exportToDBus(kNum, timestamp, objectServer, systemBus, node);
         }
     }
 }
 
+void deleteCrashdumpInterface()
+{
+    managers.clear();
+}
+
 void dumpProcessorError(const std::shared_ptr<FatalCperRecord>& fatalPtr,
                         uint8_t socNum, const std::unique_ptr<CpuId[]>& cpuId,
-                        uint8_t cpuCount, uint16_t numbanks)
+                        std::vector<size_t>& socIndex, uint16_t numbanks)
 {
-    for (size_t i = 0; i < cpuCount; i++)
+    for (size_t i : socIndex)
     {
         if (i == socNum)
         {
@@ -291,16 +317,17 @@ void dumpProcErrorInfoSection(
         procPtr->McaErrorInfo[i].ProcError.ValidFields =
             0b11 | (sectionCount << doubleBit) | (sectionCount << hexBit);
 
-        for (size_t i = 0; i < cpuCount; i++)
+        for (size_t rec = 0; rec < cpuCount; rec++)
         {
-            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[0] = cpuId[i].eax;
+            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[0] = cpuId[rec].eax;
             procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[doubleBit] =
-                cpuId[i].ebx;
+                cpuId[rec].ebx;
             procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[quadBit] =
-                cpuId[i].ecx;
-            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[hexBit] = cpuId[i].edx;
+                cpuId[rec].ecx;
+            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[hexBit] =
+                cpuId[rec].edx;
             procPtr->McaErrorInfo[i].ProcError.ApicId =
-                ((cpuId[i].ebx >> 24) & maxByte);
+                ((cpuId[rec].ebx >> 24) & maxByte);
         }
 
         memcpy(&procPtr->McaErrorInfo[i].ErrorInfo.ErrorType,
@@ -326,19 +353,6 @@ void dumpContext(const std::shared_ptr<FatalCperRecord>& fatalPtr,
             singleBit; // MSR Registers
         fatalPtr->ErrorRecord[socNum].RegisterArraySize =
             numbanks * bytespermca;
-    }
-}
-
-void dumpPcieErrorInfo(const std::shared_ptr<PcieRuntimeCperRecord>& data,
-                       uint16_t sectionStart, uint16_t sectionCount)
-{
-    for (size_t i = sectionStart; i < sectionCount; i++)
-    {
-        data->PcieErrorData[i].ValidFields |=
-            1ULL | (1ULL << singleBit) | (1ULL << tripleBit) | (1ULL << 7);
-        data->PcieErrorData[i].PortType = quadBit;   // Root Port
-        data->PcieErrorData[i].Version = 0x02000000; // Major = 2, Minor = 0
-        data->PcieErrorData[i].DevBridge.VendorId = pcieVendorId;
     }
 }
 
@@ -504,7 +518,7 @@ void dumpHeader(const std::shared_ptr<PtrType>& data, uint16_t sectionCount,
         data->Header.RecordLength =
             sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
             (sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount) +
-            (sizeof(EFI_PCIE_ERROR_DATA) * sectionCount);
+            (sizeof(EFI_AMD_PCIE_ERROR_DATA) * sectionCount);
 
         memcpy(&data->Header.NotificationType,
                &gEfiEventNotificationTypePcieGuid, sizeof(EFI_GUID));
@@ -619,10 +633,10 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
             data->SectionDescriptor[i].SectionOffset =
                 sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
                 (sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount) +
-                (i * sizeof(EFI_PCIE_ERROR_DATA));
+                (i * sizeof(EFI_AMD_PCIE_ERROR_DATA));
 
             data->SectionDescriptor[i].SectionLength =
-                sizeof(EFI_PCIE_ERROR_DATA);
+                sizeof(EFI_AMD_PCIE_ERROR_DATA);
 
             data->SectionDescriptor[i].SectionType = gEfiPcieErrorSectionGuid;
 
@@ -650,7 +664,7 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
 template <typename PtrType>
 void createFile(const std::shared_ptr<PtrType>& data,
                 const std::string_view& errorType, uint16_t sectionCount,
-                size_t& errCount, const std::string& tbaiFileName)
+                size_t& errCount, const std::string& tbaiFileName, const std::string& node)
 {
     static std::mutex index_file_mtx;
     std::unique_lock lock(index_file_mtx);
@@ -677,17 +691,6 @@ void createFile(const std::shared_ptr<PtrType>& data,
 
     cperFileName = getCperFilename(errCount);
 
-    for (const auto& entry : std::filesystem::directory_iterator(RAS_DIR))
-    {
-        std::string filename = entry.path().filename().string();
-        if (filename.size() >= cperFileName.size() &&
-            filename.substr(filename.size() - cperFileName.size()) ==
-                cperFileName)
-        {
-            std::filesystem::remove(entry.path());
-        }
-    }
-
     if (errorType == runtimeMcaErr)
     {
         cperFileName = "mca-runtime-" + cperFileName;
@@ -705,8 +708,23 @@ void createFile(const std::shared_ptr<PtrType>& data,
         cperFileName = tbaiFileName;
     }
 
+    if (node == "1" || node == "2")
+    {
+        cperFileName = "node" + node + "-" + cperFileName;
+    }
+
+    for (const auto& entry : std::filesystem::directory_iterator(RAS_DIR))
+    {
+        std::string filename = entry.path().filename().string();
+        if (filename.size() >= cperFileName.size() &&
+            filename.substr(filename.size() - cperFileName.size()) ==
+                cperFileName)
+        {
+            std::filesystem::remove(entry.path());
+        }
+    }
+
     std::string cperFilePath = RAS_DIR + cperFileName;
-    lg2::info("Saving CPER file to {CPER}", "CPER", cperFilePath);
 
     file = fopen(cperFilePath.c_str(), "w");
 
@@ -729,7 +747,13 @@ void createFile(const std::shared_ptr<PtrType>& data,
             fwrite(procPtr->McaErrorInfo,
                    sizeof(RUNTIME_ERROR_INFO) * sectionCount, singleBit, file);
 
-            // exportCrashdumpToDBus(err_count, ProcPtr->Header.TimeStamp);
+            std::string rasErrMsg = "Generated runtime CPER file : ";
+            rasErrMsg.append(cperFilePath);
+
+            sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i",
+                            LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.AtScaleDebugConnected",
+                            "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
         }
     }
     else if (errorType == fatalErr)
@@ -750,9 +774,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
                    sizeof(EFI_AMD_MP_TRACELOG_DATA) * (sectionCount - 2),
                    singleBit, file);
 
-            // exportCrashdumpToDBus(err_count, FatalPtr->Header.TimeStamp);
-
-            std::string rasErrMsg = "CPER file generated for fatal error";
+            std::string rasErrMsg = "Generated Fatal CPER file : ";
+            rasErrMsg.append(cperFilePath);
 
             sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i",
                             LOG_ERR, "REDFISH_MESSAGE_ID=%s",
@@ -780,14 +803,25 @@ void createFile(const std::shared_ptr<PtrType>& data,
     }
     else if (errorType == runtimePcieErr)
     {
-        fwrite(&pciePtr->Header, sizeof(EFI_COMMON_ERROR_RECORD_HEADER),
-               singleBit, file);
-        fwrite(pciePtr->SectionDescriptor,
-               sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount, singleBit,
-               file);
-        fwrite(pciePtr->PcieErrorData,
-               sizeof(EFI_PCIE_ERROR_DATA) * sectionCount, singleBit, file);
-        // exportCrashdumpToDBus(err_count, PciePtr->Header.TimeStamp);
+        if ((pciePtr) && (file != nullptr))
+        {
+            fwrite(&pciePtr->Header, sizeof(EFI_COMMON_ERROR_RECORD_HEADER),
+                   singleBit, file);
+            fwrite(pciePtr->SectionDescriptor,
+                   sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount,
+                   singleBit, file);
+            fwrite(pciePtr->PcieErrorData,
+                   sizeof(EFI_AMD_PCIE_ERROR_DATA) * sectionCount, singleBit,
+                   file);
+
+            std::string rasErrMsg = "Generated runtime CPER file : ";
+            rasErrMsg.append(cperFilePath);
+
+            sd_journal_send(
+                "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
+                "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.AtScaleDebugConnected",
+                "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+        }
     }
     fclose(file);
 
@@ -800,7 +834,9 @@ void createFile(const std::shared_ptr<PtrType>& data,
         errCount = (errCount % maxCperCount);
     }
 
-    file = fopen(INDEX_FILE, "w");
+    std::string indexFile = std::string(INDEX_FILE) + "_" + node;
+
+    file = fopen(indexFile.c_str(), "w");
     if (file != nullptr)
     {
         fprintf(file, "%lu", errCount);

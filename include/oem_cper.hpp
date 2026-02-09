@@ -14,6 +14,7 @@ constexpr size_t length8 = 8;
 constexpr size_t length32 = 32;
 constexpr size_t length96 = 96;
 constexpr size_t traceBufferDataLen = 2048;
+constexpr size_t length91 = 91;
 
 struct CrashdumpData
 {
@@ -89,9 +90,16 @@ struct McaRuntimeCperRecord
     RUNTIME_ERROR_INFO* McaErrorInfo;
 } __attribute__((packed));
 
+struct AmdPcieErrorData
+{
+    uint32_t PcieData[length91];
+} __attribute__((packed));
+
+using EFI_AMD_PCIE_ERROR_DATA = AmdPcieErrorData;
+
 struct PcieRuntimeCperRecord
 {
     EFI_COMMON_ERROR_RECORD_HEADER Header;
     EFI_ERROR_SECTION_DESCRIPTOR* SectionDescriptor;
-    EFI_PCIE_ERROR_DATA* PcieErrorData;
+    EFI_AMD_PCIE_ERROR_DATA* PcieErrorData;
 } __attribute__((packed));

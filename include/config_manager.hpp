@@ -1,5 +1,7 @@
 #pragma once
 
+#include "xyz/openbmc_project/Collection/DeleteAll/server.hpp"
+
 #include <com/amd/RAS/Configuration/common.hpp>
 #include <com/amd/RAS/Configuration/server.hpp>
 #include <sdbusplus/asio/object_server.hpp>
@@ -16,8 +18,9 @@ namespace config
 static constexpr auto service = "com.amd.RAS";
 static constexpr auto objectPath = "/com/amd/RAS";
 
-using Configuration = sdbusplus::com::amd::RAS::server::Configuration;
-
+using ConfigIface = sdbusplus::server::object_t<
+    sdbusplus::com::amd::RAS::server::Configuration,
+    sdbusplus::xyz::openbmc_project::Collection::server::DeleteAll>;
 /**
  * @brief Manager class which adds the RAS configuration
  * parameter values to the D-Bus interface.
@@ -26,7 +29,7 @@ using Configuration = sdbusplus::com::amd::RAS::server::Configuration;
  * into the D-Bus interface and overrides the getAttribute()
  * and setAttribute() of the RAS configuration interface.
  */
-class Manager : public Configuration
+class Manager : public amd::ras::config::ConfigIface
 {
   public:
     using AttributeName = std::string;
@@ -52,9 +55,11 @@ class Manager : public Configuration
      *
      *  @param[in] objectServer  - object server
      *  @param[in] systemBus - bus connection
+     *  @param[in] node - host node number to determine single or multi host.
      */
     Manager(sdbusplus::asio::object_server& objectServer,
-            std::shared_ptr<sdbusplus::asio::connection>& systemBus);
+            std::shared_ptr<sdbusplus::asio::connection>& systemBus,
+            std::string& node);
 
     /** @brief Updates the rasConfigTable with the user input.
      *
@@ -91,9 +96,14 @@ class Manager : public Configuration
      */
     void updateConfigToDbus();
 
+    /** @brief  Erase all entries
+     */
+    void deleteAll() override;
+
   private:
     sdbusplus::asio::object_server& objServer;
     std::shared_ptr<sdbusplus::asio::connection>& systemBus;
+    std::string node;
 };
 
 } // namespace config

@@ -51,11 +51,12 @@ std::string findCperFilename(size_t);
  *
  *  @param[out] errCount - Reference to a variable where the error count will be
  * stored.
+ *  @param[in] node - host node number to determine single or multi host.
  *
  *  @throw std::runtime_error if the file cannot be read or the error count
  * cannot be extracted.
  */
-void createIndexFile(size_t&);
+void createIndexFile(size_t&, const std::string&);
 
 /** @brief Exports crashdump data to D-Bus.
  *
@@ -68,13 +69,17 @@ void createIndexFile(size_t&);
  *  @param[in] TimeStampStr - The timestamp structure for the crashdump.
  *  @param[in] objectServer - The D-Bus object server.
  *  @param[in] systemBus - The D-Bus system bus connection.
+ *  @param[in] node - host node number to determine single or multi host.
  *
  *  @throw std::runtime_error if the file cannot be read or the error count
  * cannot be extracted.
  */
 void exportToDBus(size_t, const EFI_ERROR_TIME_STAMP&,
                   sdbusplus::asio::object_server&,
-                  std::shared_ptr<sdbusplus::asio::connection>&);
+                  std::shared_ptr<sdbusplus::asio::connection>&,
+                  const std::string&);
+
+void deleteCrashdumpInterface();
 
 /** @brief Creates D-Bus records for existing crashdumps.
  *
@@ -83,9 +88,11 @@ void exportToDBus(size_t, const EFI_ERROR_TIME_STAMP&,
  *
  *  @param[in] objectServer - The D-Bus object server.
  *  @param[in] systemBus - The D-Bus system bus connection.
+ *  @param[in] node - host node number to determine single or multi host.
  */
 void createRecord(sdbusplus::asio::object_server& objectServer,
-                  std::shared_ptr<sdbusplus::asio::connection>& systemBus);
+                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
+                  const std::string&);
 
 /** @brief Calculates and sets the current timestamp in the provided data
  * structure.
@@ -140,7 +147,8 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>&, uint16_t,
  *  @param[in] cpuCount - Number of CPUs.
  */
 void dumpProcessorError(const std::shared_ptr<FatalCperRecord>&, uint8_t,
-                        const std::unique_ptr<CpuId[]>&, uint8_t, uint16_t);
+                        const std::unique_ptr<CpuId[]>&, std::vector<size_t>&,
+                        uint16_t);
 
 /** @brief Dumps processor error information into the MCA runtime CPER record.
  *
@@ -176,18 +184,6 @@ void dumpContext(const std::shared_ptr<FatalCperRecord>&, uint16_t numbanks,
                  const std::unique_ptr<uint64_t[]>&,
                  const std::unique_ptr<uint32_t[]>&);
 
-/** @brief Dumps PCIe error information into the PCIe runtime CPER record.
- *
- *  @details Populates the PCIe runtime CPER record with error information,
- * including Port type, Version and vendor ID.
- *
- *  @param[in] data - Shared pointer to the PCIe runtime CPER record.
- *  @param[in] sectionStart - Start of the section.
- *  @param[in] sectionCount - Number of sections.
- */
-void dumpPcieErrorInfo(const std::shared_ptr<PcieRuntimeCperRecord>& data,
-                       uint16_t sectionStart, uint16_t sectionCount);
-
 /** @brief Creates a CPER file based on the error type and section count.
  *
  *  @details Removes existing CPER files in the RAS directory, sets the filename
@@ -201,7 +197,8 @@ void dumpPcieErrorInfo(const std::shared_ptr<PcieRuntimeCperRecord>& data,
  */
 template <typename T>
 void createFile(const std::shared_ptr<T>&, const std::string_view&, uint16_t,
-                size_t&, const std::string& tbaiFileName = "");
+                size_t&, const std::string& tbaiFileName = "",
+                const std::string&);
 
 /** @brief Checks if the signature ID matches the configuration list.
  *
