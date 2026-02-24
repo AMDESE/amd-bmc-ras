@@ -298,8 +298,6 @@ void Manager::updateConfigToDbus()
             {
                 lg2::debug(
                     "Unsupported attribute type. Adding default attribute type as boolean");
-                attributeType = sdbusplus::common::com::amd::ras::
-                    Configuration::AttributeType::Boolean;
             }
         }
 
