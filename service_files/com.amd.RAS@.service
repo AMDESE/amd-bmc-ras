@@ -6,6 +6,7 @@ ConditionPathExists=/etc/amd/hosts.d/host%i.conf
 
 [Service]
 Restart=always
+ExecStartPre=mkdir -p /var/lib/amd-bmc-ras
 ExecStart=/usr/bin/amd-ras-manager %i
 
 [Install]
