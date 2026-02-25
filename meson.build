@@ -92,11 +92,23 @@ install_data(
     [
         join_paths(meson.current_source_dir(), 'config', 'ras_config.json'),
         join_paths(meson.current_source_dir(), 'config', 'platform_default.json'),
-        join_paths(meson.current_source_dir(), 'config', 'amd_ras_gpio_config0.json'),
-        join_paths(meson.current_source_dir(), 'config', 'amd_ras_gpio_config1.json'),
-        join_paths(meson.current_source_dir(), 'config', 'amd_ras_gpio_config2.json'),
+        join_paths(
+            meson.current_source_dir(),
+            'config',
+            'amd_ras_gpio_config0.json',
+        ),
+        join_paths(
+            meson.current_source_dir(),
+            'config',
+            'amd_ras_gpio_config1.json',
+        ),
+        join_paths(
+            meson.current_source_dir(),
+            'config',
+            'amd_ras_gpio_config2.json',
+        ),
     ],
-    install_dir: ras_config_dir
+    install_dir: ras_config_dir,
 )
 
 systemd = dependency('systemd')
