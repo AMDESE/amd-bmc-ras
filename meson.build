@@ -25,7 +25,6 @@ cpp_args = [
 
 libdir = meson.current_source_dir() + './lib/'
 cpp = meson.get_compiler('cpp')
-apml_dep = cpp.find_library('apml64', dirs: libdir)
 
 boost_args = [
     '-DBOOST_ALL_NO_LIB',
@@ -48,7 +47,13 @@ deps = [
 
 apml = get_option('apml-interface')
 if apml
+    apml_dep = cpp.find_library('apml64', dirs: libdir)
     add_project_arguments('-DAPML', language: 'cpp')
+
+    apml_nda = get_option('apml-nda')
+    if apml_nda
+        add_project_arguments('-DAPML_NDA', language: 'cpp')
+    endif
 endif
 
 pldm = get_option('pldm-interface')
@@ -56,10 +61,6 @@ if pldm
     add_project_arguments('-DPLDM', language: 'cpp')
 endif
 
-apml_nda = get_option('apml-nda')
-if apml_nda
-    add_project_arguments('-DAPML_NDA', language: 'cpp')
-endif
 
 sources = [
     'src/config_manager.cpp',
