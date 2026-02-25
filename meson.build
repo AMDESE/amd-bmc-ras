@@ -4,6 +4,7 @@ project(
     default_options: ['warning_level=3', 'werror=true', 'cpp_std=c++23'],
     license: 'Apache-2.0',
     version: '1.0',
+    meson_version: '>=1.1.1',
 )
 
 config_file = get_option('config_file')
@@ -25,7 +26,6 @@ cpp_args = [
 
 libdir = meson.current_source_dir() + './lib/'
 cpp = meson.get_compiler('cpp')
-apml_dep = cpp.find_library('apml64', dirs: libdir)
 
 boost_args = [
     '-DBOOST_ALL_NO_LIB',
@@ -48,7 +48,13 @@ deps = [
 
 apml = get_option('apml-interface')
 if apml
+    apml_dep = cpp.find_library('apml64', dirs: libdir)
     add_project_arguments('-DAPML', language: 'cpp')
+
+    apml_nda = get_option('apml-nda')
+    if apml_nda
+        add_project_arguments('-DAPML_NDA', language: 'cpp')
+    endif
 endif
 
 pldm = get_option('pldm-interface')
@@ -56,10 +62,6 @@ if pldm
     add_project_arguments('-DPLDM', language: 'cpp')
 endif
 
-apml_nda = get_option('apml-nda')
-if apml_nda
-    add_project_arguments('-DAPML_NDA', language: 'cpp')
-endif
 
 sources = [
     'src/config_manager.cpp',
@@ -92,16 +94,28 @@ install_data(
     [
         join_paths(meson.current_source_dir(), 'config', 'ras_config.json'),
         join_paths(meson.current_source_dir(), 'config', 'platform_default.json'),
-        join_paths(meson.current_source_dir(), 'config', 'amd_ras_gpio_config0.json'),
-        join_paths(meson.current_source_dir(), 'config', 'amd_ras_gpio_config1.json'),
-        join_paths(meson.current_source_dir(), 'config', 'amd_ras_gpio_config2.json'),
+        join_paths(
+            meson.current_source_dir(),
+            'config',
+            'amd_ras_gpio_config0.json',
+        ),
+        join_paths(
+            meson.current_source_dir(),
+            'config',
+            'amd_ras_gpio_config1.json',
+        ),
+        join_paths(
+            meson.current_source_dir(),
+            'config',
+            'amd_ras_gpio_config2.json',
+        ),
     ],
-    install_dir: ras_config_dir
+    install_dir: ras_config_dir,
 )
 
 systemd = dependency('systemd')
 
 install_data(
     ['service_files/com.amd.RAS@.service'],
-    install_dir: systemd.get_pkgconfig_variable('systemdsystemunitdir'),
+    install_dir: systemd.get_variable('systemd_system_unit_dir'),
 )

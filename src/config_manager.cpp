@@ -178,9 +178,9 @@ void Manager::updateConfigToDbus()
             {
                 lg2::error("Failed to create directory: {DIR}, ec={EC}", "DIR",
                            destDir.string(), "EC", ec.message());
-                throw std::runtime_error("Failed to create directory: " +
-                                         destDir.string() + " (" +
-                                         ec.message() + ")");
+                throw std::runtime_error(
+                    "Failed to create directory: " + destDir.string() + " (" +
+                    ec.message() + ")");
             }
         }
 
@@ -214,7 +214,7 @@ void Manager::updateConfigToDbus()
     for (const auto& item : data["Configuration"])
     {
         AttributeType attributeType = sdbusplus::common::com::amd::ras::
-                     Configuration::AttributeType::Boolean;
+            Configuration::AttributeType::Boolean;
         std::string key;
         std::string description;
         std::variant<bool, std::string, int64_t, std::vector<std::string>,

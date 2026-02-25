@@ -762,10 +762,10 @@ void createFile(const std::shared_ptr<PtrType>& data,
             std::string rasErrMsg = "Generated runtime CPER file : ";
             rasErrMsg.append(cperFilePath);
 
-            sd_journal_send(
-                "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
-                "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.AtScaleDebugConnected",
-                "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+            sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i",
+                            LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.AtScaleDebugConnected",
+                            "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
         }
     }
     fclose(file);

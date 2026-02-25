@@ -1,18 +1,6 @@
 {
-  "CpuCount": 1,
-  "Model": "0x50",
-  "FamilyID": "0x1A",
-  "DebugLogID": [
-    1,
-    2,
-    3,
-    23,
-    24,
-    25,
-    33,
-    36,
-    37,
-    38,
-    40
-  ]
+    "CpuCount": 1,
+    "Model": "0x50",
+    "FamilyID": "0x1A",
+    "DebugLogID": [1, 2, 3, 23, 24, 25, 33, 36, 37, 38, 40]
 }
