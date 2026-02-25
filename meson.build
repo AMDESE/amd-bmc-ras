@@ -4,6 +4,7 @@ project(
     default_options: ['warning_level=3', 'werror=true', 'cpp_std=c++23'],
     license: 'Apache-2.0',
     version: '1.0',
+    meson_version: '>=1.1.1',
 )
 
 config_file = get_option('config_file')
@@ -116,5 +117,5 @@ systemd = dependency('systemd')
 
 install_data(
     ['service_files/com.amd.RAS@.service'],
-    install_dir: systemd.get_pkgconfig_variable('systemdsystemunitdir'),
+    install_dir: systemd.get_variable('systemd_system_unit_dir'),
 )
