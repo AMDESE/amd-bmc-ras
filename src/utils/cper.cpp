@@ -8,6 +8,7 @@
 #include <phosphor-logging/lg2.hpp>
 #include <phosphor-logging/log.hpp>
 
+#include <filesystem>
 #include <regex>
 
 namespace amd
@@ -79,6 +80,8 @@ EFI_GUID gEfiEventNotificationTypeMceGuid = {
     0x919C,
     0x4cc5,
     {0xBA, 0x88, 0x65, 0xAB, 0xE1, 0x49, 0x13, 0xBB}};
+
+std::mutex indexFileMtx;
 
 std::map<int, std::unique_ptr<CrashdumpInterface>> managers;
 
@@ -631,14 +634,38 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
     }
 }
 
+void updateIndexFile(size_t& errCount, const std::string& node)
+{
+    errCount++;
+
+    if (errCount >= maxCperCount)
+    {
+        /*The maximum number of error files supported is 10.
+          The counter will be rotated once it reaches max count*/
+        errCount = (errCount % maxCperCount);
+    }
+
+    // Lock the critical section (RAII)
+    std::scoped_lock lk(indexFileMtx);
+
+    // Build path
+    const std::filesystem::path indexPath = std::filesystem::path(INDEX_FILE) +=
+        "_" + std::string(node);
+
+    // Overwrite the file with the current count
+    std::ofstream out(indexPath, std::ios::trunc);
+    if (!out)
+    {
+        return;
+    }
+    out << errCount;
+}
+
 template <typename PtrType>
 void createFile(const std::shared_ptr<PtrType>& data,
                 const std::string_view& errorType, uint16_t sectionCount,
                 size_t& errCount, const std::string& node)
 {
-    static std::mutex index_file_mtx;
-    std::unique_lock lock(index_file_mtx);
-
     std::string cperFileName;
     FILE* file;
 
@@ -769,26 +796,6 @@ void createFile(const std::shared_ptr<PtrType>& data,
         }
     }
     fclose(file);
-
-    errCount++;
-
-    if (errCount >= maxCperCount)
-    {
-        /*The maximum number of error files supported is 10.
-          The counter will be rotated once it reaches max count*/
-        errCount = (errCount % maxCperCount);
-    }
-
-    std::string indexFile = std::string(INDEX_FILE) + "_" + node;
-
-    file = fopen(indexFile.c_str(), "w");
-    if (file != nullptr)
-    {
-        fprintf(file, "%lu", errCount);
-        fclose(file);
-    }
-
-    lock.unlock();
 }
 
 } // namespace cper

@@ -55,6 +55,18 @@ std::string findCperFilename(size_t);
  */
 void createIndexFile(size_t&, const std::string&);
 
+/** @brief Updates the index file with the incremented error count.
+ *
+ *  @details Increments the error count and wraps it around when it reaches
+ * the maximum CPER count. Writes the updated error count to the index file
+ * in a thread-safe manner using a mutex lock.
+ *
+ *  @param[in,out] errCount - Reference to the error count to be incremented
+ * and written to the index file.
+ *  @param[in] node - host node number to determine single or multi host.
+ */
+void updateIndexFile(size_t& errCount, const std::string& node);
+
 /** @brief Exports crashdump data to D-Bus.
  *
  *  @details Creates a D-Bus instance for crashdump data using the provided

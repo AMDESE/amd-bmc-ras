@@ -883,9 +883,9 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         amd::ras::util::cper::createFile(mcaPtr, runtimeMcaErr, sectionCount,
                                          errCount, node);
 
-        amd::ras::util::cper::exportToDBus(errCount - 1,
-                                           mcaPtr->Header.TimeStamp,
+        amd::ras::util::cper::exportToDBus(errCount, mcaPtr->Header.TimeStamp,
                                            objectServer, systemBus, node);
+        amd::ras::util::cper::updateIndexFile(errCount, node);
 
         if (mcaPtr->SectionDescriptor != nullptr)
         {
@@ -945,9 +945,9 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         amd::ras::util::cper::createFile(dramPtr, runtimeDramErr, sectionCount,
                                          errCount, node);
 
-        amd::ras::util::cper::exportToDBus(errCount - 1,
-                                           dramPtr->Header.TimeStamp,
+        amd::ras::util::cper::exportToDBus(errCount, dramPtr->Header.TimeStamp,
                                            objectServer, systemBus, node);
+        amd::ras::util::cper::updateIndexFile(errCount, node);
 
         if (dramPtr->SectionDescriptor != nullptr)
         {
@@ -1001,9 +1001,9 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         amd::ras::util::cper::createFile(pciePtr, runtimePcieErr, sectionCount,
                                          errCount, node);
 
-        amd::ras::util::cper::exportToDBus(errCount - 1,
-                                           pciePtr->Header.TimeStamp,
+        amd::ras::util::cper::exportToDBus(errCount, pciePtr->Header.TimeStamp,
                                            objectServer, systemBus, node);
+        amd::ras::util::cper::updateIndexFile(errCount, node);
 
         if (pciePtr->SectionDescriptor != nullptr)
         {
@@ -1945,8 +1945,9 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
     {
         amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount, node);
 
-        amd::ras::util::cper::exportToDBus(errCount - 1, rcd->Header.TimeStamp,
+        amd::ras::util::cper::exportToDBus(errCount, rcd->Header.TimeStamp,
                                            objectServer, systemBus, node);
+        amd::ras::util::cper::updateIndexFile(errCount, node);
 
         bool recoveryAction = true;
 
@@ -2309,8 +2310,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                                                  node);
 
                 amd::ras::util::cper::exportToDBus(
-                    errCount - 1, rcd->Header.TimeStamp, objectServer,
-                    systemBus, node);
+                    errCount, rcd->Header.TimeStamp, objectServer, systemBus,
+                    node);
+                amd::ras::util::cper::updateIndexFile(errCount, node);
 
                 bool recoveryAction = true;
 
