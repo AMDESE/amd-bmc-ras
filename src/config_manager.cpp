@@ -178,9 +178,9 @@ void Manager::updateConfigToDbus()
             {
                 lg2::error("Failed to create directory: {DIR}, ec={EC}", "DIR",
                            destDir.string(), "EC", ec.message());
-                throw std::runtime_error("Failed to create directory: " +
-                                         destDir.string() + " (" +
-                                         ec.message() + ")");
+                throw std::runtime_error(
+                    "Failed to create directory: " + destDir.string() + " (" +
+                    ec.message() + ")");
             }
         }
 
@@ -214,7 +214,7 @@ void Manager::updateConfigToDbus()
     for (const auto& item : data["Configuration"])
     {
         AttributeType attributeType = sdbusplus::common::com::amd::ras::
-                     Configuration::AttributeType::Boolean;
+            Configuration::AttributeType::Boolean;
         std::string key;
         std::string description;
         std::variant<bool, std::string, int64_t, std::vector<std::string>,
@@ -337,13 +337,177 @@ void Manager::deleteAll()
     amd::ras::util::cper::deleteCrashdumpInterface();
 }
 
+uint64_t Manager::getThresholdCount(const std::string& thresholdEnKey,
+                                    const std::string& thresholdCntKey)
+{
+    const auto configMap = rasConfigTable();
+
+    // Check if thresholding is enabled
+    auto enIt = configMap.find(thresholdEnKey);
+    if (enIt != configMap.end())
+    {
+        const auto& enValue = std::get<2>(enIt->second);
+        if (std::holds_alternative<bool>(enValue) && std::get<bool>(enValue))
+        {
+            // Threshold enabled, return the configured count
+            auto cntIt = configMap.find(thresholdCntKey);
+            if (cntIt != configMap.end())
+            {
+                const auto& cntValue = std::get<2>(cntIt->second);
+                if (std::holds_alternative<int64_t>(cntValue))
+                {
+                    auto count = std::get<int64_t>(cntValue);
+                    return (count > 0) ? static_cast<uint64_t>(count) : 1;
+                }
+            }
+        }
+    }
+
+    return 1;
+}
+
+void Manager::loadErrorCounts()
+{
+    std::ifstream file(errorCountFile);
+    if (file.is_open())
+    {
+        try
+        {
+            nlohmann::json data = nlohmann::json::parse(file);
+            for (size_t i = 0; i < maxErrorIndex; ++i)
+            {
+                p0CorrectableCPUErrors[i] =
+                    data["p0CorrectableCPUErrors"][i].get<uint64_t>();
+                p0NoncorrectableCPUErrors[i] =
+                    data["p0NoncorrectableCPUErrors"][i].get<uint64_t>();
+                p1CorrectableCPUErrors[i] =
+                    data["p1CorrectableCPUErrors"][i].get<uint64_t>();
+                p1NoncorrectableCPUErrors[i] =
+                    data["p1NoncorrectableCPUErrors"][i].get<uint64_t>();
+            }
+            p0CorrectableOtherErrors =
+                data["p0CorrectableOtherErrors"].get<uint64_t>();
+            p0NoncorrectableOtherErrors =
+                data["p0NoncorrectableOtherErrors"].get<uint64_t>();
+            p1CorrectableOtherErrors =
+                data["p1CorrectableOtherErrors"].get<uint64_t>();
+            p1NoncorrectableOtherErrors =
+                data["p1NoncorrectableOtherErrors"].get<uint64_t>();
+            lg2::info("Error counts loaded from {FILE}", "FILE",
+                      errorCountFile);
+            updateErrorCountDbus();
+        }
+        catch (const nlohmann::json::exception& e)
+        {
+            lg2::error("Failed to parse {FILE}: {ERR}", "FILE", errorCountFile,
+                       "ERR", e.what());
+            saveErrorCounts();
+        }
+    }
+    else
+    {
+        lg2::info("{FILE} not found, creating with defaults", "FILE",
+                  errorCountFile);
+        saveErrorCounts();
+    }
+}
+
+void Manager::saveErrorCounts()
+{
+    std::filesystem::create_directories(
+        std::filesystem::path(errorCountFile).parent_path());
+
+    nlohmann::json data;
+    data["p0CorrectableCPUErrors"] = p0CorrectableCPUErrors;
+    data["p0NoncorrectableCPUErrors"] = p0NoncorrectableCPUErrors;
+    data["p0CorrectableOtherErrors"] = p0CorrectableOtherErrors;
+    data["p0NoncorrectableOtherErrors"] = p0NoncorrectableOtherErrors;
+    data["p1CorrectableCPUErrors"] = p1CorrectableCPUErrors;
+    data["p1NoncorrectableCPUErrors"] = p1NoncorrectableCPUErrors;
+    data["p1CorrectableOtherErrors"] = p1CorrectableOtherErrors;
+    data["p1NoncorrectableOtherErrors"] = p1NoncorrectableOtherErrors;
+
+    std::ofstream file(errorCountFile);
+    if (!file.is_open())
+    {
+        lg2::error("Failed to open {FILE} for writing", "FILE", errorCountFile);
+        return;
+    }
+    file << data.dump(4);
+    updateErrorCountDbus();
+}
+
+void Manager::updateErrorCountDbus()
+{
+    if (!errorCountIface)
+    {
+        return;
+    }
+
+    errorCountIface->set_property(
+        "P0CorrectableCPUErrors",
+        std::vector<uint64_t>(p0CorrectableCPUErrors.begin(),
+                              p0CorrectableCPUErrors.end()));
+    errorCountIface->set_property(
+        "P0NoncorrectableCPUErrors",
+        std::vector<uint64_t>(p0NoncorrectableCPUErrors.begin(),
+                              p0NoncorrectableCPUErrors.end()));
+    errorCountIface->set_property("P0CorrectableOtherErrors",
+                                  p0CorrectableOtherErrors);
+    errorCountIface->set_property("P0NoncorrectableOtherErrors",
+                                  p0NoncorrectableOtherErrors);
+    errorCountIface->set_property(
+        "P1CorrectableCPUErrors",
+        std::vector<uint64_t>(p1CorrectableCPUErrors.begin(),
+                              p1CorrectableCPUErrors.end()));
+    errorCountIface->set_property(
+        "P1NoncorrectableCPUErrors",
+        std::vector<uint64_t>(p1NoncorrectableCPUErrors.begin(),
+                              p1NoncorrectableCPUErrors.end()));
+    errorCountIface->set_property("P1CorrectableOtherErrors",
+                                  p1CorrectableOtherErrors);
+    errorCountIface->set_property("P1NoncorrectableOtherErrors",
+                                  p1NoncorrectableOtherErrors);
+}
+
 Manager::Manager(sdbusplus::asio::object_server& objectServer,
                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
                  std::string& node) :
     amd::ras::config::ConfigIface(*systemBus, objectPath),
-    objServer(objectServer), systemBus(systemBus), node(node)
+    objServer(objectServer), systemBus(systemBus), node(node),
+    errorCountFile("/var/lib/amd-bmc-ras/error_count" + node + ".json")
 {
     updateConfigToDbus();
+    loadErrorCounts();
+
+    errorCountIface =
+        objServer.add_interface(errorCountPath, errorCountInterface);
+
+    std::vector<uint64_t> p0CorCPU(p0CorrectableCPUErrors.begin(),
+                                   p0CorrectableCPUErrors.end());
+    std::vector<uint64_t> p0NoncorCPU(p0NoncorrectableCPUErrors.begin(),
+                                      p0NoncorrectableCPUErrors.end());
+    std::vector<uint64_t> p1CorCPU(p1CorrectableCPUErrors.begin(),
+                                   p1CorrectableCPUErrors.end());
+    std::vector<uint64_t> p1NoncorCPU(p1NoncorrectableCPUErrors.begin(),
+                                      p1NoncorrectableCPUErrors.end());
+
+    errorCountIface->register_property("P0CorrectableCPUErrors", p0CorCPU);
+    errorCountIface->register_property("P0NoncorrectableCPUErrors",
+                                       p0NoncorCPU);
+    errorCountIface->register_property("P0CorrectableOtherErrors",
+                                       p0CorrectableOtherErrors);
+    errorCountIface->register_property("P0NoncorrectableOtherErrors",
+                                       p0NoncorrectableOtherErrors);
+    errorCountIface->register_property("P1CorrectableCPUErrors", p1CorCPU);
+    errorCountIface->register_property("P1NoncorrectableCPUErrors",
+                                       p1NoncorCPU);
+    errorCountIface->register_property("P1CorrectableOtherErrors",
+                                       p1CorrectableOtherErrors);
+    errorCountIface->register_property("P1NoncorrectableOtherErrors",
+                                       p1NoncorrectableOtherErrors);
+
+    errorCountIface->initialize();
 }
 
 } // namespace config

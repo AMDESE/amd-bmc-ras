@@ -1822,6 +1822,11 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
 
             harvestBreakEvent(socNum);
             cpuAlertProcessed.assign(cpuCount, true);
+            // TODO: Get the core number on which the error happened and update
+            // the error count
+            configMgr.incrementNoncorrectableCPUError(socNum, 0);
+            configMgr.updateErrorCountDbus();
+            configMgr.saveErrorCounts();
         }
         else if (src & resetHangErr)
         {
@@ -1835,6 +1840,9 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                             rasErrMsg.c_str(), NULL);
 
             fchHangError = true;
+            configMgr.incrementNoncorrectableOtherError(socNum);
+            configMgr.updateErrorCountDbus();
+            configMgr.saveErrorCounts();
         }
     }
     else
@@ -1863,6 +1871,11 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                             LOG_ERR, "REDFISH_MESSAGE_ID=%s",
                             "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
                             rasErrMsg.c_str(), NULL);
+            // TODO: Get the core number on which the error happened and update
+            // the error count
+            configMgr.incrementNoncorrectableCPUError(socNum, 0);
+            configMgr.updateErrorCountDbus();
+            configMgr.saveErrorCounts();
 
             if (false == harvestMcaValidityCheck(socNum, &errorCheck))
             {
@@ -1882,6 +1895,9 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                             rasErrMsg.c_str(), NULL);
 
             nonMcaShutdownError = true;
+            configMgr.incrementNoncorrectableOtherError(socNum);
+            configMgr.updateErrorCountDbus();
+            configMgr.saveErrorCounts();
         }
         else
         {
@@ -1898,6 +1914,12 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                     "REDFISH_MESSAGE_ARGS=%s", mcaErrOverflowMsg.c_str(), NULL);
 
                 runtimeError = true;
+                uint64_t thresholdCount = configMgr.getThresholdCount(
+                    "McaErrThresholdEnable", "McaErrThresholdCount");
+                configMgr.incrementCorrectableOtherError(socNum,
+                                                         thresholdCount);
+                configMgr.updateErrorCountDbus();
+                configMgr.saveErrorCounts();
             }
             if (src & dramCeccErrOverflow)
             {
@@ -1910,7 +1932,14 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                     "MESSAGE=%s", dramErrOverlowMsg.c_str(), "PRIORITY=%i",
                     LOG_ERR, "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
                     "REDFISH_MESSAGE_ARGS=%s", dramErrOverlowMsg.c_str(), NULL);
-
+                // TODO: Get the core number on which the error happened and
+                // update the error count
+                uint64_t thresholdCount = configMgr.getThresholdCount(
+                    "DramCeccErrThresholdEnable", "DramCeccErrThresholdCount");
+                configMgr.incrementCorrectableOtherError(socNum,
+                                                         thresholdCount);
+                configMgr.updateErrorCountDbus();
+                configMgr.saveErrorCounts();
                 runtimeError = true;
             }
             if (src & pcieErrOverflow)
@@ -1926,6 +1955,12 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                     "REDFISH_MESSAGE_ARGS=%s", pcieErrOverlowMsg.c_str(), NULL);
 
                 runtimeError = true;
+                uint64_t thresholdCount = configMgr.getThresholdCount(
+                    "PcieErrThresholdEnable", "PcieErrThresholdCount");
+                configMgr.incrementCorrectableOtherError(socNum,
+                                                         thresholdCount);
+                configMgr.updateErrorCountDbus();
+                configMgr.saveErrorCounts();
             }
         }
     }
@@ -2174,6 +2209,11 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
                     harvestBreakEvent(socNum);
                     cpuAlertProcessed.assign(cpuCount, true);
+                    // TODO: Get the core number on which the error happened and
+                    // update the error count
+                    configMgr.incrementNoncorrectableCPUError(socNum, 0);
+                    configMgr.updateErrorCountDbus();
+                    configMgr.saveErrorCounts();
                 }
                 else if (buf & resetHangErr)
                 {
@@ -2187,6 +2227,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
 
                     fchHangError = true;
+                    configMgr.incrementNoncorrectableOtherError(socNum);
+                    configMgr.updateErrorCountDbus();
+                    configMgr.saveErrorCounts();
                 }
             }
             else
@@ -2216,7 +2259,11 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
                         "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
                         "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
-
+                    // TODO: Get the core number on which the error happened and
+                    // update the error count
+                    configMgr.incrementNoncorrectableCPUError(socNum, 0);
+                    configMgr.updateErrorCountDbus();
+                    configMgr.saveErrorCounts();
                     if (false == harvestMcaValidityCheck(socNum, &errorCheck))
                     {
                         lg2::info(
@@ -2235,6 +2282,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
 
                     nonMcaShutdownError = true;
+                    configMgr.incrementNoncorrectableOtherError(socNum);
+                    configMgr.updateErrorCountDbus();
+                    configMgr.saveErrorCounts();
                 }
                 else
                 {
@@ -2252,6 +2302,12 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                             mcaErrOverflowMsg.c_str(), NULL);
 
                         runtimeError = true;
+                        uint64_t thresholdCount = configMgr.getThresholdCount(
+                            "McaErrThresholdEnable", "McaErrThresholdCount");
+                        configMgr.incrementCorrectableOtherError(
+                            socNum, thresholdCount);
+                        configMgr.updateErrorCountDbus();
+                        configMgr.saveErrorCounts();
                     }
                     if (buf & dramCeccErrOverflow)
                     {
@@ -2265,7 +2321,13 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                             "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
                             "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
                             dramErrOverlowMsg.c_str(), NULL);
-
+                        uint64_t thresholdCount = configMgr.getThresholdCount(
+                            "DramCeccErrThresholdEnable",
+                            "DramCeccErrThresholdCount");
+                        configMgr.incrementCorrectableOtherError(
+                            socNum, thresholdCount);
+                        configMgr.updateErrorCountDbus();
+                        configMgr.saveErrorCounts();
                         runtimeError = true;
                     }
                     if (buf & pcieErrOverflow)
@@ -2282,6 +2344,12 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                             pcieErrOverlowMsg.c_str(), NULL);
 
                         runtimeError = true;
+                        uint64_t thresholdCount = configMgr.getThresholdCount(
+                            "PcieErrThresholdEnable", "PcieErrThresholdCount");
+                        configMgr.incrementCorrectableOtherError(
+                            socNum, thresholdCount);
+                        configMgr.updateErrorCountDbus();
+                        configMgr.saveErrorCounts();
                     }
                 }
             }
