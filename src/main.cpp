@@ -28,12 +28,11 @@ int main(int argc, char* argv[])
     // Create a shared connection to the system bus
     auto systemBus = std::make_shared<sdbusplus::asio::connection>(io);
 
-    const char* rasService =
-        (std::string(amd::ras::config::service) + node).c_str();
+    std::string rasService = std::string(amd::ras::config::service) + node;
 
     lg2::info("Ras service {SER}", "SER", rasService);
     // Request a unique name on the D-Bus
-    systemBus->request_name(rasService);
+    systemBus->request_name(rasService.c_str());
 
     // Create an object server for managing D-Bus objects
     sdbusplus::asio::object_server objectServer(systemBus);

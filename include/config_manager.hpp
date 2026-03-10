@@ -100,10 +100,128 @@ class Manager : public amd::ras::config::ConfigIface
      */
     void deleteAll() override;
 
+    /** @brief Load error counts from the persistent JSON file.
+     *
+     *  @details Reads error count arrays from the JSON file at
+     *  errorCountFile. If the file does not exist or fails to parse,
+     *  creates a new file with default (zero) values.
+     */
+    void loadErrorCounts();
+
+    /** @brief Save current error counts to the persistent JSON file.
+     *
+     *  @details Writes all four error count arrays (correctable/
+     *  noncorrectable CPU and other errors) to the JSON file at
+     *  errorCountFile and updates the D-Bus properties.
+     */
+    void saveErrorCounts();
+
+    /** @brief Update error count properties on the D-Bus interface.
+     *
+     *  @details Publishes the current in-memory error count arrays
+     *  to the com.amd.RAS.ErrorCount D-Bus interface properties.
+     */
+    void updateErrorCountDbus();
+
+    /** @brief Increment the correctable CPU error count for a given index.
+     *  @param[in] socNum - socket number (0 or 1).
+     *  @param[in] index - CPU error index to increment.
+     */
+    void incrementCorrectableCPUError(size_t socNum, size_t index)
+    {
+        if (socNum == 0)
+        {
+            p0CorrectableCPUErrors.at(index)++;
+        }
+        else
+        {
+            p1CorrectableCPUErrors.at(index)++;
+        }
+    }
+
+    /** @brief Increment the noncorrectable CPU error count for a given index.
+     *  @param[in] socNum - socket number (0 or 1).
+     *  @param[in] index - CPU error index to increment.
+     */
+    void incrementNoncorrectableCPUError(size_t socNum, size_t index)
+    {
+        if (socNum == 0)
+        {
+            p0NoncorrectableCPUErrors.at(index)++;
+        }
+        else
+        {
+            p1NoncorrectableCPUErrors.at(index)++;
+        }
+    }
+
+    /** @brief Get the threshold count for a given error category.
+     *
+     *  @details Checks whether thresholding is enabled for the given
+     *  category by reading the enable attribute from the config table.
+     *  If enabled, returns the configured threshold count; otherwise
+     *  returns 1.
+     *
+     *  @param[in] thresholdEnKey  - config attribute name for threshold enable
+     *  @param[in] thresholdCntKey - config attribute name for threshold count
+     *
+     *  @return threshold count if enabled, 1 otherwise.
+     */
+    uint64_t getThresholdCount(const std::string& thresholdEnKey,
+                               const std::string& thresholdCntKey);
+
+    /** @brief Increment the correctable other error count.
+     *  @param[in] socNum - socket number (0 or 1).
+     *  @param[in] thresholdCount - threshold count to increment by.
+     */
+    void incrementCorrectableOtherError(size_t socNum, uint64_t thresholdCount)
+    {
+        if (socNum == 0)
+        {
+            p0CorrectableOtherErrors += thresholdCount;
+        }
+        else
+        {
+            p1CorrectableOtherErrors += thresholdCount;
+        }
+    }
+
+    /** @brief Increment the noncorrectable other error count.
+     *  @param[in] socNum - socket number (0 or 1).
+     */
+    void incrementNoncorrectableOtherError(size_t socNum)
+    {
+        if (socNum == 0)
+        {
+            p0NoncorrectableOtherErrors++;
+        }
+        else
+        {
+            p1NoncorrectableOtherErrors++;
+        }
+    }
+
   private:
+    static constexpr size_t maxErrorIndex = 256;
+    inline static std::array<uint64_t, maxErrorIndex> p0CorrectableCPUErrors{};
+    inline static std::array<uint64_t, maxErrorIndex>
+        p0NoncorrectableCPUErrors{};
+    inline static uint64_t p0CorrectableOtherErrors{};
+    inline static uint64_t p0NoncorrectableOtherErrors{};
+    inline static std::array<uint64_t, maxErrorIndex> p1CorrectableCPUErrors{};
+    inline static std::array<uint64_t, maxErrorIndex>
+        p1NoncorrectableCPUErrors{};
+    inline static uint64_t p1CorrectableOtherErrors{};
+    inline static uint64_t p1NoncorrectableOtherErrors{};
     sdbusplus::asio::object_server& objServer;
     std::shared_ptr<sdbusplus::asio::connection>& systemBus;
     std::string node;
+
+    std::string errorCountFile;
+    static constexpr auto errorCountPath = "/com/amd/RAS/ErrorCount";
+    static constexpr auto errorCountInterface = "com.amd.RAS.ErrorCount";
+
+    std::shared_ptr<sdbusplus::asio::dbus_interface> errorCountIface;
 };
 
 } // namespace config
