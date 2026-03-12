@@ -1,11 +1,9 @@
 #include "config_manager.hpp"
 
-#include "utils/cper.hpp"
-#include "xyz/openbmc_project/Common/File/error.hpp"
-#include "xyz/openbmc_project/Common/error.hpp"
-
 #include <nlohmann/json.hpp>
 #include <phosphor-logging/lg2.hpp>
+
+#include <stdexcept>
 
 namespace amd
 {
@@ -14,123 +12,6 @@ namespace ras
 namespace config
 {
 namespace fs = std::filesystem;
-
-void Manager::setAttribute(AttributeName attribute, AttributeValue value)
-{
-    nlohmann::json data;
-
-    auto configMap = rasConfigTable();
-
-    std::string configFile = CONFIG_FILE + node + ".json";
-
-    std::ifstream jsonFile(configFile);
-    if (!jsonFile.is_open())
-    {
-        throw sdbusplus::xyz::openbmc_project::Common::File::Error::Open();
-    }
-
-    jsonFile >> data;
-    jsonFile.close();
-
-    bool attributeFound = false;
-    for (auto& configItem : data["Configuration"])
-    {
-        if (auto it = configItem.find(attribute); it != configItem.end())
-        {
-            bool isValidValue = false;
-
-            if (it.value().contains("MaxBoundLimit"))
-            {
-                auto maxBoundLimit = it.value()["MaxBoundLimit"];
-
-                std::visit(
-                    [&](auto&& arg) {
-                        if constexpr (std::is_same_v<
-                                          std::decay_t<decltype(arg)>, int64_t>)
-                        {
-                            if (maxBoundLimit.is_number_integer())
-                            {
-                                isValidValue =
-                                    (arg > maxBoundLimit.get<int64_t>());
-
-                                if (isValidValue)
-                                {
-                                    lg2::error(
-                                        "Attribute {ATTRIBUTE} : Value {VALUE} is greater than max bound limit",
-                                        "ATTRIBUTE", attribute, "VALUE", arg);
-                                    throw sdbusplus::xyz::openbmc_project::
-                                        Common::Error::InvalidArgument();
-                                }
-                            }
-                        }
-                    },
-                    value);
-            }
-
-            if (it.value().contains("ValidOptions"))
-            {
-                auto validOptions = it.value()["ValidOptions"];
-
-                for (const auto& validOption : validOptions)
-                {
-                    if (validOption.is_string())
-                    {
-                        if (std::holds_alternative<std::string>(value) &&
-                            std::get<std::string>(value) ==
-                                validOption.get<std::string>())
-                        {
-                            isValidValue = true;
-                            break;
-                        }
-                    }
-                }
-                if (isValidValue == false)
-                {
-                    lg2::error(
-                        "{VALUE} is not a valid option for the attribute {ATTRIBUTE}",
-                        "ATTRIBUTE", attribute, "VALUE",
-                        std::get<std::string>(value));
-                    throw sdbusplus::xyz::openbmc_project::Common::Error::
-                        InvalidArgument();
-                }
-            }
-
-            std::visit([&](auto&& arg) { it.value()["Value"] = arg; }, value);
-            attributeFound = true;
-            break;
-        }
-    }
-    if (attributeFound)
-    {
-        for (auto& [key, tuple] : configMap)
-        {
-            if (key == attribute)
-            {
-                std::get<2>(tuple) = value;
-                break;
-            }
-        }
-
-        std::ofstream jsonFileOut(configFile);
-
-        if (!jsonFileOut.is_open())
-        {
-            throw sdbusplus::xyz::openbmc_project::Common::File::Error::Open();
-        }
-
-        jsonFileOut << data.dump(4);
-        jsonFileOut.close();
-        rasConfigTable(configMap);
-
-        lg2::debug("Attribute {{ATTRIBUTE} updated successfully", "ATTRIBUTE",
-                   attribute);
-    }
-    else
-    {
-        lg2::error("Attribute {ATTRIBUTE} not found", "ATTRIBUTE", attribute);
-        throw sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument();
-    }
-}
 
 Manager::AttributeValue Manager::getAttribute(AttributeName attribute)
 {
@@ -153,13 +34,12 @@ Manager::AttributeValue Manager::getAttribute(AttributeName attribute)
         lg2::error(
             "The given attribute {ATTRIBUTE} is not found in the config table",
             "ATTRIBUTE", attribute);
-        throw sdbusplus::xyz::openbmc_project::Common::Error::
-            ResourceNotFound();
+        throw std::runtime_error("Attribute not found: " + attribute);
     }
     return value;
 }
 
-void Manager::updateConfigToDbus()
+void Manager::initConfig()
 {
     std::string configFile = CONFIG_FILE + node + ".json";
 
@@ -213,8 +93,7 @@ void Manager::updateConfigToDbus()
     lg2::info("PARSE CONFIGURATION");
     for (const auto& item : data["Configuration"])
     {
-        AttributeType attributeType = sdbusplus::common::com::amd::ras::
-                     Configuration::AttributeType::Boolean;
+        AttributeType attributeType = AttributeType::Boolean;
         std::string key;
         std::string description;
         std::variant<bool, std::string, int64_t, std::vector<std::string>,
@@ -271,28 +150,23 @@ void Manager::updateConfigToDbus()
 
             if (value.index() == 0)
             {
-                attributeType = sdbusplus::common::com::amd::ras::
-                    Configuration::AttributeType::Boolean;
+                attributeType = AttributeType::Boolean;
             }
             else if (value.index() == 1)
             {
-                attributeType = sdbusplus::common::com::amd::ras::
-                    Configuration::AttributeType::String;
+                attributeType = AttributeType::String;
             }
             else if (value.index() == 2)
             {
-                attributeType = sdbusplus::common::com::amd::ras::
-                    Configuration::AttributeType::Integer;
+                attributeType = AttributeType::Integer;
             }
             else if (value.index() == 3)
             {
-                attributeType = sdbusplus::common::com::amd::ras::
-                    Configuration::AttributeType::ArrayOfStrings;
+                attributeType = AttributeType::ArrayOfStrings;
             }
             else if (value.index() == 4)
             {
-                attributeType = sdbusplus::common::com::amd::ras::
-                    Configuration::AttributeType::KeyValueMap;
+                attributeType = AttributeType::KeyValueMap;
             }
             else
             {
@@ -310,40 +184,9 @@ void Manager::updateConfigToDbus()
     jsonRead.close();
 }
 
-void Manager::deleteAll()
+Manager::Manager(std::string& node) : node(node)
 {
-    for (const auto& entry : std::filesystem::directory_iterator(RAS_DIR))
-    {
-        std::string filename = entry.path().filename().string();
-
-        if (node == "1" || node == "2")
-        {
-            if (filename.starts_with("node" + node) &&
-                filename.starts_with("node" + node))
-            {
-                lg2::info("{FILE} deleted", "FILE", filename);
-                fs::remove(entry.path());
-            }
-        }
-        else
-        {
-            if (filename.ends_with(".cper"))
-            {
-                lg2::info("{FILE} deleted", "FILE", filename);
-                fs::remove(entry.path());
-            }
-        }
-    }
-    amd::ras::util::cper::deleteCrashdumpInterface();
-}
-
-Manager::Manager(sdbusplus::asio::object_server& objectServer,
-                 std::shared_ptr<sdbusplus::asio::connection>& systemBus,
-                 std::string& node) :
-    amd::ras::config::ConfigIface(*systemBus, objectPath),
-    objServer(objectServer), systemBus(systemBus), node(node)
-{
-    updateConfigToDbus();
+    initConfig();
 }
 
 } // namespace config

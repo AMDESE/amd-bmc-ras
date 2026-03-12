@@ -40,8 +40,7 @@ class Manager : public amd::ras::Manager
     Manager& operator=(Manager&&) = delete;
     ~Manager() = default;
 
-    Manager(amd::ras::config::Manager&, sdbusplus::asio::object_server&,
-            std::shared_ptr<sdbusplus::asio::connection>&,
+    Manager(amd::ras::config::Manager&,
             boost::asio::io_context&, std::string&);
 
     /** @brief Perform initilization for the error monitoring.
@@ -65,9 +64,6 @@ class Manager : public amd::ras::Manager
     virtual void configure();
 
   private:
-    sdbusplus::asio::object_server& objectServer;
-    std::shared_ptr<sdbusplus::asio::connection>& systemBus;
-
     size_t whFamilyId;
     size_t whModel;
     uint8_t progId;

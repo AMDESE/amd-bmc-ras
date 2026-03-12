@@ -1,7 +1,6 @@
 #include "utils/cper.hpp"
 
 #include "base_manager.hpp"
-#include "crashdump_manager.hpp"
 #include "oem_cper.hpp"
 #include "utils/util.hpp"
 
@@ -19,7 +18,7 @@ namespace util
 namespace cper
 {
 
-constexpr std::string_view objectPath = "/com/amd/RAS";
+// Internal constants
 constexpr size_t maxByte = 0xFF;
 constexpr size_t singleBit = 1;
 constexpr size_t doubleBit = 2;
@@ -79,8 +78,6 @@ EFI_GUID gEfiEventNotificationTypeMceGuid = {
     0x919C,
     0x4cc5,
     {0xBA, 0x88, 0x65, 0xAB, 0xE1, 0x49, 0x13, 0xBB}};
-
-std::map<int, std::unique_ptr<CrashdumpInterface>> managers;
 
 template void dumpHeader(const std::shared_ptr<FatalCperRecord>& data,
                          uint16_t sectionCount, uint32_t errorSeverity,
@@ -166,108 +163,6 @@ void createIndexFile(size_t& errCount, const std::string& node)
     {
         throw std::runtime_error("Failed to read from index file");
     }
-}
-
-void exportToDBus(size_t num, const EFI_ERROR_TIME_STAMP& TimeStampStr,
-                  sdbusplus::asio::object_server& objectServer,
-                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
-                  const std::string& node)
-{
-    if (num >= 10)
-    {
-        lg2::error("Crashdump only allows index 0~9\n");
-        return;
-    }
-
-    const std::string filename = findCperFilename(num, node);
-    const std::string fullFilePath = RAS_DIR + filename;
-
-    // Use ISO-8601 as the timestamp format
-    // For example: 2022-07-19T14:13:47Z
-    const EFI_ERROR_TIME_STAMP& t = TimeStampStr;
-    char timestamp[30];
-    sprintf(timestamp, "%d-%d-%dT%d:%d:%dZ", (t.Century - 1) * hundred + t.Year,
-            t.Month, t.Day, t.Hours, t.Minutes, t.Seconds);
-
-    // Create crashdump DBus instance
-    const std::string dbusPath =
-        std::string(objectPath) + "/" + std::to_string(num);
-
-    if (amd::ras::util::checkObjPath(dbusPath) == true)
-    {
-        auto it = managers.find(num);
-        if (it != managers.end())
-        {
-            it->second.reset();
-            managers.erase(it);
-        }
-    }
-    std::unique_ptr<CrashdumpInterface> CperRecordMgr =
-        std::make_unique<CrashdumpInterface>(objectServer, systemBus, dbusPath);
-
-    CperRecordMgr->filename(filename);
-    CperRecordMgr->log(fullFilePath);
-    CperRecordMgr->timestamp(std::string{timestamp});
-
-    managers[num] = {std::move(CperRecordMgr)};
-}
-
-void createRecord(sdbusplus::asio::object_server& objectServer,
-                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
-                  const std::string& node)
-{
-    // Check if any crashdump already exists.
-    std::regex pattern;
-
-    if (std::filesystem::exists(std::filesystem::path(RAS_DIR)))
-    {
-        if (node == "1" || node == "2")
-        {
-            pattern =
-                std::regex("node" + node + ".*ras-error([[:digit:]]+).cper");
-        }
-        else
-        {
-            pattern = std::regex(".*ras-error([[:digit:]]+).cper");
-        }
-        std::smatch match;
-        for (const auto& p : std::filesystem::directory_iterator(
-                 std::filesystem::path(RAS_DIR)))
-        {
-            std::string filename = p.path().filename();
-            if (!std::regex_match(filename, match, pattern))
-            {
-                continue;
-            }
-            const size_t kNum = stoi(match.str(singleBit));
-            const std::string cperFilename = RAS_DIR + filename;
-            // exportCrashdumpToDBus needs the timestamp inside the CPER
-            // file. So load it first.
-            std::ifstream fin(cperFilename, std::ifstream::binary);
-            if (!fin.is_open())
-            {
-                lg2::warning("Broken crashdump CPER file: {CPERFILE}",
-                             "CPERFILE", cperFilename.c_str());
-                continue;
-            }
-            fin.seekg(24); // Move the file pointer to offset 24
-            EFI_ERROR_TIME_STAMP timestamp;
-
-            if (!fin.read(reinterpret_cast<char*>(&timestamp),
-                          sizeof(timestamp)))
-            {
-                lg2::info("Failed to read data from the file");
-            }
-
-            fin.close();
-            exportToDBus(kNum, timestamp, objectServer, systemBus, node);
-        }
-    }
-}
-
-void deleteCrashdumpInterface()
-{
-    managers.clear();
 }
 
 void dumpProcessorError(const std::shared_ptr<FatalCperRecord>& fatalPtr,
@@ -784,7 +679,7 @@ void createFile(const std::shared_ptr<PtrType>& data,
     file = fopen(indexFile.c_str(), "w");
     if (file != nullptr)
     {
-        fprintf(file, "%lu", errCount);
+        fprintf(file, "%zu", errCount);
         fclose(file);
     }
 

@@ -24,8 +24,6 @@ constexpr std::string_view inventoryService =
 constexpr std::string_view inventoryInterface =
     "xyz.openbmc_project.Inventory.Item.Cpu";
 constexpr std::string_view mapperBusName = "xyz.openbmc_project.ObjectMapper";
-constexpr std::string_view mapperPath = "/xyz/openbmc_project/object_mapper";
-constexpr std::string_view mapperIntf = "xyz.openbmc_project.ObjectMapper";
 
 void createFile(const std::string& directoryName, const std::string& fileName)
 {
@@ -287,40 +285,6 @@ ReturnType getProperty(sdbusplus::bus::bus& bus, const char* service,
         lg2::info("GetProperty call failed");
     }
     return std::get<ReturnType>(value);
-}
-
-bool checkObjPath(std::string dbusPath)
-{
-    bool filePathExist = false;
-
-    boost::asio::io_context Dbus;
-    auto dbusconn = std::make_shared<sdbusplus::asio::connection>(Dbus);
-    std::vector<std::string> crashDumpPaths;
-
-    auto mesg =
-        dbusconn->new_method_call(mapperBusName.data(), mapperPath.data(),
-                                  mapperIntf.data(), "GetSubTreePaths");
-
-    static const std::vector<std::string> interfaces = {"com.amd.crashdump"};
-    mesg.append("/", 0, interfaces);
-
-    try
-    {
-        auto mapperReply = dbusconn->call(mesg);
-        mapperReply.read(crashDumpPaths);
-    }
-    catch (sdbusplus::exception_t& e)
-    {
-        lg2::info("Failed to get D-BUS info {WHAT}", "WHAT", e.what());
-    }
-
-    for (const auto& objPath : crashDumpPaths)
-    {
-        if (dbusPath == objPath)
-            filePathExist = true;
-    }
-
-    return filePathExist;
 }
 
 } // namespace util

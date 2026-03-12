@@ -55,41 +55,7 @@ std::string findCperFilename(size_t);
  */
 void createIndexFile(size_t&, const std::string&);
 
-/** @brief Exports crashdump data to D-Bus.
- *
- *  @details Creates a D-Bus instance for crashdump data using the provided
- * index and timestamp. Logs an error if the index is out of range (0-9). Finds
- * the filename, formats the timestamp, and creates or replaces the D-Bus
- * instance.
- *
- *  @param[in] num - The index number for the crashdump file.
- *  @param[in] TimeStampStr - The timestamp structure for the crashdump.
- *  @param[in] objectServer - The D-Bus object server.
- *  @param[in] systemBus - The D-Bus system bus connection.
- *  @param[in] node - host node number to determine single or multi host.
- *
- *  @throw std::runtime_error if the file cannot be read or the error count
- * cannot be extracted.
- */
-void exportToDBus(size_t, const EFI_ERROR_TIME_STAMP&,
-                  sdbusplus::asio::object_server&,
-                  std::shared_ptr<sdbusplus::asio::connection>&,
-                  const std::string&);
 
-void deleteCrashdumpInterface();
-
-/** @brief Creates D-Bus records for existing crashdumps.
- *
- *  @details Checks for existing crashdump files in the RAS directory, reads
- * their timestamps, and exports them to D-Bus.
- *
- *  @param[in] objectServer - The D-Bus object server.
- *  @param[in] systemBus - The D-Bus system bus connection.
- *  @param[in] node - host node number to determine single or multi host.
- */
-void createRecord(sdbusplus::asio::object_server& objectServer,
-                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
-                  const std::string&);
 
 /** @brief Calculates and sets the current timestamp in the provided data
  * structure.

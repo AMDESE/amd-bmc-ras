@@ -39,7 +39,6 @@ boost_args = [
 deps = [
     dependency('libgpiodcxx', default_options: ['bindings=cxx']),
     dependency('boost'),
-    dependency('phosphor-dbus-interfaces'),
     dependency('phosphor-logging'),
     dependency('sdbusplus'),
     dependency('libsystemd'),
@@ -68,7 +67,6 @@ sources = [
     'src/apml_manager.cpp',
     'src/utils/util.cpp',
     'src/utils/cper.cpp',
-    'src/crashdump_manager.cpp',
 ]
 
 if apml

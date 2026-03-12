@@ -1,13 +1,11 @@
 #pragma once
 
-#include "xyz/openbmc_project/Collection/DeleteAll/server.hpp"
-
-#include <com/amd/RAS/Configuration/common.hpp>
-#include <com/amd/RAS/Configuration/server.hpp>
-#include <sdbusplus/asio/object_server.hpp>
-#include <sdbusplus/server.hpp>
-
 #include <fstream>
+#include <map>
+#include <string>
+#include <tuple>
+#include <variant>
+#include <vector>
 
 namespace amd
 {
@@ -15,21 +13,24 @@ namespace ras
 {
 namespace config
 {
-static constexpr auto service = "com.amd.RAS";
-static constexpr auto objectPath = "/com/amd/RAS";
 
-using ConfigIface = sdbusplus::server::object_t<
-    sdbusplus::com::amd::RAS::server::Configuration,
-    sdbusplus::xyz::openbmc_project::Collection::server::DeleteAll>;
+/** @brief Attribute types supported by the RAS configuration. */
+enum class AttributeType
+{
+    Boolean,
+    String,
+    Integer,
+    ArrayOfStrings,
+    KeyValueMap,
+};
+
 /**
- * @brief Manager class which adds the RAS configuration
- * parameter values to the D-Bus interface.
+ * @brief Manager class which handles the RAS configuration parameters.
  *
- * @details The class pulls the default values of ras_config.json file
- * into the D-Bus interface and overrides the getAttribute()
- * and setAttribute() of the RAS configuration interface.
+ * @details The class loads the default values from ras_config.json and
+ * provides getAttribute() for in-process access.
  */
-class Manager : public amd::ras::config::ConfigIface
+class Manager
 {
   public:
     using AttributeName = std::string;
@@ -53,26 +54,9 @@ class Manager : public amd::ras::config::ConfigIface
 
     /** @brief Constructs Manager object.
      *
-     *  @param[in] objectServer  - object server
-     *  @param[in] systemBus - bus connection
      *  @param[in] node - host node number to determine single or multi host.
      */
-    Manager(sdbusplus::asio::object_server& objectServer,
-            std::shared_ptr<sdbusplus::asio::connection>& systemBus,
-            std::string& node);
-
-    /** @brief Updates the rasConfigTable with the user input.
-     *
-     *  @details Updates the Attribute value in the rasConfigTable and
-     *   ras_config.json with user input and the ras_config.json.
-     *
-     *  @param[in] attribute - attribute name
-     *  @param[in] value - new value for the attribute
-     *
-     *  @return On failure of accessing the config file, log InvalidArgument
-     *  D-Bus error.
-     */
-    void setAttribute(AttributeName attribute, AttributeValue value) override;
+    explicit Manager(std::string& node);
 
     /** @brief Get the values of the Ras Config attribute
      *
@@ -84,7 +68,7 @@ class Manager : public amd::ras::config::ConfigIface
      *  @return returns the current value of the attribute.
      *  On failure , throw ResourceNotFound D-Bus error.
      */
-    AttributeValue getAttribute(AttributeName attribute) override;
+    AttributeValue getAttribute(AttributeName attribute);
 
     /** @brief Update RAS configuration parameters to D-Bus interface
      *
@@ -94,16 +78,23 @@ class Manager : public amd::ras::config::ConfigIface
      * @return On failure of accessing the config file, throw
      * std::runtime_error exception.
      */
-    void updateConfigToDbus();
+    void initConfig();
 
-    /** @brief  Erase all entries
-     */
-    void deleteAll() override;
+    /** @brief Get the in-memory configuration table. */
+    ConfigTable rasConfigTable() const
+    {
+        return configTable_;
+    }
+
+    /** @brief Set the in-memory configuration table. */
+    void rasConfigTable(ConfigTable val)
+    {
+        configTable_ = std::move(val);
+    }
 
   private:
-    sdbusplus::asio::object_server& objServer;
-    std::shared_ptr<sdbusplus::asio::connection>& systemBus;
     std::string node;
+    ConfigTable configTable_;
 };
 
 } // namespace config
