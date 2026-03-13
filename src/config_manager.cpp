@@ -13,6 +13,11 @@ namespace ras
 {
 namespace config
 {
+
+std::array<uint64_t, maxErrorIndex> correctableCPUErrors{};
+std::array<uint64_t, maxErrorIndex> noncorrectableCPUErrors{};
+std::array<uint64_t, maxErrorIndex> correctableOtherErrors{};
+std::array<uint64_t, maxErrorIndex> noncorrectableOtherErrors{};
 namespace fs = std::filesystem;
 
 void Manager::setAttribute(AttributeName attribute, AttributeValue value)
@@ -337,6 +342,64 @@ void Manager::deleteAll()
     amd::ras::util::cper::deleteCrashdumpInterface();
 }
 
+void Manager::loadErrorCounts()
+{
+    std::ifstream file(errorCountFile);
+    if (file.is_open())
+    {
+        try
+        {
+            nlohmann::json data = nlohmann::json::parse(file);
+            for (size_t i = 0; i < maxErrorIndex; ++i)
+            {
+                correctableCPUErrors[i] =
+                    data["correctableCPUErrors"][i].get<uint64_t>();
+                noncorrectableCPUErrors[i] =
+                    data["noncorrectableCPUErrors"][i].get<uint64_t>();
+                correctableOtherErrors[i] =
+                    data["correctableOtherErrors"][i].get<uint64_t>();
+                noncorrectableOtherErrors[i] =
+                    data["noncorrectableOtherErrors"][i].get<uint64_t>();
+            }
+            lg2::info("Error counts loaded from {FILE}", "FILE",
+                       errorCountFile);
+        }
+        catch (const nlohmann::json::exception& e)
+        {
+            lg2::error("Failed to parse {FILE}: {ERR}", "FILE",
+                        errorCountFile, "ERR", e.what());
+            saveErrorCounts();
+        }
+    }
+    else
+    {
+        lg2::info("{FILE} not found, creating with defaults", "FILE",
+                   errorCountFile);
+        saveErrorCounts();
+    }
+}
+
+void Manager::saveErrorCounts()
+{
+    std::filesystem::create_directories(
+        std::filesystem::path(errorCountFile).parent_path());
+
+    nlohmann::json data;
+    data["correctableCPUErrors"] = correctableCPUErrors;
+    data["noncorrectableCPUErrors"] = noncorrectableCPUErrors;
+    data["correctableOtherErrors"] = correctableOtherErrors;
+    data["noncorrectableOtherErrors"] = noncorrectableOtherErrors;
+
+    std::ofstream file(errorCountFile);
+    if (!file.is_open())
+    {
+        lg2::error("Failed to open {FILE} for writing", "FILE",
+                    errorCountFile);
+        return;
+    }
+    file << data.dump(4);
+}
+
 Manager::Manager(sdbusplus::asio::object_server& objectServer,
                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
                  std::string& node) :
@@ -344,6 +407,7 @@ Manager::Manager(sdbusplus::asio::object_server& objectServer,
     objServer(objectServer), systemBus(systemBus), node(node)
 {
     updateConfigToDbus();
+    loadErrorCounts();
 }
 
 } // namespace config

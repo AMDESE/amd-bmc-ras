@@ -1,0 +1,1664 @@
+From 2eeed8fde0374df58026ef5d7cec167dfc501779 Mon Sep 17 00:00:00 2001
+From: Raja Sekhar Reddy Gade <RajaSekharReddy.Gade@amd.com>
+Date: Fri, 13 Mar 2026 00:37:14 -0500
+Subject: [PATCH] Add MPX trace log harvesting and on-demand support
+
+- Implement harvesting of MPX trace logs during fatal error flow.
+
+- Introduce on-demand harvesting triggered via user request.
+
+    - Config file updated with Soc0MPList and Soc1MPList entries
+      specifying MPs to harvest during fatal error flow.
+
+    - On-demand files exposed through D-Bus object path: /com/amd/TBAIUser.
+
+    - Supports triggering for a single MP or "All MPs".
+
+Testef fields: Tested in Congo and Morocco platforn.
+
+Signed-off-by: Abinaya Dhandapani <abinaya.dhandapani@amd.com>
+Signed-off-by: Raja Sekhar Reddy Gade <RajaSekharReddy.Gade@amd.com>
+---
+ config/mp_info.json        | 106 +++++++++
+ config/ras_config.json     |  18 ++
+ include/apml_manager.hpp   |  17 ++
+ include/base_manager.hpp   |   3 +
+ include/config_manager.hpp |  12 +
+ include/oem_cper.hpp       |  15 ++
+ include/tbai_manager.hpp   |  90 ++++++++
+ include/utils/cper.hpp     |   5 +-
+ include/utils/util.hpp     |   4 +
+ meson.build                |   6 +
+ meson_options.txt          |   2 +
+ src/apml_manager.cpp       | 157 ++++++++++++-
+ src/base_manager.cpp       |  49 +---
+ src/config_manager.cpp     |  64 ++++++
+ src/main.cpp               |   2 +
+ src/tbai_manager.cpp       | 451 +++++++++++++++++++++++++++++++++++++
+ src/utils/cper.cpp         | 100 ++++++--
+ src/utils/util.cpp         |  82 +++++++
+ 18 files changed, 1104 insertions(+), 79 deletions(-)
+ create mode 100644 config/mp_info.json
+ create mode 100644 include/tbai_manager.hpp
+ create mode 100644 src/tbai_manager.cpp
+
+diff --git a/config/mp_info.json b/config/mp_info.json
+new file mode 100644
+index 0000000..6dedf89
+--- /dev/null
++++ b/config/mp_info.json
+@@ -0,0 +1,106 @@
++[
++    {
++        "Name": "IOD0_MPART",
++        "Index": 0
++    },
++    {
++        "Name": "IOD0_MPASP",
++        "Index": 1
++    },
++    {
++        "Name": "IOD0_MP1",
++        "Index": 2
++    },
++    {
++        "Name": "IOD0_MPIO",
++        "Index": 3
++    },
++    {
++        "Name": "IOD0_MPRAS",
++        "Index": 4
++    },
++    {
++        "Name": "IOD0_MPM",
++        "Index": 5
++    },
++    {
++        "Name": "IOD0_MPDACC0",
++        "Index": 6
++    },
++    {
++        "Name": "IOD0_MPDACC1",
++        "Index": 7
++    },
++    {
++        "Name": "IOD0_MPDACC2",
++        "Index": 8
++    },
++    {
++        "Name": "IOD0_CCD0_MP5",
++        "Index": 9
++    },
++    {
++        "Name": "IOD0_CCD1_MP5",
++        "Index": 10
++    },
++    {
++        "Name": "IOD0_CCD2_MP5",
++        "Index": 11
++    },
++    {
++        "Name": "IOD0_CCD3_MP5",
++        "Index": 12
++    },
++    {
++        "Name": "IOD1_MPART",
++        "Index": 13
++    },
++    {
++        "Name": "IOD1_MPASP",
++        "Index": 14
++    },
++    {
++        "Name": "IOD1_MP1",
++        "Index": 15
++    },
++    {
++        "Name": "IOD1_MPIO",
++        "Index": 16
++    },
++    {
++        "Name": "IOD1_MPRAS",
++        "Index": 17
++    },
++    {
++        "Name": "IOD1_MPM",
++        "Index": 18
++    },
++    {
++        "Name": "IOD1_MPDACC0",
++        "Index": 19
++    },
++    {
++        "Name": "IOD1_MPDACC1",
++        "Index": 20
++    },
++    {
++        "Name": "IOD1_MPDACC2",
++        "Index": 21
++    },
++    {
++        "Name": "IOD1_CCD0_MP5",
++        "Index": 22
++    },
++    {
++        "Name": "IOD1_CCD1_MP5",
++        "Index": 23
++    },
++    {
++        "Name": "IOD1_CCD2_MP5",
++        "Index": 24
++    },
++    {
++        "Name": "IOD1_CCD3_MP5",
++        "Index": 25
++    }
++]
+diff --git a/config/ras_config.json b/config/ras_config.json
+index 77c8749..7e984e5 100644
+--- a/config/ras_config.json
++++ b/config/ras_config.json
+@@ -139,6 +139,24 @@
+                 "Description": "Error threshold count for PCIE AER errors",
+                 "Value": 1
+             }
++	},
++        {
++            "Soc0MPList": {
++                "Description": "List of Socket 0 MP's where tracelogs are enabled",
++                "Value": [
++                    "IOD0_MPART",
++                    "IOD0_MPASP"
++                ]
++            }
++        },
++        {
++            "Soc1MPList": {
++                "Description": "List ofSocket 1 MP's where tracelogs are enabled",
++                "Value": [
++                    "IOD0_MPART",
++                    "IOD0_MPASP"
++                ]
++            }
+         }
+     ]
+ }
+diff --git a/include/apml_manager.hpp b/include/apml_manager.hpp
+index 4209347..91d28cc 100644
+--- a/include/apml_manager.hpp
++++ b/include/apml_manager.hpp
+@@ -95,6 +95,7 @@ class Manager : public amd::ras::Manager
+     uint8_t progId;
+     size_t contextType;
+     uint64_t recordId;
++    uint16_t fatalSectionCount;
+     size_t watchdogTimerCounter;
+     boost::asio::io_context& io;
+     std::vector<uint8_t> blockId;
+@@ -361,6 +362,22 @@ class Manager : public amd::ras::Manager
+      */
+     void getLastTransAddr(const std::shared_ptr<FatalCperRecord>&, uint8_t);
+ 
++    /** @brief Harvests MPX trace logs.
++     *
++     * @details This function collects MPX trace logs from the system
++     * when a fatal error occurs.
++     *
++     * @param[in] fatalPtr - Shared pointer to a FatalCperRecord.
++     * @param[in] socNum - The SoC number for which the trace logs are
++     * harvested.
++     * @param[out] mpList - List of MP's for which trace data is collected.
++     * @param[in] baseSectionCount - The base section count used for cper offset
++     * calculation
++     */
++
++    void harvestMpxTraceLog(const std::shared_ptr<FatalCperRecord>&, uint8_t,
++                            std::vector<std::string>&, uint8_t);    
++
+     /** @brief Harvests debug log ID dump data
+      *
+      * @details This function harvests the debug log ID data for the list
+diff --git a/include/base_manager.hpp b/include/base_manager.hpp
+index 423f7ad..5aa165f 100644
+--- a/include/base_manager.hpp
++++ b/include/base_manager.hpp
+@@ -3,6 +3,8 @@
+ #include "config_manager.hpp"
+ #include "oem_cper.hpp"
+ 
++#include <map>
++
+ constexpr size_t socket1 = 1;
+ constexpr size_t socket2 = 2;
+ 
+@@ -71,6 +73,7 @@ class Manager
+     std::shared_ptr<McaRuntimeCperRecord> mcaPtr;
+     std::shared_ptr<McaRuntimeCperRecord> dramPtr;
+     std::shared_ptr<PcieRuntimeCperRecord> pciePtr;
++    std::vector<std::pair<std::string, int>> mpToIndexMap;
+     std::string node;
+     std::vector<size_t> socIndex;
+ 
+diff --git a/include/config_manager.hpp b/include/config_manager.hpp
+index 8bac2c7..e619bdf 100644
+--- a/include/config_manager.hpp
++++ b/include/config_manager.hpp
+@@ -18,6 +18,14 @@ namespace config
+ static constexpr auto service = "com.amd.RAS";
+ static constexpr auto objectPath = "/com/amd/RAS";
+ 
++constexpr size_t maxErrorIndex = 256;
++constexpr auto errorCountFile = "/var/lib/amd-bmc-ras/error_count.json";
++
++extern std::array<uint64_t, maxErrorIndex> correctableCPUErrors;
++extern std::array<uint64_t, maxErrorIndex> noncorrectableCPUErrors;
++extern std::array<uint64_t, maxErrorIndex> correctableOtherErrors;
++extern std::array<uint64_t, maxErrorIndex> noncorrectableOtherErrors;
++
+ using ConfigIface = sdbusplus::server::object_t<
+     sdbusplus::com::amd::RAS::server::Configuration,
+     sdbusplus::xyz::openbmc_project::Collection::server::DeleteAll>;
+@@ -100,6 +108,10 @@ class Manager : public amd::ras::config::ConfigIface
+      */
+     void deleteAll() override;
+ 
++    void loadErrorCounts();
++
++    void saveErrorCounts();
++
+   private:
+     sdbusplus::asio::object_server& objServer;
+     std::shared_ptr<sdbusplus::asio::connection>& systemBus;
+diff --git a/include/oem_cper.hpp b/include/oem_cper.hpp
+index d81fa94..a1f7047 100644
+--- a/include/oem_cper.hpp
++++ b/include/oem_cper.hpp
+@@ -1,5 +1,7 @@
+ #pragma once
+ 
++#include <fstream>
++
+ extern "C"
+ {
+ #include "libcper/Cper.h"
+@@ -12,6 +14,7 @@ constexpr size_t length8 = 8;
+ constexpr size_t length32 = 32;
+ constexpr size_t length96 = 96;
+ constexpr size_t length91 = 91;
++constexpr size_t traceBufferDataLen = 2048;
+ 
+ struct CrashdumpData
+ {
+@@ -51,6 +54,13 @@ struct AmdFatalErrorData
+ 
+ using EFI_AMD_FATAL_ERROR_DATA = AmdFatalErrorData;
+ 
++struct AmdMpTraceBufferData
++{
++    uint32_t TracelogData[traceBufferDataLen];
++} __attribute__((packed));
++
++using EFI_AMD_MP_TRACELOG_DATA = AmdMpTraceBufferData;
++
+ struct RuntimeErrorInfo
+ {
+     EFI_IA32_X64_PROCESSOR_ERROR_RECORD ProcError;
+@@ -66,6 +76,11 @@ struct FatalCperRecord
+     EFI_COMMON_ERROR_RECORD_HEADER Header;
+     EFI_ERROR_SECTION_DESCRIPTOR* SectionDescriptor;
+     EFI_AMD_FATAL_ERROR_DATA* ErrorRecord;
++    EFI_AMD_MP_TRACELOG_DATA* TraceBufferRecord;
++    FatalCperRecord() :
++        SectionDescriptor(nullptr), ErrorRecord(nullptr),
++        TraceBufferRecord(nullptr)
++    {}    
+ } __attribute__((packed));
+ 
+ struct McaRuntimeCperRecord
+diff --git a/include/tbai_manager.hpp b/include/tbai_manager.hpp
+new file mode 100644
+index 0000000..ced75bb
+--- /dev/null
++++ b/include/tbai_manager.hpp
+@@ -0,0 +1,90 @@
++#pragma once
++
++#include "crashdump_manager.hpp"
++#include "oem_cper.hpp"
++
++#include <com/amd/Dump/Create/server.hpp>
++#include <sdbusplus/asio/object_server.hpp>
++#include <sdbusplus/server.hpp>
++#include <xyz/openbmc_project/Dump/Create/server.hpp>
++
++namespace amd
++{
++namespace ras
++{
++namespace tbai
++{
++static constexpr auto service = "com.amd.RAS";
++static constexpr auto objectPath = "/com/amd/TBAI";
++
++using createDumpIface = sdbusplus::server::object_t<
++    sdbusplus::xyz::openbmc_project::Dump::server::Create,
++    sdbusplus::com::amd::Dump::server::Create>;
++
++using DumpCreateParams =
++    std::map<std::string, std::variant<std::string, uint64_t>>;
++
++/**
++ * @brief Manager class which adds the RAS configuration
++ * parameter values to the D-Bus interface.
++ *
++ * @details The class pulls the default values of ras_config.json file
++ * into the D-Bus interface and overrides the getAttribute()
++ * and setAttribute() of the RAS configuration interface.
++ *
++ *  @param[in] manager - Reference to the TBAI manager.
++ *  @param[in] objectServer - The D-Bus object server.
++ *  @param[in] systemBus - Shared pointer to the D-Bus system bus connection.
++ *  @param[in] io - Boost ASIO I/O context for asynchronous operations.
++ *  @param[in] node - host node number to determine single or multi host.
++ */
++class Manager : virtual public createDumpIface
++{
++  public:
++    Manager() = delete;
++    Manager(const Manager&) = delete;
++    Manager& operator=(const Manager&) = delete;
++    Manager(Manager&&) = delete;
++    Manager& operator=(Manager&&) = delete;
++    ~Manager() = default;
++
++    Manager(sdbusplus::asio::object_server&,
++            std::shared_ptr<sdbusplus::asio::connection>&,
++            boost::asio::io_context&, std::string&);
++
++    /** @brief Implementation for CreateDump
++     *  Method to create Dump.
++     *
++     *  @return object_path - The object path of the new entry.
++     */
++    sdbusplus::message::object_path
++        createDump(DumpCreateParams params) override;
++
++  private:
++    sdbusplus::asio::object_server& objServer;
++    std::shared_ptr<sdbusplus::asio::connection>& systemBus;
++    boost::asio::io_context& io;
++
++    std::string node;
++    std::string mpName;
++
++    std::mutex tbaiMutex;
++
++    std::vector<std::pair<std::string, int>> mpToIndexMap;
++
++    size_t currentSectionCount;
++    size_t inputSocNum;
++    size_t cpuCount;
++
++    std::vector<size_t> socIndex;
++
++    std::shared_ptr<FatalCperRecord> mpxPtr;
++
++    std::map<int, std::unique_ptr<CrashdumpInterface>> tbaiRecordMgr;
++
++    void harvestMpxTraceLog(DumpCreateParams params);
++};
++
++} // namespace tbai
++} // namespace ras
++} // namespace amd
+diff --git a/include/utils/cper.hpp b/include/utils/cper.hpp
+index d32440b..996dc0a 100644
+--- a/include/utils/cper.hpp
++++ b/include/utils/cper.hpp
+@@ -6,6 +6,7 @@ static constexpr std::string_view runtimeMcaErr = "RUNTIME_MCA_ERROR";
+ static constexpr std::string_view runtimePcieErr = "RUNTIME_PCIE_ERROR";
+ static constexpr std::string_view runtimeDramErr = "RUNTIME_DRAM_ERROR";
+ static constexpr std::string_view fatalErr = "FATAL";
++static constexpr std::string_view mpxTracelog = "MPX_TRACE_LOG";
+ 
+ namespace amd
+ {
+@@ -25,6 +26,8 @@ constexpr uint8_t addcGenNumber3 = 0x03;
+ constexpr uint8_t familyId1ah = 0x1A;
+ constexpr uint16_t pcieVendorId = 0x1022;
+ constexpr uint8_t minorRevision = 0xB;
++constexpr size_t maxByte = 0xFF;
++constexpr size_t quadBit = 4;
+ 
+ /** @brief Finds a filename in the RAS directory that matches a given pattern.
+  *
+@@ -194,7 +197,7 @@ void dumpContext(const std::shared_ptr<FatalCperRecord>&, uint16_t numbanks,
+  */
+ template <typename T>
+ void createFile(const std::shared_ptr<T>&, const std::string_view&, uint16_t,
+-                size_t&, const std::string&);
++                size_t&, const std::string&, const std::string& tbaiFileName = "");
+ 
+ /** @brief Checks if the signature ID matches the configuration list.
+  *
+diff --git a/include/utils/util.hpp b/include/utils/util.hpp
+index b4cc881..6ae6b0d 100644
+--- a/include/utils/util.hpp
++++ b/include/utils/util.hpp
+@@ -134,6 +134,10 @@ ReturnType getProperty(sdbusplus::bus::bus&, const char*, const char*,
+  */
+ bool checkObjPath(std::string);
+ 
++void getCpuCount(size_t&, std::string&, std::vector<size_t>&);
++
++void mpTraceLogInfo(std::vector<std::pair<std::string, int>>&);
++
+ } // namespace util
+ } // namespace ras
+ } // namespace amd
+diff --git a/meson.build b/meson.build
+index fa516c3..09065ba 100644
+--- a/meson.build
++++ b/meson.build
+@@ -12,6 +12,8 @@ src_platform_default_file = get_option('src_platform_default_file')
+ src_config_file = get_option('src_config_file')
+ ras_dir = get_option('ras_dir')
+ index_file = get_option('index_file')
++mp_info_file = get_option('mp_info_file')
++src_mp_info_file = get_option('src_mp_info_file')
+ 
+ cpp_args = [
+     '-DCONFIG_FILE="' + config_file + '"',
+@@ -21,6 +23,8 @@ cpp_args = [
+     '-DINDEX_FILE="' + index_file + '"',
+     '-DSRC_CONFIG_FILE="' + src_config_file + '"',
+     '-DRAS_DIR="' + ras_dir + '"',
++    '-DMP_INFO_FILE="' + mp_info_file + '"',
++    '-DSRC_MP_INFO_FILE="' + src_mp_info_file + '"',    
+ ]
+ 
+ libdir = meson.current_source_dir() + './lib/'
+@@ -63,6 +67,7 @@ endif
+ 
+ sources = [
+     'src/config_manager.cpp',
++    'src/tbai_manager.cpp',
+     'src/main.cpp',
+     'src/base_manager.cpp',
+     'src/apml_manager.cpp',
+@@ -95,6 +100,7 @@ install_data(
+         join_paths(meson.current_source_dir(), 'config', 'amd_ras_gpio_config0.json'),
+         join_paths(meson.current_source_dir(), 'config', 'amd_ras_gpio_config1.json'),
+         join_paths(meson.current_source_dir(), 'config', 'amd_ras_gpio_config2.json'),
++        join_paths(meson.current_source_dir(), 'config', 'mp_info.json'),
+     ],
+     install_dir: ras_config_dir
+ )
+diff --git a/meson_options.txt b/meson_options.txt
+index 50b5da7..2513765 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -7,3 +7,5 @@ option('src_config_file', type: 'string', value: '/usr/share/amd-bmc-ras/ras_con
+ option('src_platform_default_file', type: 'string', value: '/usr/share/amd-bmc-ras/platform_default.json', description: 'Path to the source default platform configuration file')
+ option('ras_dir', type: 'string', value: '/var/lib/amd-bmc-ras/', description: 'Path to the RAS directory')
+ option('index_file', type: 'string', value: '/var/lib/amd-bmc-ras/current_index', description: 'Path to the current index file')
++option('mp_info_file',type: 'string', value: '/var/lib/amd-bmc-ras/mp_info.json',description: 'Path to the MP info list json file')
++option('src_mp_info_file', type: 'string', value: '/usr/share/amd-bmc-ras/mp_info.json', description: 'Path to the source MP info list json file')
+diff --git a/src/apml_manager.cpp b/src/apml_manager.cpp
+index b17195d..a8b2aeb 100644
+--- a/src/apml_manager.cpp
++++ b/src/apml_manager.cpp
+@@ -370,6 +370,7 @@ void Manager::init()
+     uint32_t dataOut = 0;
+ 
+     getCpuSocketInfo();
++    amd::ras::util::mpTraceLogInfo(mpToIndexMap);
+ 
+     // Try to copy the GPIO config file, throw exception if it fails
+     try
+@@ -1488,6 +1489,7 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
+     uint32_t buffer;
+     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
+     bool validSignatureId = false;
++    uint16_t tbSectionCount;
+ 
+     uint32_t syndOffsetLo = 0;
+     uint32_t syndOffsetHi = 0;
+@@ -1518,23 +1520,57 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
+ 
+     uint16_t sectionCount = 2;  // Standard section count is 2
+     uint32_t errorSeverity = 1; // Error severity for fatal error is 1
++amd::ras::config::Manager::AttributeValue p0MpListVal =
++        configMgr.getAttribute("Soc0MPList");
++    std::vector<std::string>* p0MpList =
++        std::get_if<std::vector<std::string>>(&p0MpListVal);
++
++    amd::ras::config::Manager::AttributeValue p1MpListVal =
++        configMgr.getAttribute("Soc1MPList");
++    std::vector<std::string>* p1MpList =
++        std::get_if<std::vector<std::string>>(&p1MpListVal);
++
++    if (node == "1")
++    {
++        tbSectionCount = p0MpList->size();
++    }
++    else if (node == "2")
++    {
++        tbSectionCount = p1MpList->size();
++    }
++    else
++    {
++        tbSectionCount =
++            p0MpList->size() + (cpuCount == 2 ? p1MpList->size() : 0);
++    }
++
++    lg2::info("TB section count {TB}", "TB", tbSectionCount);
++
++    fatalSectionCount =
++        sectionCount + tbSectionCount; // Standard section count is 2
+ 
+     if (rcd->SectionDescriptor == nullptr)
+     {
+-        rcd->SectionDescriptor = new EFI_ERROR_SECTION_DESCRIPTOR[sectionCount];
++        rcd->SectionDescriptor = new EFI_ERROR_SECTION_DESCRIPTOR[fatalSectionCount];
+         std::memset(rcd->SectionDescriptor, 0,
+-                    2 * sizeof(EFI_ERROR_SECTION_DESCRIPTOR));
++                    fatalSectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR));
+     }
+ 
+     if (rcd->ErrorRecord == nullptr)
+     {
+         rcd->ErrorRecord = new EFI_AMD_FATAL_ERROR_DATA[sectionCount];
+-        std::memset(rcd->ErrorRecord, 0, 2 * sizeof(EFI_AMD_FATAL_ERROR_DATA));
++        std::memset(rcd->ErrorRecord, 0, sectionCount * sizeof(EFI_AMD_FATAL_ERROR_DATA));
+     }
++    if (rcd->TraceBufferRecord == nullptr)
++    {
++        rcd->TraceBufferRecord = new EFI_AMD_MP_TRACELOG_DATA[tbSectionCount];
++        std::memset(rcd->TraceBufferRecord, 0,
++                    tbSectionCount * sizeof(EFI_AMD_MP_TRACELOG_DATA));
++    }    
+ 
+-    amd::ras::util::cper::dumpHeader(rcd, sectionCount, errorSeverity, fatalErr,
++    amd::ras::util::cper::dumpHeader(rcd, fatalSectionCount, errorSeverity, fatalErr,
+                                      boardId, recordId);
+-    amd::ras::util::cper::dumpErrorDescriptor(rcd, sectionCount, fatalErr,
++    amd::ras::util::cper::dumpErrorDescriptor(rcd, fatalSectionCount, fatalErr,
+                                               &errorSeverity, progId);
+     amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
+                                              errorCheck.df_block_instances);
+@@ -1542,6 +1578,17 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
+                                       errorCheck.err_log_len, socNum, ppin,
+                                       uCode, contextType);
+ 
++    // Call harvestMpxTraceLog based on socket
++    if ((socNum == socket0) && (node == "0" || node == "1"))
++    {
++        harvestMpxTraceLog(rcd, socNum, *p0MpList, 0);
++    }
++    else if ((socNum == socket1))
++    {
++        harvestMpxTraceLog(rcd, socNum, *p1MpList,
++                           node == "0" ? p0MpList->size() : 0);
++    }
++
+     uint8_t blkId;
+ 
+     getLastTransAddr(rcd, socNum);
+@@ -1717,6 +1764,90 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
+     }
+ }
+ 
++void Manager::harvestMpxTraceLog(
++    const std::shared_ptr<FatalCperRecord>& fatalPtr, uint8_t socNum,
++    std::vector<std::string>& mpList, uint8_t baseSectionCount)
++{
++    uint8_t lutIndex;
++    uint8_t dwNum = 1; // Number of double words to be read
++    struct trace_buf_data_in dataIn = {0, 0, 0};
++    uint32_t buffer;
++    uint16_t maxOffset = 2048;
++    size_t index = 0, offset = 0;
++    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
++
++    for (const std::string& item : mpList)
++    {
++        auto it = std::find_if(mpToIndexMap.begin(), mpToIndexMap.end(),
++                               [&](const auto& p) { return p.first == item; });
++
++        if (it != mpToIndexMap.end())
++        {
++            std::string fruText;
++
++            lg2::info("Harvesting tracelog data for Socket : {SOC}, MP: {MP}",
++                      "SOC", socNum, "MP", item);
++
++            if (socNum == socket0)
++            {
++                fruText = "SOC_0_" + item;
++            }
++            else if (socNum == socket1)
++            {
++                fruText = "SOC_1_" + item;
++            }
++
++            size_t len = fruText.size();
++
++            memcpy(fatalPtr->SectionDescriptor[2 + baseSectionCount + index]
++                       .FruString,
++                   fruText.c_str(), len + 1);
++
++            lutIndex = it->second;
++
++            fatalPtr->SectionDescriptor[2 + baseSectionCount + index]
++                .SectionType.Data1 |= (lutIndex << 11);
++
++            fatalPtr->SectionDescriptor[2 + baseSectionCount + index]
++                .SectionType.Data2 |= 0x1022;
++
++            dataIn.entry_off = offset;
++            dataIn.lut_index = lutIndex;
++            dataIn.dw_num = dwNum;
++
++            for (offset = 0; offset < maxOffset; offset++)
++            {
++                memset(&buffer, 0, sizeof(buffer));
++                dataIn.entry_off = offset * 4;
++
++                ret = esmi_oob_tbai_read_dw(socNum, dataIn, &buffer);
++                ret = esmi_oob_tbai_read_dw(socNum, dataIn, &buffer);
++
++                if (ret != OOB_SUCCESS)
++                {
++                    lg2::error(
++                        "Socket {SOCKET} : Failed to get TBAI trace data "
++                        "from LutIndex:{LUT}, Offset:{OFFSET}",
++                        "SOCKET", socNum, "LUT", item, "OFFSET", lg2::hex,
++                        offset);
++                    continue;
++
++                    fatalPtr->TraceBufferRecord[baseSectionCount + index]
++                        .TracelogData[offset] =
++                        badData; // Write BAADDA7A pattern on error
++                }
++                else
++                {
++                    fatalPtr->TraceBufferRecord[baseSectionCount + index]
++                        .TracelogData[offset] = buffer;
++                }
++                usleep(3);
++            }
++            index++;
++        }
++    }
++}
++
+ bool Manager::harvestMcaValidityCheck(uint8_t info,
+                                       struct ras_df_err_chk* errorCheck)
+ {
+@@ -1943,7 +2074,7 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
+     }
+     if (resetReady == true)
+     {
+-        amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount, node);
++        amd::ras::util::cper::createFile(rcd, fatalErr, fatalSectionCount, errCount, node);
+ 
+         amd::ras::util::cper::exportToDBus(errCount - 1, rcd->Header.TimeStamp,
+                                            objectServer, systemBus, node);
+@@ -2069,6 +2200,11 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
+             delete[] rcd->ErrorRecord;
+             rcd->ErrorRecord = nullptr;
+         }
++        if (rcd->TraceBufferRecord != nullptr)
++        {
++            delete[] rcd->TraceBufferRecord;
++            rcd->TraceBufferRecord = nullptr;
++        }
+ 
+         rcd = nullptr;
+ 
+@@ -2305,7 +2441,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
+             }
+             if (resetReady == true)
+             {
+-                amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount,
++                amd::ras::util::cper::createFile(rcd, fatalErr, fatalSectionCount, errCount,
+                                                  node);
+ 
+                 amd::ras::util::cper::exportToDBus(
+@@ -2443,7 +2579,12 @@ bool Manager::decodeInterrupt(uint8_t socNum)
+                     delete[] rcd->ErrorRecord;
+                     rcd->ErrorRecord = nullptr;
+                 }
+-
++                if (rcd->TraceBufferRecord != nullptr)
++                {
++                    delete[] rcd->TraceBufferRecord;
++                    rcd->TraceBufferRecord = nullptr;
++                }
++                
+                 rcd = nullptr;
+ 
+                 cpuAlertProcessed.assign(cpuCount, false);
+diff --git a/src/base_manager.cpp b/src/base_manager.cpp
+index aeea7b8..f204a56 100644
+--- a/src/base_manager.cpp
++++ b/src/base_manager.cpp
+@@ -24,54 +24,7 @@ constexpr std::string_view inventoryInterface =
+ 
+ void Manager::getCpuSocketInfo()
+ {
+-    // Try to copy the platform default file, throw exception if it fails
+-    try
+-    {
+-        std::filesystem::copy_file(
+-            SRC_PLATFORM_DEFAULT_FILE, PLATFORM_DEFAULT_FILE,
+-            std::filesystem::copy_options::overwrite_existing);
+-    }
+-    catch (const std::filesystem::filesystem_error& e)
+-    {
+-        lg2::error("Failed to copy platform default file : {ERROR}", "ERROR",
+-                   strerror(errno));
+-        throw std::runtime_error("Failed to copy platform default file");
+-    }
+-
+-    std::ifstream file("/var/lib/platform-config/platform.json");
+-
+-    if (!file.is_open())
+-    {
+-        file.open(PLATFORM_DEFAULT_FILE);
+-    }
+-
+-    nlohmann::json jsonData = nlohmann::json::parse(file);
+-
+-    if (jsonData.contains("CpuCount"))
+-    {
+-        cpuCount = jsonData["CpuCount"];
+-    }
+-    else
+-    {
+-        throw std::runtime_error("Unable to read the CPU count");
+-    }
+-
+-    if (node == "0")
+-    {
+-        for (size_t i = 0; i < cpuCount; i++)
+-        {
+-            socIndex.push_back(i);
+-        }
+-    }
+-    else
+-    {
+-        cpuCount = 1;
+-        size_t socNum = std::stoul(node) - 1;
+-        socIndex.push_back(socNum);
+-    }
+-
+-    file.close();
+-
++   amd::ras::util::getCpuCount(cpuCount, node, socIndex);
+     cpuId = std::make_unique<CpuId[]>(cpuCount);
+ 
+     uCode = std::make_unique<uint32_t[]>(cpuCount);
+diff --git a/src/config_manager.cpp b/src/config_manager.cpp
+index be8a64a..64f2dc6 100644
+--- a/src/config_manager.cpp
++++ b/src/config_manager.cpp
+@@ -13,6 +13,11 @@ namespace ras
+ {
+ namespace config
+ {
++
++std::array<uint64_t, maxErrorIndex> correctableCPUErrors{};
++std::array<uint64_t, maxErrorIndex> noncorrectableCPUErrors{};
++std::array<uint64_t, maxErrorIndex> correctableOtherErrors{};
++std::array<uint64_t, maxErrorIndex> noncorrectableOtherErrors{};
+ namespace fs = std::filesystem;
+ 
+ void Manager::setAttribute(AttributeName attribute, AttributeValue value)
+@@ -337,6 +342,64 @@ void Manager::deleteAll()
+     amd::ras::util::cper::deleteCrashdumpInterface();
+ }
+ 
++void Manager::loadErrorCounts()
++{
++    std::ifstream file(errorCountFile);
++    if (file.is_open())
++    {
++        try
++        {
++            nlohmann::json data = nlohmann::json::parse(file);
++            for (size_t i = 0; i < maxErrorIndex; ++i)
++            {
++                correctableCPUErrors[i] =
++                    data["correctableCPUErrors"][i].get<uint64_t>();
++                noncorrectableCPUErrors[i] =
++                    data["noncorrectableCPUErrors"][i].get<uint64_t>();
++                correctableOtherErrors[i] =
++                    data["correctableOtherErrors"][i].get<uint64_t>();
++                noncorrectableOtherErrors[i] =
++                    data["noncorrectableOtherErrors"][i].get<uint64_t>();
++            }
++            lg2::info("Error counts loaded from {FILE}", "FILE",
++                       errorCountFile);
++        }
++        catch (const nlohmann::json::exception& e)
++        {
++            lg2::error("Failed to parse {FILE}: {ERR}", "FILE",
++                        errorCountFile, "ERR", e.what());
++            saveErrorCounts();
++        }
++    }
++    else
++    {
++        lg2::info("{FILE} not found, creating with defaults", "FILE",
++                   errorCountFile);
++        saveErrorCounts();
++    }
++}
++
++void Manager::saveErrorCounts()
++{
++    std::filesystem::create_directories(
++        std::filesystem::path(errorCountFile).parent_path());
++
++    nlohmann::json data;
++    data["correctableCPUErrors"] = correctableCPUErrors;
++    data["noncorrectableCPUErrors"] = noncorrectableCPUErrors;
++    data["correctableOtherErrors"] = correctableOtherErrors;
++    data["noncorrectableOtherErrors"] = noncorrectableOtherErrors;
++
++    std::ofstream file(errorCountFile);
++    if (!file.is_open())
++    {
++        lg2::error("Failed to open {FILE} for writing", "FILE",
++                    errorCountFile);
++        return;
++    }
++    file << data.dump(4);
++}
++
+ Manager::Manager(sdbusplus::asio::object_server& objectServer,
+                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
+                  std::string& node) :
+@@ -344,6 +407,7 @@ Manager::Manager(sdbusplus::asio::object_server& objectServer,
+     objServer(objectServer), systemBus(systemBus), node(node)
+ {
+     updateConfigToDbus();
++    loadErrorCounts();
+ }
+ 
+ } // namespace config
+diff --git a/src/main.cpp b/src/main.cpp
+index fa10163..95e29cb 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -1,6 +1,7 @@
+ #include "config_manager.hpp"
+ #ifdef APML
+ #include "apml_manager.hpp"
++#include "tbai_manager.hpp"
+ #endif
+ #include "base_manager.hpp"
+ 
+@@ -41,6 +42,7 @@ int main(int argc, char* argv[])
+     amd::ras::config::Manager manager(objectServer, systemBus, node);
+ 
+ #ifdef APML
++    amd::ras::tbai::Manager tbaiManager(objectServer, systemBus, io, node);
+     amd::ras::Manager* errorMgr =
+         new amd::ras::apml::Manager(manager, objectServer, systemBus, io, node);
+ 
+diff --git a/src/tbai_manager.cpp b/src/tbai_manager.cpp
+new file mode 100644
+index 0000000..eb89e95
+--- /dev/null
++++ b/src/tbai_manager.cpp
+@@ -0,0 +1,451 @@
++#include "tbai_manager.hpp"
++
++#include "utils/cper.hpp"
++#include "utils/util.hpp"
++
++extern "C"
++{
++#include "esmi_mailbox.h"
++}
++
++#include <phosphor-logging/lg2.hpp>
++
++#include <regex>
++
++constexpr uint32_t badData = 0xBAADDA7A;
++constexpr size_t informational = 3;
++constexpr uint16_t hundred = 100;
++
++EFI_GUID gEfiAmdTraceBufferGuid = {
++    0x3231C28E,
++    0xB3A8,
++    0x4814,
++    {0xB3, 0xA4, 0x71, 0x29, 0xEF, 0xD6, 0x35, 0x97}};
++
++namespace amd
++{
++namespace ras
++{
++namespace tbai
++{
++sdbusplus::message::object_path Manager::createDump(DumpCreateParams params)
++{
++    std::string objPath = "/com/amd/TBAI/tracelogs";
++
++    auto it = params.find(sdbusplus::com::amd::Dump::server::Create::
++                              convertCreateParametersToString(
++                                  sdbusplus::com::amd::Dump::server::Create::
++                                      CreateParameters::MPName));
++
++    if (it != params.end())
++    {
++        mpName = std::get<std::string>(it->second);
++
++        if (node == "0")
++        {
++            if (!(mpName.starts_with("SOC_0_") ||
++                  mpName.starts_with("SOC_1_") || mpName == "All"))
++            {
++                lg2::error("Not a valid MPName string");
++                return std::string();
++            }
++        }
++        else
++        {
++            std::string tmpMpName =
++                "SOC_" + std::to_string(std::stoul(node) - 1) + "_";
++
++            if (!(mpName.starts_with(tmpMpName) || mpName == "All"))
++            {
++                lg2::error("Not a valid MPName string");
++                return std::string();
++            }
++        }
++    }
++    else
++    {
++        lg2::error("MP name string is not provided");
++        return std::string();
++    }
++
++    std::thread([this, params]() {
++        this->harvestMpxTraceLog(params);
++    }).detach();
++
++    return objPath;
++}
++
++void Manager::harvestMpxTraceLog(DumpCreateParams params)
++{
++    std::unique_lock lock(tbaiMutex);
++    size_t sectionCount = 0;
++    size_t sectionIndex = 0;
++    uint32_t boardId = 0;
++    uint64_t recordId = 1;
++    uint32_t errorSeverity = informational;
++    uint8_t lutIndex;
++    uint8_t progId = 1;
++    constexpr uint8_t minorRevision = 0xB;
++
++    size_t totalSectionCount;
++
++    totalSectionCount = cpuCount * mpToIndexMap.size();
++
++    auto it = params.find(sdbusplus::com::amd::Dump::server::Create::
++                              convertCreateParametersToString(
++                                  sdbusplus::com::amd::Dump::server::Create::
++                                      CreateParameters::MPName));
++
++    if (it != params.end())
++    {
++        mpName = std::get<std::string>(it->second);
++
++        if (mpName.starts_with("SOC_0_"))
++        {
++            currentSectionCount = 1;
++            inputSocNum = 0;
++            mpName = mpName.substr(6); // remove "SOC_0_"
++        }
++        else if (mpName.starts_with("SOC_1_"))
++        {
++            currentSectionCount = 1;
++            inputSocNum = 1;
++            mpName = mpName.substr(6); // remove "SOC_1_"
++        }
++        else if (mpName == "All")
++        {
++            currentSectionCount = totalSectionCount;
++            inputSocNum = 0;
++        }
++    }
++
++    mpxPtr = std::make_shared<FatalCperRecord>();
++
++    if (mpxPtr->SectionDescriptor == nullptr)
++    {
++        mpxPtr->SectionDescriptor =
++            new EFI_ERROR_SECTION_DESCRIPTOR[currentSectionCount];
++        std::memset(mpxPtr->SectionDescriptor, 0,
++                    currentSectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR));
++    }
++    mpxPtr->ErrorRecord = nullptr;
++
++    if (mpxPtr->TraceBufferRecord == nullptr)
++    {
++        mpxPtr->TraceBufferRecord =
++            new EFI_AMD_MP_TRACELOG_DATA[currentSectionCount];
++        std::memset(mpxPtr->TraceBufferRecord, 0,
++                    currentSectionCount * sizeof(EFI_AMD_MP_TRACELOG_DATA));
++    }
++
++    amd::ras::util::cper::dumpHeader(mpxPtr, currentSectionCount, errorSeverity,
++                                     mpxTracelog, boardId, recordId);
++
++    /*Populate section descriptor and section data*/
++    for (size_t socNumber : socIndex)
++    {
++        for (const auto& pair : mpToIndexMap)
++        {
++            if (mpName != "All")
++            {
++                if ((inputSocNum != socNumber) || (pair.first != mpName))
++                {
++                    continue;
++                }
++            }
++
++            lg2::info("First {FIR} mpName {MP}", "FIR", pair.first, "MP",
++                      mpName);
++            mpxPtr->SectionDescriptor[sectionCount].SectionLength =
++                sizeof(EFI_AMD_MP_TRACELOG_DATA);
++
++            mpxPtr->SectionDescriptor[sectionCount].SectionOffset =
++                sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
++                (currentSectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR)) +
++                (sectionCount * sizeof(EFI_AMD_MP_TRACELOG_DATA));
++
++            mpxPtr->SectionDescriptor[sectionCount].Severity =
++                informational; // 3 = informational
++
++            std::string mpName = pair.first;
++            lutIndex = pair.second;
++
++            mpxPtr->SectionDescriptor[sectionCount].SectionType.Data1 |=
++                (lutIndex << 11);
++
++            mpxPtr->SectionDescriptor[sectionCount].SectionType.Data2 |= 0x1022;
++
++            mpxPtr->SectionDescriptor[sectionCount].Revision =
++                ((((amd::ras::util::cper::addcGenNumber3 &
++                    amd::ras::util::cper::maxByte)
++                   << amd::ras::util::cper::quadBit) |
++                  progId)
++                 << 8) |
++                minorRevision;
++
++            std::string fruText;
++            if (socNumber == 0)
++            {
++                fruText = "SOC_0_" + mpName;
++            }
++            else if (socNumber == 1)
++            {
++                fruText = "SOC_1_" + mpName;
++            }
++
++            size_t len = fruText.size();
++
++            memcpy(mpxPtr->SectionDescriptor[sectionCount].FruString,
++                   fruText.c_str(), len + 1);
++
++            uint8_t dwNum = 1; // Number of double words to be read
++            struct trace_buf_data_in dataIn = {0, 0, 0};
++            uint32_t buffer;
++            uint16_t maxOffset = 2048;
++            size_t offset = 0;
++            oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
++
++            dataIn.entry_off = offset;
++            dataIn.lut_index = lutIndex;
++            dataIn.dw_num = dwNum;
++
++            for (offset = 0; offset < maxOffset; offset++)
++            {
++                memset(&buffer, 0, sizeof(buffer));
++                dataIn.entry_off = offset * 4;
++
++                ret = esmi_oob_tbai_read_dw(socNumber, dataIn, &buffer);
++                ret = esmi_oob_tbai_read_dw(socNumber, dataIn, &buffer);
++
++                if (ret != OOB_SUCCESS)
++                {
++                    lg2::error(
++                        "Socket {SOCKET} : Failed to get TBAI trace data "
++                        "from LutIndex:{LUT}, Offset:{OFFSET}",
++                        "SOCKET", socNumber, "LUT", lutIndex, "OFFSET",
++                        lg2::hex, offset);
++
++                    mpxPtr->TraceBufferRecord[sectionCount]
++                        .TracelogData[offset] =
++                        badData; // Write BAADDA7A pattern on error
++                }
++                else
++                {
++                    lg2::info(
++                        "Socket {SOCKET} : TBAI trace data "
++                        "from LutIndex:{LUT}, Offset:{OFFSET},data: {BUF}",
++                        "SOCKET", socNumber, "LUT", lutIndex, "OFFSET",
++                        lg2::hex, offset, "BUF", lg2::hex, buffer);
++
++                    mpxPtr->TraceBufferRecord[sectionCount]
++                        .TracelogData[offset] = buffer;
++                }
++                usleep(3);
++            }
++            sectionCount++;
++        }
++    }
++    lg2::info("Data collection done");
++
++    std::string filename;
++    std::string lowerMpName;
++    std::string dbusPath;
++    size_t index;
++
++    if (mpName == "All")
++    {
++        if (node == "1" || node == "2")
++        {
++            filename = "node" + node + "mpx-tracelog.cper";
++        }
++        else
++        {
++            filename = "mpx-tracelog.cper";
++        }
++        dbusPath = std::string(objectPath) + "/" + "mpx";
++        index = (cpuCount + 1) + mpToIndexMap.size();
++    }
++    else
++    {
++        lowerMpName = mpName;
++        std::transform(lowerMpName.begin(), lowerMpName.end(),
++                       lowerMpName.begin(), ::tolower);
++
++        filename = "soc_" + std::to_string(inputSocNum) + "_" + lowerMpName +
++                   "_tracelog.cper";
++
++        dbusPath = std::string(objectPath) + "/soc_" +
++                   std::to_string(inputSocNum) + "_" + lowerMpName;
++
++        index = (inputSocNum + 1) * lutIndex;
++    }
++    amd::ras::util::cper::createFile(mpxPtr, mpxTracelog, currentSectionCount,
++                                     sectionIndex, node, filename);
++    // Use ISO-8601 as the timestamp format
++    // For example: 2022-07-19T14:13:47Z
++    const EFI_ERROR_TIME_STAMP& TimeStampStr = mpxPtr->Header.TimeStamp;
++
++    const EFI_ERROR_TIME_STAMP& t = TimeStampStr;
++
++    char timestamp[30];
++    sprintf(timestamp, "%d-%d-%dT%d:%d:%dZ", (t.Century - 1) * hundred + t.Year,
++            t.Month, t.Day, t.Hours, t.Minutes, t.Seconds);
++
++    if (amd::ras::util::checkObjPath(dbusPath) == true)
++    {
++        auto it = tbaiRecordMgr.find(index);
++        if (it != tbaiRecordMgr.end())
++        {
++            it->second.reset();
++            tbaiRecordMgr.erase(it);
++        }
++    }
++
++    std::unique_ptr<CrashdumpInterface> tbaiRecord =
++        std::make_unique<CrashdumpInterface>(objServer, systemBus, dbusPath);
++    tbaiRecord->filename(filename);
++    tbaiRecord->log(std::string(RAS_DIR) + filename);
++    tbaiRecord->timestamp(std::string{timestamp});
++
++    tbaiRecordMgr[index] = {std::move(tbaiRecord)};
++
++    if (mpxPtr->SectionDescriptor != nullptr)
++    {
++        delete[] mpxPtr->SectionDescriptor;
++        mpxPtr->SectionDescriptor = nullptr;
++    }
++    if (mpxPtr->TraceBufferRecord != nullptr)
++    {
++        delete[] mpxPtr->TraceBufferRecord;
++        mpxPtr->TraceBufferRecord = nullptr;
++    }
++    mpxPtr = nullptr;
++}
++
++Manager::Manager(sdbusplus::asio::object_server& objectServer,
++                 std::shared_ptr<sdbusplus::asio::connection>& systemBus,
++                 boost::asio::io_context& io, std::string& node) :
++    createDumpIface(*systemBus, objectPath), objServer(objectServer),
++    systemBus(systemBus), io(io), node(node)
++{
++    amd::ras::util::mpTraceLogInfo(mpToIndexMap);
++
++    amd::ras::util::getCpuCount(cpuCount, node, socIndex);
++
++    std::string dbusPath;
++    int index = -1;
++    std::string socId;
++
++    if (std::filesystem::exists(std::filesystem::path(RAS_DIR)))
++    {
++        std::regex mpPattern;
++        std::regex mpxPattern;
++
++        if (node == "0")
++        {
++            mpPattern = std::regex(R"(soc_(\d+)_(.*?)_tracelog\.cper)");
++            mpxPattern = std::regex(R"((.*?)\-tracelog\.cper)");
++        }
++        else if (node == "1")
++        {
++            mpPattern = std::regex(R"(soc_0_(.*?)_tracelog\.cper)");
++            mpxPattern = std::regex(R"(node_1_(.*?)\-tracelog\.cper)");
++        }
++        else if (node == "2")
++        {
++            mpPattern = std::regex(R"(soc_1_(.*?)_tracelog\.cper)");
++            mpxPattern = std::regex(R"(node_2_(.*?)\-tracelog\.cper)");
++        }
++
++        std::smatch match;
++
++        for (const auto& p : std::filesystem::directory_iterator(
++                 std::filesystem::path(RAS_DIR)))
++        {
++            std::string filename = p.path().filename().string();
++
++            if (std::regex_match(filename, match, mpPattern))
++            {
++                if (node == "0")
++                {
++                    socId = match[1].str();  // soc ID from regex
++                    mpName = match[2].str(); // MP name from regex
++                }
++                else
++                {
++                    socId = std::to_string(std::stoi(node) - 1);
++                    mpName = match[1].str(); // MP name from regex
++                }
++
++                dbusPath = std::string(objectPath) + "/soc_" + socId + "_" +
++                           mpName;
++
++                const std::string& s = match[2].str();
++                for (const auto& [key, val] : mpToIndexMap)
++                {
++                    if (key.size() == s.size() &&
++                        std::equal(
++                            key.begin(), key.end(), s.begin(),
++                            [](char a, char b) {
++                                return std::toupper(
++                                           static_cast<unsigned char>(a)) ==
++                                       std::toupper(
++                                           static_cast<unsigned char>(b));
++                            }))
++                    {
++                        index = (std::stoi(match[1].str()) * 1) + val;
++                    }
++                }
++                if (index == -1)
++                    continue;
++            }
++            else if (std::regex_match(filename, match, mpxPattern))
++            {
++                dbusPath = std::string(objectPath) + "/" + match[1].str();
++                index = (cpuCount + 1) * mpToIndexMap.size();
++            }
++            else
++            {
++                continue;
++            }
++
++            const std::string tbaiFilename = RAS_DIR + filename;
++            std::ifstream fin(tbaiFilename, std::ifstream::binary);
++            if (!fin.is_open())
++            {
++                lg2::warning("Broken MPX LOG CPER file: {CPERFILE}", "CPERFILE",
++                             tbaiFilename);
++                return;
++            }
++            fin.seekg(24); // Move the file pointer to offset 24
++            EFI_ERROR_TIME_STAMP timestamp;
++
++            if (!fin.read(reinterpret_cast<char*>(&timestamp),
++                          sizeof(timestamp)))
++            {
++                lg2::info("Failed to read data from the file");
++            }
++
++            fin.close();
++            const EFI_ERROR_TIME_STAMP& TimeStampStr = timestamp;
++
++            const EFI_ERROR_TIME_STAMP& t = TimeStampStr;
++            char timestampVal[30];
++            sprintf(timestampVal, "%d-%d-%dT%d:%d:%dZ",
++                    (t.Century - 1) * hundred + t.Year, t.Month, t.Day, t.Hours,
++                    t.Minutes, t.Seconds);
++
++            std::unique_ptr<CrashdumpInterface> tbaiRecord =
++                std::make_unique<CrashdumpInterface>(objServer, systemBus,
++                                                     dbusPath);
++            tbaiRecord->filename(filename);
++            tbaiRecord->log(std::string(RAS_DIR) + filename);
++            tbaiRecord->timestamp(std::string{timestampVal});
++
++            tbaiRecordMgr[index] = {std::move(tbaiRecord)};
++        }
++    }
++}
++} // namespace tbai
++} // namespace ras
++} // namespace amd
+diff --git a/src/utils/cper.cpp b/src/utils/cper.cpp
+index 723051b..7f2a291 100644
+--- a/src/utils/cper.cpp
++++ b/src/utils/cper.cpp
+@@ -20,17 +20,16 @@ namespace cper
+ {
+ 
+ constexpr std::string_view objectPath = "/com/amd/RAS";
+-constexpr size_t maxByte = 0xFF;
+ constexpr size_t singleBit = 1;
+ constexpr size_t doubleBit = 2;
+ constexpr size_t tripleBit = 3;
+-constexpr size_t quadBit = 4;
+ constexpr size_t hexBit = 6;
+ constexpr size_t octet = 8;
+ constexpr size_t nineteen = 19;
+ constexpr uint16_t hundred = 100;
+ constexpr uint16_t value256 = 0x100;
+ constexpr size_t maxCperCount = 10;
++constexpr size_t informational = 3;
+ 
+ EFI_GUID gEfiEventCreatorIdGuid = {
+     0x61FA3FAC,
+@@ -80,6 +79,12 @@ EFI_GUID gEfiEventNotificationTypeMceGuid = {
+     0x4cc5,
+     {0xBA, 0x88, 0x65, 0xAB, 0xE1, 0x49, 0x13, 0xBB}};
+ 
++EFI_GUID gEfiAmdTraceBufferGuid = {
++    0x2327BCA9,
++    0x9490,
++    0x4696,
++    {0xAD, 0xDE, 0x4C, 0x99, 0x46, 0xB8, 0x03, 0x00}};
++
+ std::map<int, std::unique_ptr<CrashdumpInterface>> managers;
+ 
+ template void dumpHeader(const std::shared_ptr<FatalCperRecord>& data,
+@@ -111,15 +116,15 @@ template void dumpErrorDescriptor(const std::shared_ptr<PcieRuntimeCperRecord>&,
+ 
+ template void createFile(const std::shared_ptr<FatalCperRecord>&,
+                          const std::string_view&, uint16_t, size_t&,
+-                         const std::string&);
++                         const std::string&, const std::string&);
+ 
+ template void createFile(const std::shared_ptr<McaRuntimeCperRecord>&,
+                          const std::string_view&, uint16_t, size_t&,
+-                         const std::string&);
++                         const std::string&, const std::string&);
+ 
+ template void createFile(const std::shared_ptr<PcieRuntimeCperRecord>&,
+                          const std::string_view&, uint16_t, size_t&,
+-                         const std::string&);
++                         const std::string&, const std::string&);
+ 
+ std::string findCperFilename(size_t number, const std::string& node)
+ {
+@@ -473,7 +478,7 @@ void dumpHeader(const std::shared_ptr<PtrType>& data, uint16_t sectionCount,
+     /*Number of valid sections associated with the record*/
+     data->Header.SectionCount = sectionCount;
+ 
+-    /*0 - Non-fatal uncorrected ; 1 - Fatal ; 2 - Corrected*/
++    /*0 - Non-fatal uncorrected ; 1 - Fatal ; 2 - Corrected; 3 - Informationa*/
+     data->Header.ErrorSeverity = errorSeverity;
+ 
+     /*Bit 0 = 1 -> PlatformID field contains valid info
+@@ -528,6 +533,16 @@ void dumpHeader(const std::shared_ptr<PtrType>& data, uint16_t sectionCount,
+         memcpy(&data->Header.NotificationType,
+                &gEfiEventNotificationTypeMceGuid, sizeof(EFI_GUID));
+     }
++    else if (errorType == mpxTracelog)
++    {
++        data->Header.RecordLength =
++            sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
++            (sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount) +
++            (sizeof(EFI_AMD_MP_TRACELOG_DATA) * sectionCount);
++
++        memcpy(&data->Header.NotificationType, &gEfiAmdTraceBufferGuid,
++               sizeof(EFI_GUID));
++    }    
+ 
+     /*TimeStamp when OOB controller received the event*/
+     calculateTimestamp(data);
+@@ -543,24 +558,39 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
+     {
+         if (errorType == fatalErr)
+         {
+-            /*offset in bytes of the corresponding section body
+-              from the base of the record header*/
+-            data->SectionDescriptor[i].SectionOffset =
+-                sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
+-                (sectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR)) +
+-                (i * sizeof(EFI_AMD_FATAL_ERROR_DATA));
++            if (i < 2) // Populate data for Fatal error descriptors which is 2
++                       // by default
++            {
++                /*offset in bytes of the corresponding section body
++                  from the base of the record header*/
++                data->SectionDescriptor[i].SectionOffset =
++                    sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
++                    (sectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR)) +
++                    (i * sizeof(EFI_AMD_FATAL_ERROR_DATA));
+ 
+-            /*The length in bytes of the section body*/
+-            data->SectionDescriptor[i].SectionLength =
+-                sizeof(EFI_AMD_FATAL_ERROR_DATA);
++                /*The length in bytes of the section body*/
++                data->SectionDescriptor[i].SectionLength =
++                    sizeof(EFI_AMD_FATAL_ERROR_DATA);
+ 
+-            memcpy(&data->SectionDescriptor[i].SectionType,
+-                   &gEfiAmdCrashdumpGuid, sizeof(EFI_GUID));
++                memcpy(&data->SectionDescriptor[i].SectionType,
++                       &gEfiAmdCrashdumpGuid, sizeof(EFI_GUID));
++
++                data->SectionDescriptor[i].Severity = singleBit; // 1 = Fatal
++            }
++            else
++            {
++                data->SectionDescriptor[i].SectionOffset =
++                    sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
++                    (sectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR)) +
++                    (2 * sizeof(EFI_AMD_FATAL_ERROR_DATA)) +
++                    ((i - 2) * sizeof(EFI_AMD_MP_TRACELOG_DATA));
+ 
+-            data->SectionDescriptor[i].Severity = singleBit; // 1 = Fatal
++                data->SectionDescriptor[i].SectionLength =
++                    sizeof(EFI_AMD_MP_TRACELOG_DATA);
+ 
+-            data->SectionDescriptor[i].FruString[0] = 'P';
+-            data->SectionDescriptor[i].FruString[1] = '0' + i;
++                data->SectionDescriptor[i].Severity =
++                    informational; // 3 = informational
++            }
+         }
+         else if ((errorType == runtimeMcaErr) || (errorType == runtimeDramErr))
+         {
+@@ -634,7 +664,7 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
+ template <typename PtrType>
+ void createFile(const std::shared_ptr<PtrType>& data,
+                 const std::string_view& errorType, uint16_t sectionCount,
+-                size_t& errCount, const std::string& node)
++                size_t& errCount, const std::string& node, const std::string& tbaiFileName)
+ {
+     static std::mutex index_file_mtx;
+     std::unique_lock lock(index_file_mtx);
+@@ -673,6 +703,10 @@ void createFile(const std::shared_ptr<PtrType>& data,
+     {
+         cperFileName = "pcie-runtime-" + cperFileName;
+     }
++    else if (errorType == mpxTracelog)
++    {
++        cperFileName = tbaiFileName;
++    }
+ 
+     if (node == "1" || node == "2")
+     {
+@@ -711,7 +745,11 @@ void createFile(const std::shared_ptr<PtrType>& data,
+                    singleBit, file);
+ 
+             fwrite(procPtr->McaErrorInfo,
+-                   sizeof(RUNTIME_ERROR_INFO) * sectionCount, singleBit, file);
++                   sizeof(RUNTIME_ERROR_INFO) * 2, singleBit, file);
++
++            fwrite(fatalPtr->TraceBufferRecord,
++                   sizeof(EFI_AMD_MP_TRACELOG_DATA) * (sectionCount - 2),
++                   singleBit, file);
+ 
+             std::string rasErrMsg = "Generated runtime CPER file : ";
+             rasErrMsg.append(cperFilePath);
+@@ -768,6 +806,24 @@ void createFile(const std::shared_ptr<PtrType>& data,
+                             "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+         }
+     }
++    else if (errorType == mpxTracelog)
++    {
++        if ((fatalPtr) && (file != nullptr))
++        {
++            fwrite(&fatalPtr->Header, sizeof(EFI_COMMON_ERROR_RECORD_HEADER),
++                   singleBit, file);
++
++            fwrite(fatalPtr->SectionDescriptor,
++                   sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount,
++                   singleBit, file);
++
++            fwrite(fatalPtr->TraceBufferRecord,
++                   sizeof(EFI_AMD_MP_TRACELOG_DATA) * sectionCount, singleBit,
++                   file);
++
++            lg2::info("CPER file generated for MPX tracelogs");
++        }
++    }    
+     fclose(file);
+ 
+     errCount++;
+diff --git a/src/utils/util.cpp b/src/utils/util.cpp
+index 64e41ab..8bed2d1 100644
+--- a/src/utils/util.cpp
++++ b/src/utils/util.cpp
+@@ -6,6 +6,7 @@ extern "C"
+ #include "esmi_rmi.h"
+ }
+ 
++#include <nlohmann/json.hpp>
+ #include <phosphor-logging/lg2.hpp>
+ 
+ #include <algorithm>
+@@ -323,6 +324,87 @@ bool checkObjPath(std::string dbusPath)
+     return filePathExist;
+ }
+ 
++void getCpuCount(size_t& cpuCount, std::string& node,
++                 std::vector<size_t>& socIndex)
++{
++    // Try to copy the platform default file, throw exception if it fails
++    try
++    {
++        std::filesystem::copy_file(
++            SRC_PLATFORM_DEFAULT_FILE, PLATFORM_DEFAULT_FILE,
++            std::filesystem::copy_options::overwrite_existing);
++    }
++    catch (const std::filesystem::filesystem_error& e)
++    {
++        lg2::error("Failed to copy platform default file : {ERROR}", "ERROR",
++                   strerror(errno));
++        throw std::runtime_error("Failed to copy platform default file");
++    }
++
++    std::ifstream file("/var/lib/platform-config/platform.json");
++
++    if (!file.is_open())
++    {
++        file.open(PLATFORM_DEFAULT_FILE);
++    }
++
++    nlohmann::json jsonData = nlohmann::json::parse(file);
++
++    if (jsonData.contains("CpuCount"))
++    {
++        cpuCount = jsonData["CpuCount"];
++    }
++    else
++    {
++        throw std::runtime_error("Unable to read the CPU count");
++    }
++
++    file.close();
++
++    if (node == "0")
++    {
++        for (size_t i = 0; i < cpuCount; i++)
++        {
++            socIndex.push_back(i);
++        }
++    }
++    else
++    {
++        cpuCount = 1;
++        size_t socNum = std::stoul(node) - 1;
++        socIndex.push_back(socNum);
++    }
++}
++
++void mpTraceLogInfo(std::vector<std::pair<std::string, int>>& mpToIndexMap)
++{
++    // Try to copy the MP info file, throw exception if it fails
++    try
++    {
++        std::filesystem::copy_file(
++            SRC_MP_INFO_FILE, MP_INFO_FILE,
++            std::filesystem::copy_options::overwrite_existing);
++    }
++    catch (const std::filesystem::filesystem_error& e)
++    {
++        lg2::error("Failed to copy platform default file : {ERROR}", "ERROR",
++                   strerror(errno));
++        throw std::runtime_error("Failed to copy MP info file");
++    }
++
++    std::ifstream file(MP_INFO_FILE);
++
++    nlohmann::json jsonData;
++    file >> jsonData;
++
++    for (const auto& item : jsonData)
++    {
++        std::string name = item["Name"];
++        int index = item["Index"];
++        mpToIndexMap.emplace_back(name, index);
++    }
++}
++
+ } // namespace util
+ } // namespace ras
+ } // namespace amd
+-- 
+2.34.1
+

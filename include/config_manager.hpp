@@ -18,6 +18,14 @@ namespace config
 static constexpr auto service = "com.amd.RAS";
 static constexpr auto objectPath = "/com/amd/RAS";
 
+constexpr size_t maxErrorIndex = 256;
+constexpr auto errorCountFile = "/var/lib/amd-bmc-ras/error_count.json";
+
+extern std::array<uint64_t, maxErrorIndex> correctableCPUErrors;
+extern std::array<uint64_t, maxErrorIndex> noncorrectableCPUErrors;
+extern std::array<uint64_t, maxErrorIndex> correctableOtherErrors;
+extern std::array<uint64_t, maxErrorIndex> noncorrectableOtherErrors;
+
 using ConfigIface = sdbusplus::server::object_t<
     sdbusplus::com::amd::RAS::server::Configuration,
     sdbusplus::xyz::openbmc_project::Collection::server::DeleteAll>;
@@ -99,6 +107,10 @@ class Manager : public amd::ras::config::ConfigIface
     /** @brief  Erase all entries
      */
     void deleteAll() override;
+
+    void loadErrorCounts();
+
+    void saveErrorCounts();
 
   private:
     sdbusplus::asio::object_server& objServer;
