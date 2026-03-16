@@ -18,6 +18,8 @@ extern "C"
 #include <phosphor-logging/lg2.hpp>
 #include <phosphor-logging/log.hpp>
 
+#include <stdexcept>
+
 namespace amd
 {
 namespace ras
@@ -107,11 +109,8 @@ oob_status_t readOobRegister(uint8_t info, uint32_t reg, uint8_t* value)
 }
 
 Manager::Manager(amd::ras::config::Manager& manager,
-                 sdbusplus::asio::object_server& objectServer,
-                 std::shared_ptr<sdbusplus::asio::connection>& systemBus,
                  boost::asio::io_context& io, std::string& node) :
-    amd::ras::Manager(manager, node), objectServer(objectServer),
-    systemBus(systemBus), progId(1), recordId(1), watchdogTimerCounter(0),
+    amd::ras::Manager(manager, node), progId(1), recordId(1), watchdogTimerCounter(0),
     io(io), apmlInitialized(false), platformInitialized(false),
     runtimeErrPollingSupported(false), McaErrorPollingEvent(nullptr),
     DramCeccErrorPollingEvent(nullptr), PcieAerErrorPollingEvent(nullptr),
@@ -520,15 +519,13 @@ void Manager::init()
 
 void Manager::configure()
 {
-    amd::ras::util::cper::createRecord(objectServer, systemBus, node);
-
     std::string gpioConfigFile =
         "/var/lib/amd-bmc-ras/amd_ras_gpio_config" + node + ".json";
 
     std::ifstream jsonFile(gpioConfigFile);
     if (!jsonFile.is_open())
     {
-        throw sdbusplus::xyz::openbmc_project::Common::File::Error::Open();
+        throw std::runtime_error("Failed to open GPIO config file: " + gpioConfigFile);
     }
 
     nlohmann::json config;
@@ -777,10 +774,6 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         amd::ras::util::cper::createFile(mcaPtr, runtimeMcaErr, sectionCount,
                                          errCount, node);
 
-        amd::ras::util::cper::exportToDBus(errCount - 1,
-                                           mcaPtr->Header.TimeStamp,
-                                           objectServer, systemBus, node);
-
         if (mcaPtr->SectionDescriptor != nullptr)
         {
             delete[] mcaPtr->SectionDescriptor;
@@ -839,10 +832,6 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         amd::ras::util::cper::createFile(dramPtr, runtimeDramErr, sectionCount,
                                          errCount, node);
 
-        amd::ras::util::cper::exportToDBus(errCount - 1,
-                                           dramPtr->Header.TimeStamp,
-                                           objectServer, systemBus, node);
-
         if (dramPtr->SectionDescriptor != nullptr)
         {
             delete[] dramPtr->SectionDescriptor;
@@ -894,10 +883,6 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
 
         amd::ras::util::cper::createFile(pciePtr, runtimePcieErr, sectionCount,
                                          errCount, node);
-
-        amd::ras::util::cper::exportToDBus(errCount - 1,
-                                           pciePtr->Header.TimeStamp,
-                                           objectServer, systemBus, node);
 
         if (pciePtr->SectionDescriptor != nullptr)
         {
@@ -1908,10 +1893,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             {
                 amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount,
                                                  node);
-
-                amd::ras::util::cper::exportToDBus(
-                    errCount - 1, rcd->Header.TimeStamp, objectServer,
-                    systemBus, node);
 
                 bool recoveryAction = true;
 

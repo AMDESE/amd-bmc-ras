@@ -123,17 +123,6 @@ template <typename ReturnType>
 ReturnType getProperty(sdbusplus::bus::bus&, const char*, const char*,
                        const char*, const char*);
 
-/** @brief Checks if the given D-Bus path exists.
- *
- *  @details Queries the D-Bus for paths related to crash dumps and checks if
- * the specified path exists.
- *
- *  @param[in] dbusPath - The D-Bus path to check.
- *
- *  @return Returns true if the D-Bus path exists, false otherwise.
- */
-bool checkObjPath(std::string);
-
 } // namespace util
 } // namespace ras
 } // namespace amd

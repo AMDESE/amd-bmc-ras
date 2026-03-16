@@ -6,8 +6,6 @@
 
 #include <boost/asio.hpp>
 #include <phosphor-logging/lg2.hpp>
-#include <sdbusplus/asio/connection.hpp>
-#include <sdbusplus/asio/object_server.hpp>
 
 int main(int argc, char* argv[])
 {
@@ -22,27 +20,14 @@ int main(int argc, char* argv[])
 
     lg2::info("Start amd ras service for host : {NODE}", "NODE", node);
 
-    // Setup connection to D-Bus
+    // Setup ASIO I/O context for timers and GPIO events
     boost::asio::io_context io;
 
-    // Create a shared connection to the system bus
-    auto systemBus = std::make_shared<sdbusplus::asio::connection>(io);
-
-    const char* rasService =
-        (std::string(amd::ras::config::service) + node).c_str();
-
-    lg2::info("Ras service {SER}", "SER", rasService);
-    // Request a unique name on the D-Bus
-    systemBus->request_name(rasService);
-
-    // Create an object server for managing D-Bus objects
-    sdbusplus::asio::object_server objectServer(systemBus);
-
-    amd::ras::config::Manager manager(objectServer, systemBus, node);
+    amd::ras::config::Manager manager(node);
 
 #ifdef APML
     amd::ras::Manager* errorMgr =
-        new amd::ras::apml::Manager(manager, objectServer, systemBus, io, node);
+        new amd::ras::apml::Manager(manager, io, node);
 
     errorMgr->init();
 

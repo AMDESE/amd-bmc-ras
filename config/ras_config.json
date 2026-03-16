@@ -24,13 +24,13 @@
         {
             "HarvestMicrocode": {
                 "Description": "Harvest microcode version",
-                "Value": true
+                "Value": false
             }
         },
         {
             "HarvestPPIN": {
                 "Description": "Harvest Protected Processor Identification Number",
-                "Value": true
+                "Value": false
             }
         },
         {

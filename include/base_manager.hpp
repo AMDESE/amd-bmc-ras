@@ -2,6 +2,7 @@
 
 #include "config_manager.hpp"
 #include "oem_cper.hpp"
+#include <memory>
 
 constexpr size_t socket1 = 1;
 constexpr size_t socket2 = 2;

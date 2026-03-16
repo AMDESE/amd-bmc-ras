@@ -1,8 +1,6 @@
 [Unit]
 Description=AMD RAS Manager
-After=multi-host-config.service
-After=amd-host-mgr@.service
-ConditionPathExists=/etc/amd/hosts.d/host%i.conf
+After=multi-user.target
 
 [Service]
 Restart=always
