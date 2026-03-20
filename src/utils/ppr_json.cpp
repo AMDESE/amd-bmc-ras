@@ -44,7 +44,7 @@ struct DpprclRepairEntry
     uint32_t AddressHi{0};          // 32 bits  physical address [63:32]
 };
 
-// Payload packing
+//   Payload packing
 //   Payload[0] = bits[ 15:  0]
 //   Payload[1] = bits[ 31: 16]
 //   Payload[2] = bits[ 47: 32]
@@ -150,6 +150,7 @@ void generatePprJsonFiles(const std::shared_ptr<McaRuntimeCperRecord>& ptr,
 {
     if (!ptr || !ptr->McaErrorInfo)
     {
+        lg2::error("PPR JSON: generatePprJsonFiles - null ptr or McaErrorInfo, skipping");
         return;
     }
 
@@ -188,7 +189,7 @@ void generatePprJsonFiles(const std::shared_ptr<McaRuntimeCperRecord>& ptr,
 
         // UMC bank detection
         const uint32_t hwId    = static_cast<uint32_t>((mcaIpid >> 32) & 0xFFFU);
-        const uint32_t mcaType = static_cast<uint32_t>( mcaIpid        & 0xFFFU);
+        const uint32_t mcaType = static_cast<uint32_t>((mcaIpid >> 48) & 0xFFFFU);
 
         if (hwId != umcHardwareId || mcaType != umcMcaType)
         {
@@ -218,14 +219,14 @@ void generatePprJsonFiles(const std::shared_ptr<McaRuntimeCperRecord>& ptr,
         DpprclRepairEntry e{};
         e.Valid      = 1U;
         e.Socket     = socNum & 0x7U;
-        e.Channel    = static_cast<uint8_t>((mcaIpid >> 20) & 0xFU);
-        e.ChipSelect = static_cast<uint8_t>( mcaSynd        & 0x7U);
-        e.SubChannel = static_cast<uint8_t>((mcaSynd >>  3) & 0x1U);
+        e.Channel    = static_cast<uint8_t>(((mcaIpid >> 20) & 0xFU) / 2U);
         e.ErrorCause = corrected ? 1U : 3U;
         e.Device     = 0x1FU;
 
         if (ece == errCodeDramEcc)
         {
+            e.ChipSelect = static_cast<uint8_t>( mcaSynd        & 0x7U);
+            e.SubChannel = static_cast<uint8_t>((mcaSynd >>  4) & 0x1U);
             e.Row       = static_cast<uint32_t>( mcaAddr        & 0x3FFFFU);
             e.Bank      = static_cast<uint8_t> ((mcaAddr >> 18) & 0x1FU);
             e.Column    = 0;
@@ -234,12 +235,11 @@ void generatePprJsonFiles(const std::shared_ptr<McaRuntimeCperRecord>& ptr,
         }
         else
         {
-            e.Row    = static_cast<uint32_t>( mcaAddr        & 0x3FFFFU);
-            e.Bank   = static_cast<uint8_t> ((mcaAddr >> 18) & 0x1FU);
+            e.Bank   = static_cast<uint8_t>((mcaAddr >> 18) & 0x1FU);
             e.Column = 0;
         }
 
-        // RT payload
+        // Pack RT payload
         e.RepairType = 0U;
         uint16_t rtPayload[10]{};
         packPayload(e, rtPayload);

@@ -16,8 +16,8 @@ namespace ppr
 {
 
 // UMC bank identification from MCA_IPID
-// hardware_id = (MCA_IPID >> 32) & 0xFFF  => bits[43:32] of 64-bit IPID
-// mca_type    =  MCA_IPID        & 0xFFF  => bits[11: 0]
+// hardware_id = (MCA_IPID >> 32) & 0xFFF   => bits[43:32] of 64-bit IPID
+// mca_type    = (MCA_IPID >> 48) & 0xFFFF  => bits[63:48] of 64-bit IPID
 constexpr uint32_t umcHardwareId = 0x96;
 constexpr uint32_t umcMcaType    = 0x00;
 
@@ -25,8 +25,9 @@ constexpr uint32_t umcMcaType    = 0x00;
 constexpr uint32_t errCodeDramEcc = 0x00; // DramEccErr
 constexpr uint32_t errCodeEcsRow  = 0x08; // EcsRowErr
 
-constexpr uint32_t pprRepairTypeRtSoft = 0x0000;  // RUNTIME_SOFT
-constexpr uint32_t pprRepairTypeBtSoft = 0x8000;  // BOOTTIME_SOFT
+
+constexpr uint32_t pprRepairTypeRtSoft = 0x0000; // RUNTIME_SOFT
+constexpr uint32_t pprRepairTypeBtSoft = 0x8000; // BOOTTIME_SOFT
 
 //  mcaErr offsets  -> word index:
 //    MCA_STATUS_LO  offset 0x08  -> DumpData[2]
