@@ -70,7 +70,7 @@ class Manager
      */
     AttributeValue getAttribute(AttributeName attribute);
 
-    /** @brief Update RAS configuration parameters to D-Bus interface
+    /** @brief Initialize RAS configuration parameters
      *
      * @details Creates Config File in /var/lib/amd-bmc-ras and the
      * config file values are uploaded to the D-Bus interface.
