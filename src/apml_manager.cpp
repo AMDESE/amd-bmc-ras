@@ -3,6 +3,7 @@
 #include "config_manager.hpp"
 #include "oem_cper.hpp"
 #include "utils/cper.hpp"
+#include "utils/ppr_json.hpp"
 #include "utils/util.hpp"
 
 extern "C"
@@ -768,6 +769,22 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         amd::ras::util::cper::dumpErrorDescriptor(
             mcaPtr, sectionCount, runtimeMcaErr, severity, progId);
 
+        // Generate RTPPR / BTPPR JSON files from the in-memory MCA register
+        if (p0Inst.number_of_inst != 0)
+        {
+            amd::ras::util::ppr::generatePprJsonFiles(
+                mcaPtr, 0, p0Inst.number_of_inst,
+                static_cast<uint8_t>(socIndex[0]), errCount, node, false);
+        }
+        if (p1Inst.number_of_inst != 0)
+        {
+            amd::ras::util::ppr::generatePprJsonFiles(
+                mcaPtr,
+                static_cast<uint16_t>(sectionCount - p1Inst.number_of_inst),
+                p1Inst.number_of_inst,
+                static_cast<uint8_t>(socIndex[1]), errCount, node, false);
+        }
+
         amd::ras::util::cper::createFile(mcaPtr, runtimeMcaErr, sectionCount,
                                          errCount, node);
 
@@ -825,6 +842,22 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
 
         amd::ras::util::cper::dumpErrorDescriptor(
             dramPtr, sectionCount, runtimeDramErr, severity, progId);
+
+        // Generate RTPPR / BTPPR JSON files from the in-memory DRAM CECC
+        if (p0Inst.number_of_inst != 0)
+        {
+            amd::ras::util::ppr::generatePprJsonFiles(
+                dramPtr, 0, p0Inst.number_of_inst,
+                static_cast<uint8_t>(socIndex[0]), errCount, node, true);
+        }
+        if (p1Inst.number_of_inst != 0)
+        {
+            amd::ras::util::ppr::generatePprJsonFiles(
+                dramPtr,
+                static_cast<uint16_t>(sectionCount - p1Inst.number_of_inst),
+                p1Inst.number_of_inst,
+                static_cast<uint8_t>(socIndex[1]), errCount, node, true);
+        }
 
         amd::ras::util::cper::createFile(dramPtr, runtimeDramErr, sectionCount,
                                          errCount, node);

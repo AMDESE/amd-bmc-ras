@@ -67,6 +67,7 @@ sources = [
     'src/apml_manager.cpp',
     'src/utils/util.cpp',
     'src/utils/cper.cpp',
+    'src/utils/ppr_json.cpp',
 ]
 
 if apml

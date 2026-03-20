@@ -4,6 +4,7 @@ extern "C"
 {
 #include "libcper/Cper.h"
 }
+#include <cstddef>
 
 constexpr uint8_t mcaDataBankLen = 128;
 constexpr uint16_t debugDumpDataLen = 12124;
