@@ -29,8 +29,8 @@ struct DpprclRepairEntry
     uint8_t  Valid{0};              //  1 bit
     uint32_t Row{0};                // 18 bits
     uint8_t  RankMultiplier{0};     //  3 bits
-    uint8_t  Channel{0};            //  4 bits  UMC channel (IPID[23:20])
-    uint8_t  SubChannel{0};         //  1 bit   sub-channel (SYND[3])
+    uint8_t  Channel{0};            //  4 bits  UMC channel
+    uint8_t  SubChannel{0};         //  1 bit   sub-channel
     uint8_t  HardPPRDone{0};        //  1 bit   (set by CPU after hPPR)
     uint8_t  PPRUndo{0};            //  1 bit
     uint8_t  PPRLock{0};            //  1 bit
@@ -45,6 +45,7 @@ struct DpprclRepairEntry
 };
 
 //   Payload packing
+//
 //   Payload[0] = bits[ 15:  0]
 //   Payload[1] = bits[ 31: 16]
 //   Payload[2] = bits[ 47: 32]
@@ -150,21 +151,23 @@ void generatePprJsonFiles(const std::shared_ptr<McaRuntimeCperRecord>& ptr,
 {
     if (!ptr || !ptr->McaErrorInfo)
     {
-        lg2::error("PPR JSON: generatePprJsonFiles - null ptr or McaErrorInfo, skipping");
+        lg2::error("PPR JSON: null ptr or McaErrorInfo, skipping");
         return;
     }
 
     // wOff = -1 for dramCeccErr, 0 for mcaErr.
     const int wOff = isDram ? -1 : 0;
 
-    // Baseline word indices for mcaErr path (baseOffset = 0):
-    constexpr int kStatusLo =  2; // offset 0x08
-    constexpr int kStatusHi =  3; // offset 0x0C
-    constexpr int kAddrLo   =  4; // offset 0x10  (MCA_ADDR)
-    constexpr int kAddrHi   =  5; // offset 0x14
-    constexpr int kIpidLo   = 10; // offset 0x28  (MCA_IPID)
-    constexpr int kIpidHi   = 11; // offset 0x2C
-    constexpr int kSyndLo   = 12; // offset 0x30  (MCA_SYND)
+    // Baseline word indices for mcaErr path (baseOffset=0):
+    constexpr int kStatusLo    =  2; // offset 0x08  (MCA_STATUS_LO)
+    constexpr int kStatusHi    =  3; // offset 0x0C  (MCA_STATUS_HI)
+    constexpr int kAddrLo      =  4; // offset 0x10  (MCA_ADDR_LO)
+    constexpr int kAddrHi      =  5; // offset 0x14  (MCA_ADDR_HI)
+    constexpr int kIpidLo      = 10; // offset 0x28  (MCA_IPID_LO)
+    constexpr int kIpidHi      = 11; // offset 0x2C  (MCA_IPID_HI)
+    constexpr int kSyndLo      = 12; // offset 0x30  (MCA_SYND_LO)
+    constexpr int kTransAddrLo = 28; // offset 0x70  (TRANS_ADDR_LO)
+    constexpr int kTransAddrHi = 29; // offset 0x74  (TRANS_ADDR_HI)
 
     for (uint16_t s = sectionStart; s < sectionStart + sectionCount; ++s)
     {
@@ -186,6 +189,11 @@ void generatePprJsonFiles(const std::shared_ptr<McaRuntimeCperRecord>& ptr,
              d[kIpidLo + wOff];
 
         const uint32_t mcaSynd = d[kSyndLo + wOff];
+
+        const uint64_t transAddr =
+            (static_cast<uint64_t>(d[kTransAddrHi]) << 32) |
+             d[kTransAddrLo];
+        const bool transAddrValid = static_cast<bool>((transAddr >> 62) & 0x1U);
 
         // UMC bank detection
         const uint32_t hwId    = static_cast<uint32_t>((mcaIpid >> 32) & 0xFFFU);
@@ -215,28 +223,50 @@ void generatePprJsonFiles(const std::shared_ptr<McaRuntimeCperRecord>& ptr,
             continue;
         }
 
-        // Fill PPR entry
+        // Fill repair entry
         DpprclRepairEntry e{};
         e.Valid      = 1U;
-        e.Socket     = socNum & 0x7U;
-        e.Channel    = static_cast<uint8_t>(((mcaIpid >> 20) & 0xFU) / 2U);
-        e.ErrorCause = corrected ? 1U : 3U;
-        e.Device     = 0x1FU;
+        e.ErrorCause = corrected ? 1U : 3U; // 1=corrected, 3=deferred
+        // Python: Device = transaddr >> 42 & 0x1f  when deferred (no valid-bit gate;
+        //         when transaddr=0, this naturally gives 0).
+        //         Device = 0x1F always for corrected errors.
+        e.Device = deferOnly
+                       ? static_cast<uint8_t>((transAddr >> 42) & 0x1FU)
+                       : 0x1FU;
+
+        const uint8_t iod  = static_cast<uint8_t>((mcaIpid >> 44) & 0xFU);
+        const uint8_t umcN = static_cast<uint8_t>((mcaIpid >> 20) & 0xFU);
 
         if (ece == errCodeDramEcc)
         {
             e.ChipSelect = static_cast<uint8_t>( mcaSynd        & 0x7U);
             e.SubChannel = static_cast<uint8_t>((mcaSynd >>  4) & 0x1U);
-            e.Row       = static_cast<uint32_t>( mcaAddr        & 0x3FFFFU);
-            e.Bank      = static_cast<uint8_t> ((mcaAddr >> 18) & 0x1FU);
-            e.Column    = 0;
+
+            if (transAddrValid)
+            {
+                e.Bank           = static_cast<uint8_t> ((transAddr >>  2) & 0x1FU);
+                e.Column         = static_cast<uint16_t>((transAddr >> 25) & 0x7FFU);
+                e.Row            = static_cast<uint32_t>((transAddr >>  7) & 0x3FFFFU);
+                e.RankMultiplier = static_cast<uint8_t> ((transAddr >> 36) & 0x7U);
+                e.Channel        = static_cast<uint8_t> (umcN / 2U + iod * 8U);
+                e.Socket         = static_cast<uint8_t> ((transAddr >> 58) & 0x7U);
+            }
             e.AddressLo = static_cast<uint32_t>((mcaAddr >>  4) & 0xFFFF'FFFFU);
             e.AddressHi = static_cast<uint32_t>((mcaAddr >> 36) & 0xFU);
         }
         else
         {
-            e.Bank   = static_cast<uint8_t>((mcaAddr >> 18) & 0x1FU);
-            e.Column = 0;
+            e.Bank    = static_cast<uint8_t>((mcaAddr >> 18) & 0x1FU);
+            e.Column  = 0;
+            e.Channel = static_cast<uint8_t>(umcN / 2U + iod * 8U);
+            e.Socket  = static_cast<uint8_t>((transAddr >> 58) & 0x7U);
+
+            if (transAddrValid)
+            {
+                e.RankMultiplier = static_cast<uint8_t> ((transAddr >> 36) & 0x7U);
+                e.AddressLo      = static_cast<uint32_t>( transAddr        & 0xFFFF'FFFFU);
+                e.AddressHi      = static_cast<uint32_t>((transAddr >> 32) & 0xFFU);
+            }
         }
 
         // Pack RT payload

@@ -25,9 +25,8 @@ constexpr uint32_t umcMcaType    = 0x00;
 constexpr uint32_t errCodeDramEcc = 0x00; // DramEccErr
 constexpr uint32_t errCodeEcsRow  = 0x08; // EcsRowErr
 
-
-constexpr uint32_t pprRepairTypeRtSoft = 0x0000; // RUNTIME_SOFT
-constexpr uint32_t pprRepairTypeBtSoft = 0x8000; // BOOTTIME_SOFT
+constexpr uint32_t pprRepairTypeRtSoft = 0x0000;
+constexpr uint32_t pprRepairTypeBtSoft = 0x8000;
 
 //  mcaErr offsets  -> word index:
 //    MCA_STATUS_LO  offset 0x08  -> DumpData[2]
@@ -37,6 +36,8 @@ constexpr uint32_t pprRepairTypeBtSoft = 0x8000; // BOOTTIME_SOFT
 //    MCA_IPID_LO    offset 0x28  -> DumpData[10]
 //    MCA_IPID_HI    offset 0x2C  -> DumpData[11]
 //    MCA_SYND_LO    offset 0x30  -> DumpData[12]
+//    TRANS_ADDR_LO  offset 0x70  -> DumpData[28]
+//    TRANS_ADDR_HI  offset 0x74  -> DumpData[29]
 //
 //  dramCeccErr adds baseOffset=4, so indices shift down by 1.
 //  Use isDram=true to apply the -1 shift.
