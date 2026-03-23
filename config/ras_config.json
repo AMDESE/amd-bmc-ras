@@ -117,6 +117,12 @@
             }
         },
         {
+            "McaUmcErrThresholdCnt": {
+                "Description": "Error threshold count for MCA UMC errors",
+                "Value": 1
+            }
+        },
+        {
             "PcieAerPollingEn": {
                 "Description": "If this field is true, PCI Express Advanced Error Reporting (PCIE AER) correctable errors will be polled",
                 "Value": false

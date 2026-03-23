@@ -2901,6 +2901,42 @@ oob_status_t Manager::setMcaErrThreshold()
         }
     }
 
+    amd::ras::config::Manager::AttributeValue mcaUmcThreshold =
+        configMgr.getAttribute("McaThresholdEn");
+    bool* mcaUmcThresholdEn = std::get_if<bool>(&mcaUmcThreshold);
+
+    if (*mcaUmcThresholdEn == true)
+    {
+        th.err_type = 3; /*0b11 = MCA UMC error type*/
+
+        amd::ras::config::Manager::AttributeValue mcaUmcErrThresholdCount =
+            configMgr.getAttribute("McaUmcErrThresholdCnt");
+
+        int64_t* mcaUmcErrThresholdCnt =
+            std::get_if<int64_t>(&mcaUmcErrThresholdCount);
+
+        th.err_count_th = *mcaUmcErrThresholdCnt;
+        th.max_intrupt_rate = 1;
+
+        struct oob_config_d_in oob_config;
+
+        memset(&oob_config, 0, sizeof(oob_config));
+
+        getOobRegisters(&oob_config);
+
+        /* Core MCA Error Reporting Enable */
+        oob_config.core_mca_err_reporting_en = 1;
+        oob_config.mca_oob_misc0_ec_enable = 1;
+
+        ret = setRasOobConfig(oob_config);
+
+        if (ret == OOB_SUCCESS)
+        {
+            lg2::info("Setting MCA UMC error threshold");
+            ret = setRasErrThreshold(th);
+        }
+    }
+
     amd::ras::config::Manager::AttributeValue dramCeccThreshold =
         configMgr.getAttribute("DramCeccThresholdEn");
     bool* dramCeccThresholdEn = std::get_if<bool>(&dramCeccThreshold);
