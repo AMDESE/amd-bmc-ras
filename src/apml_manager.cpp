@@ -47,6 +47,7 @@ constexpr size_t chipSelNumPos = 21;
 constexpr size_t mcaErrOverflow = 8;
 constexpr size_t dramCeccErrOverflow = 16;
 constexpr size_t pcieErrOverflow = 32;
+constexpr size_t x86ExceptionBit = 0x80;
 constexpr size_t base16 = 16;
 constexpr size_t byteMask = 0xFF;
 constexpr size_t cfError = 0x6;
@@ -1480,6 +1481,241 @@ void Manager::harvestBreakEvent(uint8_t socNum)
     rcd->ErrorRecord[socNum].RegisterArraySize = crashDataSize;
 }
 
+void Manager::harvestX86ExceptionData(uint8_t socNum)
+{
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
+    uint16_t retries = 0;
+    struct ras_df_err_chk dbgLogCheck;
+    constexpr uint8_t dbgLogBlockId = 24;
+
+    amd::ras::config::Manager::AttributeValue apmlRetry =
+        configMgr.getAttribute("ApmlRetries");
+    int64_t* apmlRetryCount = std::get_if<int64_t>(&apmlRetry);
+
+    /*
+     * Step 1: Issue BMC_RAS_DBG_LOG_VALIDITY_CHECK to get the number of
+     * debug log instances for cores that detected x86 exceptions.
+     * Response format:
+     *   [24:16] = error log length in bytes per instance
+     *   [15:0]  = number of debug log instances (0..32768)
+     * Number of cores = instances / 128 (instancesPerCore)
+     */
+    while (ret != OOB_SUCCESS)
+    {
+        retries++;
+        ret =
+            read_ras_df_err_validity_check(socNum, dbgLogBlockId, &dbgLogCheck);
+
+        if (ret == OOB_SUCCESS)
+        {
+            lg2::info(
+                "Socket {SOCKET}: x86 exception debug log validity check OK. "
+                "Instances: {INST}, Log length: {LEN}",
+                "SOCKET", socNum, "INST",
+                static_cast<unsigned short>(dbgLogCheck.df_block_instances),
+                "LEN", static_cast<unsigned short>(dbgLogCheck.err_log_len));
+            break;
+        }
+
+        if (retries > *apmlRetryCount)
+        {
+            lg2::error("Socket {SOCKET}: Failed to get x86 exception debug log "
+                       "validity check",
+                       "SOCKET", socNum);
+            return;
+        }
+        sleep(1);
+    }
+
+    uint16_t totalInstances = dbgLogCheck.df_block_instances;
+    uint16_t logLenPerInstance = dbgLogCheck.err_log_len;
+
+    if (totalInstances == 0)
+    {
+        lg2::info("Socket {SOCKET}: No x86 exception instances to harvest",
+                  "SOCKET", socNum);
+        return;
+    }
+
+    /*
+     * Calculate number of affected cores.
+     * Per the spec, each core generates instancesPerCore (128) instances.
+     */
+    uint16_t numCores = totalInstances / instancesPerCore;
+    if (numCores == 0)
+    {
+        numCores = 1;
+    }
+
+    lg2::info("Socket {SOCKET}: x86 exception detected on {CORES} core(s), "
+              "total instances: {INST}, log length per instance: {LEN} bytes",
+              "SOCKET", socNum, "CORES", numCores, "INST", totalInstances,
+              "LEN", logLenPerInstance);
+
+    /*
+     * Step 2: Allocate CPER record. One section per affected core.
+     */
+    uint16_t sectionCount = numCores;
+    uint32_t payloadWordsPerInstance =
+        ((logLenPerInstance % 4) ? 1 : 0) + (logLenPerInstance >> 2);
+    uint32_t payloadBytesPerCore =
+        instancesPerCore * payloadWordsPerInstance * sizeof(uint32_t);
+
+    if (coreDebugDumpPtr == nullptr)
+    {
+        coreDebugDumpPtr = std::make_shared<CoreDebugDumpCperRecord>();
+    }
+
+    coreDebugDumpPtr->SectionDescriptor =
+        new EFI_ERROR_SECTION_DESCRIPTOR[sectionCount];
+    std::memset(coreDebugDumpPtr->SectionDescriptor, 0,
+                sectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR));
+
+    coreDebugDumpPtr->DebugDumpSection = new CoreDebugDumpSection[sectionCount];
+    std::memset(coreDebugDumpPtr->DebugDumpSection, 0,
+                sectionCount * sizeof(CoreDebugDumpSection));
+
+    /* Informational severity = 3 */
+    uint32_t errorSeverity = 3;
+    amd::ras::util::cper::dumpHeader(coreDebugDumpPtr, sectionCount,
+                                     errorSeverity, coreDebugDumpErr, boardId,
+                                     recordId);
+
+    uint32_t* severity = new uint32_t[sectionCount];
+    for (uint16_t i = 0; i < sectionCount; i++)
+    {
+        severity[i] = 3; // Informational
+    }
+    amd::ras::util::cper::dumpErrorDescriptor(
+        coreDebugDumpPtr, sectionCount, coreDebugDumpErr, severity, progId);
+    delete[] severity;
+
+    /*
+     * Step 3: For each core, allocate payload and harvest using
+     * BMC_RAS_DBG_LOG_DUMP (read_ras_df_err_dump).
+     * The BMC sends the dump command for each core's set of 128 instances.
+     */
+    uint32_t totalRecordLength =
+        sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
+        (sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount);
+
+    uint32_t sectionBodyOffset = totalRecordLength;
+
+    for (uint16_t coreIdx = 0; coreIdx < numCores; coreIdx++)
+    {
+        uint32_t sectionSize =
+            sizeof(CoreDebugDumpHeader) + payloadBytesPerCore;
+
+        /* Populate the section header */
+        amd::ras::util::cper::dumpCoreDebugDumpHeader(coreDebugDumpPtr, coreIdx,
+                                                      cpuId);
+
+        /* Allocate payload for this core */
+        coreDebugDumpPtr->DebugDumpSection[coreIdx].payload =
+            new uint32_t[instancesPerCore * payloadWordsPerInstance];
+        std::memset(coreDebugDumpPtr->DebugDumpSection[coreIdx].payload, 0,
+                    payloadBytesPerCore);
+
+        /* Update section descriptor offsets */
+        coreDebugDumpPtr->SectionDescriptor[coreIdx].SectionOffset =
+            sectionBodyOffset;
+        coreDebugDumpPtr->SectionDescriptor[coreIdx].SectionLength =
+            sectionSize;
+
+        sectionBodyOffset += sectionSize;
+
+        /* Harvest debug log data for this core's instances */
+        uint16_t baseInstance = coreIdx * instancesPerCore;
+        uint32_t payloadOffset = 0;
+        union ras_df_err_dump dfError = {0};
+
+        for (uint16_t inst = 0; inst < instancesPerCore; inst++)
+        {
+            bool apmlHang = false;
+
+            for (uint32_t offset = 0; offset < payloadWordsPerInstance;
+                 offset++)
+            {
+                uint32_t data = 0;
+
+                if (!apmlHang)
+                {
+                    memset(&dfError, 0, sizeof(dfError));
+                    dfError.input[0] = offset * 4;
+                    dfError.input[1] = dbgLogBlockId;
+                    dfError.input[2] = baseInstance + inst;
+
+                    ret = read_ras_df_err_dump(socNum, dfError, &data);
+
+                    if (ret != OOB_SUCCESS)
+                    {
+                        int64_t retryCount = *apmlRetryCount;
+                        while (retryCount > 0)
+                        {
+                            memset(&dfError, 0, sizeof(dfError));
+                            dfError.input[0] = offset * 4;
+                            dfError.input[1] = dbgLogBlockId;
+                            dfError.input[2] = baseInstance + inst;
+
+                            ret = read_ras_df_err_dump(socNum, dfError, &data);
+                            if (ret == OOB_SUCCESS)
+                            {
+                                break;
+                            }
+                            retryCount--;
+                            sleep(1);
+                        }
+                        if (ret != OOB_SUCCESS)
+                        {
+                            lg2::error(
+                                "Socket {SOCKET}: Failed to read x86 "
+                                "debug dump, core {CORE}, instance {INST}, "
+                                "offset {OFFSET}",
+                                "SOCKET", socNum, "CORE", coreIdx, "INST", inst,
+                                "OFFSET", offset);
+                            data = badData;
+                            apmlHang = true;
+                        }
+                    }
+                }
+
+                coreDebugDumpPtr->DebugDumpSection[coreIdx]
+                    .payload[payloadOffset++] = data;
+            }
+        }
+    }
+
+    /* Update total record length in header */
+    coreDebugDumpPtr->Header.RecordLength = sectionBodyOffset;
+
+    /* Step 4: Create the CPER file and export to D-Bus */
+    amd::ras::util::cper::createFile(coreDebugDumpPtr, coreDebugDumpErr,
+                                     sectionCount, errCount, node);
+
+    amd::ras::util::cper::exportToDBus(errCount,
+                                       coreDebugDumpPtr->Header.TimeStamp,
+                                       objectServer, systemBus, node);
+    amd::ras::util::cper::updateIndexFile(errCount, node);
+
+    std::string rasErrMsg =
+        "x86 exception core debug dump harvested successfully";
+    sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_INFO,
+                    "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
+                    "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+
+    /* Step 5: Cleanup */
+    for (uint16_t i = 0; i < sectionCount; i++)
+    {
+        delete[] coreDebugDumpPtr->DebugDumpSection[i].payload;
+        coreDebugDumpPtr->DebugDumpSection[i].payload = nullptr;
+    }
+    delete[] coreDebugDumpPtr->DebugDumpSection;
+    coreDebugDumpPtr->DebugDumpSection = nullptr;
+    delete[] coreDebugDumpPtr->SectionDescriptor;
+    coreDebugDumpPtr->SectionDescriptor = nullptr;
+    coreDebugDumpPtr = nullptr;
+}
+
 void Manager::harvestMcaDataBanks(uint8_t socNum,
                                   struct ras_df_err_chk errorCheck)
 {
@@ -1962,6 +2198,20 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                 configMgr.updateErrorCountDbus();
                 configMgr.saveErrorCounts();
             }
+            if (src & x86ExceptionBit)
+            {
+                std::string x86ErrMsg =
+                    "x86 exception detected (e.g. segmentation fault). "
+                    "Harvesting core debug dump traces.";
+
+                sd_journal_send(
+                    "MESSAGE=%s", x86ErrMsg.c_str(), "PRIORITY=%i", LOG_INFO,
+                    "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
+                    "REDFISH_MESSAGE_ARGS=%s", x86ErrMsg.c_str(), NULL);
+
+                harvestX86ExceptionData(socNum);
+                runtimeError = true;
+            }
         }
     }
 
@@ -2350,6 +2600,21 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                             socNum, thresholdCount);
                         configMgr.updateErrorCountDbus();
                         configMgr.saveErrorCounts();
+                    }
+                    if (buf & x86ExceptionBit)
+                    {
+                        std::string x86ErrMsg =
+                            "x86 exception detected (e.g. segmentation fault)."
+                            " Harvesting core debug dump traces.";
+
+                        sd_journal_send(
+                            "MESSAGE=%s", x86ErrMsg.c_str(), "PRIORITY=%i",
+                            LOG_INFO, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            x86ErrMsg.c_str(), NULL);
+
+                        harvestX86ExceptionData(socNum);
+                        runtimeError = true;
                     }
                 }
             }

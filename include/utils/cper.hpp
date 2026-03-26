@@ -6,6 +6,7 @@ static constexpr std::string_view runtimeMcaErr = "RUNTIME_MCA_ERROR";
 static constexpr std::string_view runtimePcieErr = "RUNTIME_PCIE_ERROR";
 static constexpr std::string_view runtimeDramErr = "RUNTIME_DRAM_ERROR";
 static constexpr std::string_view fatalErr = "FATAL";
+static constexpr std::string_view coreDebugDumpErr = "CORE_DEBUG_DUMP";
 
 namespace amd
 {
@@ -238,6 +239,19 @@ bool checkSignatureIdMatch(std::map<std::string, std::string>*,
  * otherwise.
  */
 bool calculateSeverity(uint32_t*, uint16_t, uint32_t*, const std::string_view&);
+
+/** @brief Populates the Core Debug Dump section header.
+ *
+ *  @details Fills in the CoreDebugDumpHeader with CPUID and APIC ID
+ *  information for an x86 exception core debug dump section.
+ *
+ *  @param[in] coreDebugPtr - Shared pointer to CoreDebugDumpCperRecord.
+ *  @param[in] sectionIdx - Index of the section being populated.
+ *  @param[in] cpuId - Unique pointer to array of CPU IDs.
+ */
+void dumpCoreDebugDumpHeader(
+    const std::shared_ptr<CoreDebugDumpCperRecord>& coreDebugPtr,
+    uint16_t sectionIdx, const std::unique_ptr<CpuId[]>& cpuId);
 
 } // namespace cper
 } // namespace util

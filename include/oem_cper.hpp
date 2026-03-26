@@ -88,3 +88,41 @@ struct PcieRuntimeCperRecord
     EFI_ERROR_SECTION_DESCRIPTOR* SectionDescriptor;
     EFI_AMD_PCIE_ERROR_DATA* PcieErrorData;
 } __attribute__((packed));
+
+constexpr size_t coreDebugDumpHeaderSize = 64;
+constexpr size_t coreDebugDumpReservedSize = 22;
+constexpr size_t instancesPerCore = 128;
+
+struct CoreDebugDumpValidBits
+{
+    uint16_t apicIdValid:1;
+    uint16_t cpuidValid:1;
+    uint16_t reserved:14;
+} __attribute__((packed));
+
+struct CoreDebugDumpHeader
+{
+    CoreDebugDumpValidBits validBits;
+    uint64_t apicId;
+    struct
+    {
+        uint64_t eax;
+        uint64_t ebx;
+        uint64_t ecx;
+        uint64_t edx;
+    } cpuidInfo;
+    uint8_t reserved[coreDebugDumpReservedSize];
+} __attribute__((packed));
+
+struct CoreDebugDumpSection
+{
+    CoreDebugDumpHeader header;
+    uint32_t* payload;
+} __attribute__((packed));
+
+struct CoreDebugDumpCperRecord
+{
+    EFI_COMMON_ERROR_RECORD_HEADER Header;
+    EFI_ERROR_SECTION_DESCRIPTOR* SectionDescriptor;
+    CoreDebugDumpSection* DebugDumpSection;
+} __attribute__((packed));

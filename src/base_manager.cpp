@@ -142,7 +142,7 @@ void Manager::getCpuSocketInfo()
 
 Manager::Manager(amd::ras::config::Manager& manager, std::string& node) :
     errCount(0), configMgr(manager), rcd(nullptr), mcaPtr(nullptr),
-    dramPtr(nullptr), pciePtr(nullptr), node(node)
+    dramPtr(nullptr), pciePtr(nullptr), coreDebugDumpPtr(nullptr), node(node)
 {}
 
 } // namespace ras

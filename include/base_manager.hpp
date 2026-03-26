@@ -71,6 +71,7 @@ class Manager
     std::shared_ptr<McaRuntimeCperRecord> mcaPtr;
     std::shared_ptr<McaRuntimeCperRecord> dramPtr;
     std::shared_ptr<PcieRuntimeCperRecord> pciePtr;
+    std::shared_ptr<CoreDebugDumpCperRecord> coreDebugDumpPtr;
     std::string node;
     std::vector<size_t> socIndex;
 

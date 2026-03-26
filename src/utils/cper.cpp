@@ -81,6 +81,18 @@ EFI_GUID gEfiEventNotificationTypeMceGuid = {
     0x4cc5,
     {0xBA, 0x88, 0x65, 0xAB, 0xE1, 0x49, 0x13, 0xBB}};
 
+EFI_GUID gEfiCoreDebugDumpSectionGuid = {
+    0xFDBE4ADF,
+    0x86EC,
+    0x47E3,
+    {0x89, 0xBE, 0x69, 0x30, 0x61, 0xA0, 0xF4, 0x68}};
+
+EFI_GUID gEfiEventNotificationTypeCoreDebugDumpGuid = {
+    0xF2AE518B,
+    0xF661,
+    0x434B,
+    {0xBD, 0xD8, 0x54, 0x69, 0x9B, 0x7B, 0xEC, 0x81}};
+
 std::mutex indexFileMtx;
 
 std::map<int, std::unique_ptr<CrashdumpInterface>> managers;
@@ -100,6 +112,11 @@ template void dumpHeader(const std::shared_ptr<PcieRuntimeCperRecord>& data,
                          const std::string_view& errorType, uint32_t boardId,
                          uint64_t& recordId);
 
+template void dumpHeader(const std::shared_ptr<CoreDebugDumpCperRecord>& data,
+                         uint16_t sectionCount, uint32_t errorSeverity,
+                         const std::string_view& errorType, uint32_t boardId,
+                         uint64_t& recordId);
+
 template void dumpErrorDescriptor(const std::shared_ptr<FatalCperRecord>&,
                                   uint16_t, const std::string_view&, uint32_t*,
                                   uint8_t);
@@ -112,6 +129,10 @@ template void dumpErrorDescriptor(const std::shared_ptr<PcieRuntimeCperRecord>&,
                                   uint16_t, const std::string_view&, uint32_t*,
                                   uint8_t);
 
+template void
+    dumpErrorDescriptor(const std::shared_ptr<CoreDebugDumpCperRecord>&,
+                        uint16_t, const std::string_view&, uint32_t*, uint8_t);
+
 template void createFile(const std::shared_ptr<FatalCperRecord>&,
                          const std::string_view&, uint16_t, size_t&,
                          const std::string&);
@@ -121,6 +142,10 @@ template void createFile(const std::shared_ptr<McaRuntimeCperRecord>&,
                          const std::string&);
 
 template void createFile(const std::shared_ptr<PcieRuntimeCperRecord>&,
+                         const std::string_view&, uint16_t, size_t&,
+                         const std::string&);
+
+template void createFile(const std::shared_ptr<CoreDebugDumpCperRecord>&,
                          const std::string_view&, uint16_t, size_t&,
                          const std::string&);
 
@@ -531,6 +556,17 @@ void dumpHeader(const std::shared_ptr<PtrType>& data, uint16_t sectionCount,
         memcpy(&data->Header.NotificationType,
                &gEfiEventNotificationTypeMceGuid, sizeof(EFI_GUID));
     }
+    else if (errorType == coreDebugDumpErr)
+    {
+        /* RecordLength will be updated by the caller after payload sizes
+           are known. Initialize with header + descriptors only. */
+        data->Header.RecordLength =
+            sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
+            (sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount);
+
+        memcpy(&data->Header.NotificationType,
+               &gEfiEventNotificationTypeCoreDebugDumpGuid, sizeof(EFI_GUID));
+    }
 
     /*TimeStamp when OOB controller received the event*/
     calculateTimestamp(data);
@@ -617,6 +653,23 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
 
             std::strcpy(data->SectionDescriptor[i].FruString, "PcieError");
         }
+        else if (errorType == coreDebugDumpErr)
+        {
+            /* SectionOffset and SectionLength will be updated by the
+               caller after payload sizes are determined. */
+            data->SectionDescriptor[i].SectionOffset = 0;
+            data->SectionDescriptor[i].SectionLength = 0;
+
+            memcpy(&data->SectionDescriptor[i].SectionType,
+                   &gEfiCoreDebugDumpSectionGuid, sizeof(EFI_GUID));
+
+            /* Informational severity = 3 */
+            data->SectionDescriptor[i].Severity = 3;
+
+            std::strncpy(data->SectionDescriptor[i].FruString, "CoreDebugDump",
+                         nineteen);
+            data->SectionDescriptor[i].FruString[nineteen] = '\0';
+        }
 
         data->SectionDescriptor[i].Revision = singleBit; // 1 = EPYC
 
@@ -672,6 +725,7 @@ void createFile(const std::shared_ptr<PtrType>& data,
     std::shared_ptr<McaRuntimeCperRecord> procPtr;
     std::shared_ptr<PcieRuntimeCperRecord> pciePtr;
     std::shared_ptr<FatalCperRecord> fatalPtr;
+    std::shared_ptr<CoreDebugDumpCperRecord> coreDebugPtr;
 
     if constexpr (std::is_same_v<PtrType, McaRuntimeCperRecord>)
     {
@@ -684,6 +738,10 @@ void createFile(const std::shared_ptr<PtrType>& data,
     if constexpr (std::is_same_v<PtrType, FatalCperRecord>)
     {
         fatalPtr = std::static_pointer_cast<FatalCperRecord>(data);
+    }
+    if constexpr (std::is_same_v<PtrType, CoreDebugDumpCperRecord>)
+    {
+        coreDebugPtr = std::static_pointer_cast<CoreDebugDumpCperRecord>(data);
     }
 
     cperFileName = getCperFilename(errCount);
@@ -699,6 +757,10 @@ void createFile(const std::shared_ptr<PtrType>& data,
     else if (errorType == runtimePcieErr)
     {
         cperFileName = "pcie-runtime-" + cperFileName;
+    }
+    else if (errorType == coreDebugDumpErr)
+    {
+        cperFileName = "core-debug-dump-" + cperFileName;
     }
 
     if (node == "1" || node == "2")
@@ -795,10 +857,64 @@ void createFile(const std::shared_ptr<PtrType>& data,
                             "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
         }
     }
+    else if (errorType == coreDebugDumpErr)
+    {
+        if ((coreDebugPtr) && (file != nullptr))
+        {
+            fwrite(&coreDebugPtr->Header,
+                   sizeof(EFI_COMMON_ERROR_RECORD_HEADER), singleBit, file);
+
+            fwrite(coreDebugPtr->SectionDescriptor,
+                   sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount,
+                   singleBit, file);
+
+            for (uint16_t i = 0; i < sectionCount; i++)
+            {
+                fwrite(&coreDebugPtr->DebugDumpSection[i].header,
+                       sizeof(CoreDebugDumpHeader), singleBit, file);
+
+                uint32_t payloadSize =
+                    coreDebugPtr->SectionDescriptor[i].SectionLength -
+                    sizeof(CoreDebugDumpHeader);
+                if (payloadSize > 0 &&
+                    coreDebugPtr->DebugDumpSection[i].payload != nullptr)
+                {
+                    fwrite(coreDebugPtr->DebugDumpSection[i].payload,
+                           payloadSize, singleBit, file);
+                }
+            }
+
+            std::string rasErrMsg = "Generated Core Debug Dump CPER file : ";
+            rasErrMsg.append(cperFilePath);
+
+            sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i",
+                            LOG_INFO, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.AtScaleDebugConnected",
+                            "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+        }
+    }
     fclose(file);
 }
 
 } // namespace cper
+
+void cper::dumpCoreDebugDumpHeader(
+    const std::shared_ptr<CoreDebugDumpCperRecord>& coreDebugPtr,
+    uint16_t sectionIdx, const std::unique_ptr<CpuId[]>& cpuId)
+{
+    CoreDebugDumpHeader& hdr =
+        coreDebugPtr->DebugDumpSection[sectionIdx].header;
+    std::memset(&hdr, 0, sizeof(CoreDebugDumpHeader));
+
+    hdr.validBits.apicIdValid = 1;
+    hdr.validBits.cpuidValid = 1;
+    hdr.apicId = ((cpuId[0].ebx >> 24) & 0xFF);
+    hdr.cpuidInfo.eax = cpuId[0].eax;
+    hdr.cpuidInfo.ebx = cpuId[0].ebx;
+    hdr.cpuidInfo.ecx = cpuId[0].ecx;
+    hdr.cpuidInfo.edx = cpuId[0].edx;
+}
+
 } // namespace util
 } // namespace ras
 } // namespace amd
