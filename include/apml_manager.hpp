@@ -62,9 +62,9 @@ class Manager : public amd::ras::Manager
      *  RAS alerts or sets up GPIO event handling fot APML alerts based on
      *  apmlAlertFlag. If APML Alert_L is enabled, it uses the APML API to
      *  register for udev events. Otherwise, it requests GPIO events for alert
-     *  handling by binding the alert event handler to the respective GPIO lines.
-     *  The number of GPIO lines to be monitored and the flag apmlAlertFlag value
-     *  is read from the amd_ras_gpio_config.json file.
+     *  handling by binding the alert event handler to the respective GPIO
+     * lines. The number of GPIO lines to be monitored and the flag
+     * apmlAlertFlag value is read from the amd_ras_gpio_config.json file.
      */
 
     virtual void configure();
@@ -421,6 +421,19 @@ class Manager : public amd::ras::Manager
      *
      */
     void harvestDramCeccErrorCounters(struct ras_rt_valid_err_inst, uint8_t);
+
+    /** @brief Harvest x86 exception core debug dump data.
+     *
+     * @details When SBRMI::RASStatus[7] (x86 exception bit) is set, this
+     * function uses the BMC_RAS_DBG_LOG_VALIDITY_CHECK and
+     * BMC_RAS_DBG_LOG_DUMP APML commands to harvest core debug trace data
+     * from cores that encountered x86 exceptions (e.g., segmentation
+     * faults). The harvested data is stored in a Core Debug Dump CPER
+     * record.
+     *
+     * @param[in] socNum - Socket number of the processor.
+     */
+    void harvestX86ExceptionData(uint8_t socNum);
 
     /** @brief Set MCA OOB configuration.
      *
