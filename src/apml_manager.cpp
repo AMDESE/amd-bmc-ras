@@ -597,9 +597,9 @@ void Manager::configure()
                 return;
             }
             lg2::debug("Register to udev event is successful {CPU}\n", "CPU",
-                       i);
+                       socIndex[i]);
 
-            alertSrcHandler(&ud[i], i);
+            alertSrcHandler(&ud[i], socIndex[i]);
         }
     }
     else
