@@ -214,7 +214,6 @@ void triggerWarmReset(std::string& node)
         socNum = std::stoul(node) - 1;
     }
 
-#ifdef APML
     ret = reset_on_sync_flood(socNum, &ackResp);
 
     if (ret)
@@ -225,9 +224,6 @@ void triggerWarmReset(std::string& node)
     {
         lg2::info("Warm reset triggered for socket {SOC}", "SOC", socNum);
     }
-#else
-    lg2::error("TODO: Warm reset pending as APML is not supported");
-#endif
 }
 
 void rasRecoveryAction(std::string& node, uint8_t buf,

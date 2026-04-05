@@ -1,5 +1,6 @@
 #include "apml_manager.hpp"
 
+#include "host_lifecycle_monitor.hpp"
 #include "config_manager.hpp"
 #include "oem_cper.hpp"
 #include "utils/cper.hpp"
@@ -122,143 +123,118 @@ Manager::Manager(amd::ras::config::Manager& manager,
     pcieErrorHarvestMtx()
 {}
 
-void Manager::currentHostStateMonitor()
+Manager::~Manager() = default;
+
+void Manager::onHostCurrentStateChanged(const std::string& currentHostState)
 {
-    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
-    boost::system::error_code ec;
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
 
-    static auto match = sdbusplus::bus::match::match(
-        bus,
-        "type='signal',member='PropertiesChanged', "
-        "interface='org.freedesktop.DBus.Properties', "
-        "arg0='xyz.openbmc_project.State.Host'",
-        [this](sdbusplus::message::message& message) {
-            oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
-            std::string intfName;
-            std::map<std::string, std::variant<std::string>> properties;
+    apmlInitialized = false;
 
-            try
+    if (currentHostState != "xyz.openbmc_project.State.Host.HostState.Off")
+    {
+        lg2::info("Current host state monitor changed");
+        uint32_t dataOut = 0;
+
+        while (ret != OOB_SUCCESS)
+        {
+            ret = get_bmc_ras_oob_config(0, &dataOut);
+
+            if (ret == OOB_SUCCESS)
             {
-                message.read(intfName, properties);
+                platformInitialize();
+                watchdogTimerCounter = 0;
+                break;
             }
-            catch (std::exception& e)
-            {
-                lg2::info("Unable to read host state");
-                return;
-            }
-            if (properties.empty())
-            {
-                lg2::error("ERROR: Empty PropertiesChanged signal received");
-                return;
-            }
+            sleep(1);
+        }
+    }
+}
 
-            // We only want to check for currentHostState
-            if (properties.begin()->first != "CurrentHostState")
-            {
-                return;
-            }
-            std::string* currentHostState =
-                std::get_if<std::string>(&(properties.begin()->second));
-            if (currentHostState == nullptr)
-            {
-                lg2::error("currentHostState Property invalid");
-                return;
-            }
+void Manager::onWatchdogEnabledChanged(bool enabled)
+{
+    if (enabled)
+    {
+        return;
+    }
 
-            apmlInitialized = false;
+    sdbusplus::bus::bus busLocal = sdbusplus::bus::new_default();
+    std::string currentTimerUse = amd::ras::util::getProperty<std::string>(
+        busLocal, "xyz.openbmc_project.Watchdog",
+        "/xyz/openbmc_project/watchdog/host0",
+        "xyz.openbmc_project.State.Watchdog", "currentTimerUse");
 
-            if (*currentHostState !=
-                "xyz.openbmc_project.State.Host.HostState.Off")
-            {
-                lg2::info("Current host state monitor changed");
-                uint32_t dataOut = 0;
+    if (currentTimerUse ==
+        "xyz.openbmc_project.State.Watchdog.TimerUse.BIOSFRB2")
+    {
+        watchdogTimerCounter++;
 
-                while (ret != OOB_SUCCESS)
-                {
-                    ret = get_bmc_ras_oob_config(0, &dataOut);
+        /*Watchdog Timer Enable property will be changed twice after
+          BIOS post complete. Platform initialization should be
+          performed only during the second property change*/
+        if (watchdogTimerCounter == 2)
+        {
+            lg2::info("BIOS post complete. Setting PCIE OOb config");
+            (void)applyRuntimePcieOobConfig();
 
-                    if (ret == OOB_SUCCESS)
-                    {
-                        platformInitialize();
-                        watchdogTimerCounter = 0;
-                        break;
-                    }
-                    sleep(1);
-                }
-            }
-        });
+            lg2::info("Setting PCIE Error threshold");
+            (void)applyRuntimePcieErrThreshold();
+        }
+    }
 }
 
 void Manager::platformInitialize()
 {
-    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
-    struct processor_info platInfo[1];
-
     if (platformInitialized == false)
     {
         lg2::debug("Initializing Platfrom...");
-        while (ret != OOB_SUCCESS)
-        {
-            uint8_t socNum = 0;
-            ret = esmi_get_processor_info(socNum, platInfo);
+        uint32_t fam = 0;
+        uint32_t mod = 0;
 
-            if (ret == OOB_SUCCESS)
+        while (true)
+        {
+            const int pr = readOobProcessorFamilyModel(fam, mod);
+            if (pr == 0)
             {
-                familyId = platInfo->family;
                 break;
             }
-            lg2::error("Failed to get processor info. RET: {RET}", "RET", ret);
+            lg2::error("Failed to get processor info. RET: {RET}", "RET", pr);
             sleep(1);
         }
 
-        if (ret == OOB_SUCCESS)
+        if ((fam == whFamilyId) && (mod == whModel))
         {
-            if ((platInfo->family == whFamilyId) &&
-                (platInfo->model == whModel))
-            {
-                currentHostStateMonitor();
-                for (size_t i : socIndex)
-                {
-                    clearSbrmiAlertMask(i);
-                }
+            startHostPowerTransitionMonitoring();
+            clearPlatformRasAlertMask();
+            runTimeErrorPolling();
 
-                runTimeErrorPolling();
-
-                runtimeErrPollingSupported = true;
-            }
-            else
-            {
-                throw std::runtime_error(std::format(
-                    "This program is not supported for the family = 0x{:x} model = 0x{:x}\n",
-                    platInfo->family, platInfo->model));
-            }
-
-            platformInitialized = true;
-            apmlInitialized = true;
+            runtimeErrPollingSupported = true;
         }
         else
         {
-            lg2::error("Failed to perform platform initialization");
+            throw std::runtime_error(std::format(
+                "This program is not supported for the family = 0x{:x} model = 0x{:x}\n",
+                fam, mod));
         }
+
+        platformInitialized = true;
+        apmlInitialized = true;
     }
     else
     {
         apmlInitialized = true;
 
-        for (size_t i : socIndex)
-        {
-            clearSbrmiAlertMask(i);
-        }
+        clearPlatformRasAlertMask();
 
         if (runtimeErrPollingSupported == true)
         {
             lg2::info("Setting MCA and DRAM OOB Config");
 
-            setMcaOobConfig();
+            (void)applyRuntimeMcaDramOobConfig();
 
             lg2::info("Setting MCA and DRAM Error threshold");
 
-            setMcaErrThreshold();
+            applyRuntimeMcaErrorThresholds();
         }
     }
 }
@@ -434,73 +410,16 @@ void Manager::init()
 
     file.close();
 
+    if (!hostLifecycle_)
+    {
+        hostLifecycle_ = std::make_unique<amd::ras::HostLifecycleMonitor>();
+    }
+
     platformInitialize();
 
-    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
-    boost::system::error_code ec;
-
-    static auto match = sdbusplus::bus::match::match(
-        bus,
-        "type='signal',member='PropertiesChanged', "
-        "interface='org.freedesktop.DBus.Properties', "
-        "arg0='xyz.openbmc_project.State.Watchdog'",
-        [this](sdbusplus::message::message& message) {
-            std::string intfName;
-            std::map<std::string, std::variant<bool>> properties;
-
-            try
-            {
-                message.read(intfName, properties);
-            }
-            catch (std::exception& e)
-            {
-                lg2::error("Unable to read watchdog state");
-                return;
-            }
-            if (properties.empty())
-            {
-                lg2::error("Empty PropertiesChanged signal received");
-                return;
-            }
-
-            // We only want to check for currentHostState
-            if (properties.begin()->first != "Enabled")
-            {
-                return;
-            }
-
-            bool* currentTimerEnable =
-                std::get_if<bool>(&(properties.begin()->second));
-
-            if (*currentTimerEnable == false)
-            {
-                sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
-                std::string currentTimerUse =
-                    amd::ras::util::getProperty<std::string>(
-                        bus, "xyz.openbmc_project.Watchdog",
-                        "/xyz/openbmc_project/watchdog/host0",
-                        "xyz.openbmc_project.State.Watchdog",
-                        "currentTimerUse");
-
-                if (currentTimerUse ==
-                    "xyz.openbmc_project.State.Watchdog.TimerUse.BIOSFRB2")
-                {
-                    watchdogTimerCounter++;
-
-                    /*Watchdog Timer Enable property will be changed twice after
-                      BIOS post complete. Platform initialization should be
-                      performed only during the second property change*/
-                    if (watchdogTimerCounter == 2)
-                    {
-                        lg2::info(
-                            "BIOS post complete. Setting PCIE OOb config");
-                        setPcieOobConfig();
-
-                        lg2::info("Setting PCIE Error threshold");
-                        setPcieErrThreshold();
-                    }
-                }
-            }
+    hostLifecycle_->startWatchdogMonitor(
+        [this](bool timerEnabled) {
+            onWatchdogEnabledChanged(timerEnabled);
         });
 
     /*Read CpuID*/
@@ -626,6 +545,14 @@ void Manager::releaseUdevReSrc()
     for (size_t i = 0; i < cpuCount; ++i)
     {
         apml_unregister_udev_monitor(&ud[i]);
+    }
+}
+
+void Manager::finalize()
+{
+    if (alertHandleMode == "UEVENT")
+    {
+        releaseUdevReSrc();
     }
 }
 
@@ -2973,13 +2900,64 @@ oob_status_t Manager::setMcaErrThreshold()
     return ret;
 }
 
+int Manager::applyRuntimeMcaErrorThresholds()
+{
+    return static_cast<int>(setMcaErrThreshold());
+}
+
+int Manager::readOobProcessorFamilyModel(uint32_t& familyOut,
+                                         uint32_t& modelOut)
+{
+    struct processor_info platInfo[1];
+    const oob_status_t ret = esmi_get_processor_info(0, platInfo);
+    if (ret == OOB_SUCCESS)
+    {
+        familyId = platInfo->family;
+        familyOut = platInfo->family;
+        modelOut = platInfo->model;
+        return 0;
+    }
+    return static_cast<int>(ret);
+}
+
+void Manager::startHostPowerTransitionMonitoring()
+{
+    hostLifecycle_->startHostStateMonitor(
+        [this](const std::string& state) {
+            onHostCurrentStateChanged(state);
+        });
+}
+
+void Manager::clearPlatformRasAlertMask()
+{
+    for (size_t i : socIndex)
+    {
+        clearSbrmiAlertMask(static_cast<uint8_t>(i));
+    }
+}
+
+int Manager::applyRuntimeMcaDramOobConfig()
+{
+    return static_cast<int>(setMcaOobConfig());
+}
+
+int Manager::applyRuntimePcieOobConfig()
+{
+    return static_cast<int>(setPcieOobConfig());
+}
+
+int Manager::applyRuntimePcieErrThreshold()
+{
+    return static_cast<int>(setPcieErrThreshold());
+}
+
 void Manager::runTimeErrorPolling()
 {
     oob_status_t ret;
 
     lg2::info("Setting MCA and DRAM OOB Config");
 
-    ret = setMcaOobConfig();
+    ret = static_cast<oob_status_t>(applyRuntimeMcaDramOobConfig());
 
     /*setMcaOobConfig is not supported for Genoa platform.
       Enable run time error polling only if SetMcaOobConfig command
@@ -2988,7 +2966,7 @@ void Manager::runTimeErrorPolling()
     {
         lg2::info("Setting PCIE OOB Config");
 
-        setPcieOobConfig();
+        (void)applyRuntimePcieOobConfig();
 
         lg2::info(
             "Starting seprate threads to perform runtime error polling as "
@@ -3018,7 +2996,7 @@ void Manager::runTimeErrorPolling()
         return;
     }
 
-    ret = setMcaErrThreshold();
+    ret = static_cast<oob_status_t>(applyRuntimeMcaErrorThresholds());
 
     if (ret == OOB_MAILBOX_CMD_UNKNOWN)
     {
@@ -3027,7 +3005,7 @@ void Manager::runTimeErrorPolling()
     }
     else
     {
-        setPcieErrThreshold();
+        (void)applyRuntimePcieErrThreshold();
     }
 }
 

@@ -1,8 +1,6 @@
-#include "config_manager.hpp"
-#ifdef APML
-#include "apml_manager.hpp"
-#endif
 #include "base_manager.hpp"
+#include "config_manager.hpp"
+#include "ras_manager_factory.hpp"
 
 #include <boost/asio.hpp>
 #include <phosphor-logging/lg2.hpp>
@@ -39,28 +37,37 @@ int main(int argc, char* argv[])
 
     amd::ras::config::Manager manager(objectServer, systemBus, node);
 
-#ifdef APML
-    amd::ras::Manager* errorMgr =
-        new amd::ras::apml::Manager(manager, objectServer, systemBus, io, node);
+    const amd::ras::RasTransport transport =
+        amd::ras::resolveRasTransportForNode(node);
 
-    errorMgr->init();
+    const char* oobInterface = "unknown";
+    switch (transport)
+    {
+        case amd::ras::RasTransport::Apml:
+            oobInterface = "APML";
+            break;
+        case amd::ras::RasTransport::Pldm:
+            oobInterface = "PLDM";
+            break;
+    }
+    lg2::info("amd-ras starting in {MODE} OOB interface mode", "MODE",
+              oobInterface);
 
-    errorMgr->configure();
-#endif
+    std::unique_ptr<amd::ras::Manager> errorMgr = amd::ras::createRasManager(
+        manager, objectServer, systemBus, io, node, transport);
 
-#ifdef PLDM
-    // Log an error message if PLDM capabilities are not enabled
-    lg2::error("TODO: PLDM RAS capabilities are yet to be enabled");
-#endif
+    if (errorMgr)
+    {
+        errorMgr->init();
+        errorMgr->configure();
+    }
 
     io.run();
-#ifdef APML
-    auto* apmlMgr = dynamic_cast<amd::ras::apml::Manager*>(errorMgr);
-    if (apmlMgr && apmlMgr->getAlertHandleMode() == "UEVENT")
+
+    if (errorMgr)
     {
-        apmlMgr->releaseUdevReSrc();
+        errorMgr->finalize();
     }
-#endif
 
     return 0;
 }

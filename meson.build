@@ -11,7 +11,25 @@ platform_default_file = get_option('platform_default_file')
 src_platform_default_file = get_option('src_platform_default_file')
 src_config_file = get_option('src_config_file')
 ras_dir = get_option('ras_dir')
+oob_mode_file = get_option('oob_mode_file')
 index_file = get_option('index_file')
+pldm_event_message_signature = get_option('pldm_event_message_signature')
+pldm_event_max_payload = get_option('pldm_event_max_payload')
+_pldm_match_custom = get_option('pldm_event_match')
+# D-Bus match uses single quotes; building that string in Meson is error-prone. Either pass a full
+# rule via pldm_event_match, or pass interface/member and compose in C++ (pldm_event_monitor.cpp).
+pldm_cpp_args = [
+    '-DPLDM_EVENT_MESSAGE_SIGNATURE="' + pldm_event_message_signature + '"',
+    '-DPLDM_EVENT_MAX_PAYLOAD=' + pldm_event_max_payload.to_string(),
+]
+if _pldm_match_custom != ''
+    pldm_cpp_args += ['-DPLDM_EVENT_DBUS_MATCH="' + _pldm_match_custom + '"']
+else
+    pldm_cpp_args += [
+        '-DPLDM_EVENT_INTERFACE="' + get_option('pldm_event_interface') + '"',
+        '-DPLDM_EVENT_MEMBER="' + get_option('pldm_event_member') + '"',
+    ]
+endif
 
 cpp_args = [
     '-DCONFIG_FILE="' + config_file + '"',
@@ -19,9 +37,9 @@ cpp_args = [
     '-DSRC_PLATFORM_DEFAULT_FILE="' + src_platform_default_file + '"',
     '-DSRC_CONFIG_FILE="' + src_config_file + '"',
     '-DINDEX_FILE="' + index_file + '"',
-    '-DSRC_CONFIG_FILE="' + src_config_file + '"',
     '-DRAS_DIR="' + ras_dir + '"',
-]
+    '-DOOB_MODE_FILE="' + oob_mode_file + '"',
+] + pldm_cpp_args
 
 libdir = meson.current_source_dir() + './lib/'
 cpp = meson.get_compiler('cpp')
@@ -44,17 +62,8 @@ deps = [
     dependency('sdbusplus'),
     dependency('libsystemd'),
     dependency('nlohmann_json', include_type: 'system'),
+    apml_dep,
 ]
-
-apml = get_option('apml-interface')
-if apml
-    add_project_arguments('-DAPML', language: 'cpp')
-endif
-
-pldm = get_option('pldm-interface')
-if pldm
-    add_project_arguments('-DPLDM', language: 'cpp')
-endif
 
 apml_nda = get_option('apml-nda')
 if apml_nda
@@ -65,16 +74,15 @@ sources = [
     'src/config_manager.cpp',
     'src/main.cpp',
     'src/base_manager.cpp',
+    'src/host_lifecycle_monitor.cpp',
     'src/apml_manager.cpp',
+    'src/pldm_manager.cpp',
+    'src/pldm_event_monitor.cpp',
+    'src/ras_manager_factory.cpp',
     'src/utils/util.cpp',
     'src/utils/cper.cpp',
     'src/crashdump_manager.cpp',
 ]
-
-if apml
-    sources += 'src/apml_manager.cpp'
-    deps += apml_dep
-endif
 
 executable(
     'amd-ras-manager',
@@ -95,6 +103,7 @@ install_data(
         join_paths(meson.current_source_dir(), 'config', 'amd_ras_gpio_config0.json'),
         join_paths(meson.current_source_dir(), 'config', 'amd_ras_gpio_config1.json'),
         join_paths(meson.current_source_dir(), 'config', 'amd_ras_gpio_config2.json'),
+        join_paths(meson.current_source_dir(), 'config', 'oob_mode.json'),
     ],
     install_dir: ras_config_dir
 )

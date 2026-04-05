@@ -2,6 +2,8 @@
 
 #include "base_manager.hpp"
 
+#include <memory>
+
 extern "C"
 {
 #include "apml_alertl_uevent.h"
@@ -17,14 +19,17 @@ namespace amd
 {
 namespace ras
 {
+
+class HostLifecycleMonitor;
+
 namespace apml
 {
-/** @brief Manages RAS (Reliability, Availability, and Serviceability)
- * operations for APML.
+/** @brief APML **strategy**: RAS over libapml (alerts, mailbox, etc.).
  *
- *  @details This class is responsible for initializing and configuring RAS
- * operations specific to APML. It inherits from the base `amd::ras::Manager`
- * class and provides additional functionality tailored to APML.
+ *  @details Transport-specific half of factory + strategy + template method:
+ *  event registration and APML I/O live here; shared CPER / processing uses
+ *  the base `amd::ras::Manager` and common utilities. Constructed via
+ *  `createRasManager` when `RasTransport::Apml` is selected at runtime.
  *
  *  @param[in] manager - Reference to the configuration manager.
  *  @param[in] objectServer - The D-Bus object server.
@@ -40,7 +45,7 @@ class Manager : public amd::ras::Manager
     Manager& operator=(const Manager&) = delete;
     Manager(Manager&&) = delete;
     Manager& operator=(Manager&&) = delete;
-    ~Manager() = default;
+    ~Manager() override;
 
     Manager(amd::ras::config::Manager&, sdbusplus::asio::object_server&,
             std::shared_ptr<sdbusplus::asio::connection>&,
@@ -86,6 +91,14 @@ class Manager : public amd::ras::Manager
         return alertHandleMode;
     }
 
+    /** @brief Release APML alert resources after the I/O loop stops.
+     *
+     *  @details When alerts use the udev path (`UEVENT`), unregisters APML udev
+     *  monitors. Matches the teardown that previously ran in `main` after
+     *  `io_context::run()` returned.
+     */
+    void finalize() override;
+
   private:
     sdbusplus::asio::object_server& objectServer;
     std::shared_ptr<sdbusplus::asio::connection>& systemBus;
@@ -113,6 +126,11 @@ class Manager : public amd::ras::Manager
     std::vector<gpiod::line> gpioLines;
     std::vector<apml_udev_monitor> ud;
     std::string alertHandleMode;
+
+    std::unique_ptr<HostLifecycleMonitor> hostLifecycle_;
+
+    void onHostCurrentStateChanged(const std::string& currentHostState);
+    void onWatchdogEnabledChanged(bool enabled);
 
     /**
      * @brief Handler for alert events.
@@ -244,21 +262,22 @@ class Manager : public amd::ras::Manager
      */
     void clearSbrmiAlertMask(uint8_t socNum);
 
-    /** @brief Monitors the current host power state.
+    /** @brief APML `platformInitialize` (transport-specific).
      *
-     *  @details This API monitors the current host power state using
-     *  xyz.openbmc_project.State.Host D-bus Interface.
+     *  @details Initializes the platform based on the family ID.
+     *  Block IDs are selected for crashdump harvest. Invokes
+     *  `clearSbrmiAlertMask()` and runtime polling when supported.
      */
-    void currentHostStateMonitor();
+    void platformInitialize() override;
 
-    /** @brief Initializes platform-specific settings.
-     *
-     *  @details It initializes the platform based on the family ID.
-     *  Block ID's are selected based on the platform that needs to be
-     *  harvested during a crashdump. It also invokes
-     *  clearSbrmiAlertMask() API to clear Sbrmi::AlertMask bit
-     */
-    void platformInitialize();
+    int readOobProcessorFamilyModel(uint32_t& familyOut,
+                                    uint32_t& modelOut) override;
+    void startHostPowerTransitionMonitoring() override;
+    void clearPlatformRasAlertMask() override;
+    void runTimeErrorPolling() override;
+    int applyRuntimeMcaDramOobConfig() override;
+    int applyRuntimePcieOobConfig() override;
+    int applyRuntimePcieErrThreshold() override;
 
     /** @brief decodes the APML_ALERT_L assertion cause by checking
      *  RAS status register.
@@ -435,21 +454,9 @@ class Manager : public amd::ras::Manager
      */
     void harvestX86ExceptionData(uint8_t socNum);
 
-    /** @brief Set MCA OOB configuration.
-     *
-     * @details This function configures the MCA and DRAM CECC settings for OOB
-     * error reporting.
+    /** @brief APML mailbox MCA/DRAM OOB config (used by `applyRuntimeMcaDramOobConfig`).
      */
     oob_status_t setMcaOobConfig();
-
-    /** @brief Poll for runtime errors.
-     *
-     * @details This function continuously polls for runtime errors and handles
-     * their configuration and processing. It sets the MCA and DRAM OOB
-     * configurations, and if supported, starts separate threads for polling
-     * MCA, DRAM CECC, and PCIe AER errors based on user settings.
-     */
-    void runTimeErrorPolling();
 
     /** @brief Handle MCA error polling.
      *
@@ -481,12 +488,14 @@ class Manager : public amd::ras::Manager
      */
     void pcieAerErrorPollingHandler(int64_t*);
 
-    /** @brief Set MCA error threshold.
+    /** @brief APML mailbox implementation of MCA/DRAM/UMC threshold setup.
      *
-     * @details This function configures the error threshold settings for MCA
-     * errors.
+     *  @details Used by `applyRuntimeMcaErrorThresholds()`. PLDM uses a
+     *  different transport-specific implementation.
      */
     oob_status_t setMcaErrThreshold();
+
+    int applyRuntimeMcaErrorThresholds() override;
 
     /** @brief Get OOB registers configuration.
      *

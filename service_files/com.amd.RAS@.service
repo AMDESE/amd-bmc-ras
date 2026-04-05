@@ -7,6 +7,8 @@ ConditionPathExists=/etc/amd/hosts.d/host%i.conf
 [Service]
 Restart=always
 ExecStartPre=mkdir -p /var/lib/amd-bmc-ras
+# Global OOB mode under /var/lib (shared with other services); seed once from shipped default
+ExecStartPre=/bin/sh -c 'test -f /var/lib/oob_mode.json || cp /usr/share/amd-bmc-ras/oob_mode.json /var/lib/oob_mode.json'
 ExecStart=/usr/bin/amd-ras-manager %i
 
 [Install]

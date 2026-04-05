@@ -25,9 +25,11 @@ using ConfigIface = sdbusplus::server::object_t<
  * @brief Manager class which adds the RAS configuration
  * parameter values to the D-Bus interface.
  *
- * @details The class pulls the default values of ras_config.json file
- * into the D-Bus interface and overrides the getAttribute()
- * and setAttribute() of the RAS configuration interface.
+ * @details The on-disk JSON (`ras_config` + node suffix, see CONFIG_FILE) and
+ * this D-Bus configuration are shared by every RAS transport (APML, PLDM,
+ * etc.): one schema, one persistent store, while backends differ only in how
+ * they reach the host. The class pulls default values from that JSON into the
+ * D-Bus interface and overrides getAttribute() / setAttribute().
  */
 class Manager : public amd::ras::config::ConfigIface
 {
