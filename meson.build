@@ -1,7 +1,13 @@
 project(
     'amd-ras-manager',
     'cpp',
-    default_options: ['warning_level=3', 'werror=true', 'cpp_std=c++23'],
+    default_options: [
+        'warning_level=3',
+        'werror=true',
+        'cpp_std=c++23',
+        # PLDM event payload hex dump (pldm_event_monitor); override with -Dpldm_event_payload_hex_log=false
+        'pldm_event_payload_hex_log=true',
+    ],
     license: 'Apache-2.0',
     version: '1.0',
 )
@@ -15,12 +21,19 @@ oob_mode_file = get_option('oob_mode_file')
 index_file = get_option('index_file')
 pldm_event_message_signature = get_option('pldm_event_message_signature')
 pldm_event_max_payload = get_option('pldm_event_max_payload')
+pldm_event_payload_hex_log = get_option('pldm_event_payload_hex_log')
+pldm_event_payload_hex_bytes_per_line = get_option('pldm_event_payload_hex_bytes_per_line')
+if pldm_event_payload_hex_bytes_per_line < 1
+    error('pldm_event_payload_hex_bytes_per_line must be >= 1')
+endif
 _pldm_match_custom = get_option('pldm_event_match')
 # D-Bus match uses single quotes; building that string in Meson is error-prone. Either pass a full
 # rule via pldm_event_match, or pass interface/member and compose in C++ (pldm_event_monitor.cpp).
 pldm_cpp_args = [
     '-DPLDM_EVENT_MESSAGE_SIGNATURE="' + pldm_event_message_signature + '"',
     '-DPLDM_EVENT_MAX_PAYLOAD=' + pldm_event_max_payload.to_string(),
+    '-DPLDM_EVENT_PAYLOAD_HEX_LOG=' + (pldm_event_payload_hex_log ? '1' : '0'),
+    '-DPLDM_EVENT_PAYLOAD_HEX_BYTES_PER_LINE=' + pldm_event_payload_hex_bytes_per_line.to_string(),
 ]
 if _pldm_match_custom != ''
     pldm_cpp_args += ['-DPLDM_EVENT_DBUS_MATCH="' + _pldm_match_custom + '"']

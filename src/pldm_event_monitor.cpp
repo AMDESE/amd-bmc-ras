@@ -36,6 +36,14 @@
 #define PLDM_EVENT_MAX_PAYLOAD (64U * 1024U * 1024U)
 #endif
 
+#ifndef PLDM_EVENT_PAYLOAD_HEX_LOG
+#define PLDM_EVENT_PAYLOAD_HEX_LOG 1
+#endif
+
+#ifndef PLDM_EVENT_PAYLOAD_HEX_BYTES_PER_LINE
+#define PLDM_EVENT_PAYLOAD_HEX_BYTES_PER_LINE 64
+#endif
+
 namespace amd
 {
 namespace ras
@@ -139,6 +147,39 @@ bool readEventPayload(int fd, size_t maxPayload, std::vector<uint8_t>& out)
     return true;
 }
 
+#if PLDM_EVENT_PAYLOAD_HEX_LOG
+/** Full buffer as space-separated hex (no 0x); newline after every bytesPerLine bytes. */
+std::string formatPayloadHex(const uint8_t* data, size_t len, size_t bytesPerLine)
+{
+    if (data == nullptr || len == 0 || bytesPerLine == 0)
+    {
+        return {};
+    }
+
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string out;
+    out.reserve(len * 3 + len / bytesPerLine + 1);
+    for (size_t i = 0; i < len; ++i)
+    {
+        if (i > 0)
+        {
+            if (i % bytesPerLine == 0)
+            {
+                out += '\n';
+            }
+            else
+            {
+                out += ' ';
+            }
+        }
+        const uint8_t b = data[i];
+        out += hex[b >> 4];
+        out += hex[b & 0xf];
+    }
+    return out;
+}
+#endif
+
 } // namespace
 
 PldmEventMonitor::PldmEventMonitor(boost::asio::io_context& io,
@@ -193,21 +234,27 @@ PldmEventMonitor::PldmEventMonitor(boost::asio::io_context& io,
                 return;
             }
 
+            // eventFd is an index into the message's SCM_RIGHTS fds; sd-bus owns
+            // these and closes them in sd_bus_message_unref. Do not close() here —
+            // that double-closes and yields EBADF when the message is destroyed.
             std::vector<uint8_t> payload;
             if (!readEventPayload(eventFd, PLDM_EVENT_MAX_PAYLOAD, payload))
             {
-                ::close(eventFd);
                 return;
             }
 
-            if (::close(eventFd) != 0)
+#if PLDM_EVENT_PAYLOAD_HEX_LOG
             {
-                lg2::warning("PLDM event: close(fd) failed: {ERR}", "ERR",
-                             strerror(errno));
+                const std::string hex = formatPayloadHex(
+                    payload.data(), payload.size(),
+                    static_cast<size_t>(PLDM_EVENT_PAYLOAD_HEX_BYTES_PER_LINE));
+                lg2::info("PLDM event: payload {BYTES} bytes, hex: {HEX}",
+                          "BYTES", payload.size(), "HEX", hex);
             }
-
+#else
             lg2::info("PLDM event: payload {BYTES} bytes", "BYTES",
                       payload.size());
+#endif
 
             boost::asio::post(
                 io_.get_executor(),
