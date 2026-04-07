@@ -2275,7 +2275,7 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                                     messageIds.begin(), messageIds.end(),
                                     [](const std::string& messageId) {
                                         return messageId ==
-                                               "AmdAifsFailureMatch";
+                                               "OpenBMC.AmdAifsFailureMatch";
                                     });
                                 if (messageIdFound)
                                 {
@@ -2694,7 +2694,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                                             messageIds.end(),
                                             [](const std::string& messageId) {
                                                 return messageId ==
-                                                       "AmdAifsFailureMatch";
+                                                       "OpenBMC.AmdAifsFailureMatch";
                                             });
                                         if (messageIdFound)
                                         {
