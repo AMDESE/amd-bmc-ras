@@ -20,32 +20,31 @@ namespace ppr
 // repair entry struct
 struct DpprclRepairEntry
 {
-    uint8_t  DeviceTypeToRepair{0}; //  3 bits
-    uint8_t  Bank{0};               //  5 bits  BG[4:2] | BA[1:0]
-    uint8_t  Device{0};             //  5 bits  failed device index
-    uint8_t  ChipSelect{0};         //  2 bits  CS
-    uint16_t Column{0};             // 11 bits
-    uint8_t  TargetDevice{0};       //  5 bits
-    uint8_t  Valid{0};              //  1 bit
-    uint32_t Row{0};                // 18 bits
-    uint8_t  RankMultiplier{0};     //  3 bits
-    uint8_t  Channel{0};            //  4 bits  UMC channel
-    uint8_t  SubChannel{0};         //  1 bit   sub-channel
-    uint8_t  HardPPRDone{0};        //  1 bit   (set by CPU after hPPR)
-    uint8_t  PPRUndo{0};            //  1 bit
-    uint8_t  PPRLock{0};            //  1 bit
-    uint8_t  Socket{0};             //  3 bits  processor socket number
-    uint8_t  RepairType{0};         //  3 bits  inner type (0=soft)
-    uint8_t  ErrorCause{0};         //  3 bits  1=corrected, 3=deferred
-    uint8_t  Reserved1{0};          //  2 bits
-    uint8_t  RepairResult{0};       //  8 bits  filled with status after repair
-    uint16_t Reserved2{0};          // 16 bits
-    uint32_t AddressLo{0};          // 32 bits  physical address [31:0]
-    uint32_t AddressHi{0};          // 32 bits  physical address [63:32]
+    uint8_t  DeviceTypeToRepair{0};
+    uint8_t  Bank{0};
+    uint8_t  Device{0};
+    uint8_t  ChipSelect{0};
+    uint16_t Column{0};
+    uint8_t  TargetDevice{0};
+    uint8_t  Valid{0};
+    uint32_t Row{0};
+    uint8_t  RankMultiplier{0};
+    uint8_t  Channel{0};
+    uint8_t  SubChannel{0};
+    uint8_t  HardPPRDone{0};
+    uint8_t  PPRUndo{0};
+    uint8_t  PPRLock{0};
+    uint8_t  Socket{0};
+    uint8_t  RepairType{0};
+    uint8_t  ErrorCause{0};
+    uint8_t  Reserved1{0};
+    uint8_t  RepairResult{0};
+    uint16_t Reserved2{0};
+    uint32_t AddressLo{0};
+    uint32_t AddressHi{0};
 };
 
 //   Payload packing
-//
 //   Payload[0] = bits[ 15:  0]
 //   Payload[1] = bits[ 31: 16]
 //   Payload[2] = bits[ 47: 32]
@@ -155,19 +154,18 @@ void generatePprJsonFiles(const std::shared_ptr<McaRuntimeCperRecord>& ptr,
         return;
     }
 
-    // wOff = -1 for dramCeccErr, 0 for mcaErr.
     const int wOff = isDram ? -1 : 0;
 
-    // Baseline word indices for mcaErr path (baseOffset=0):
-    constexpr int kStatusLo    =  2; // offset 0x08  (MCA_STATUS_LO)
-    constexpr int kStatusHi    =  3; // offset 0x0C  (MCA_STATUS_HI)
-    constexpr int kAddrLo      =  4; // offset 0x10  (MCA_ADDR_LO)
-    constexpr int kAddrHi      =  5; // offset 0x14  (MCA_ADDR_HI)
-    constexpr int kIpidLo      = 10; // offset 0x28  (MCA_IPID_LO)
-    constexpr int kIpidHi      = 11; // offset 0x2C  (MCA_IPID_HI)
-    constexpr int kSyndLo      = 12; // offset 0x30  (MCA_SYND_LO)
-    constexpr int kTransAddrLo = 28; // offset 0x70  (TRANS_ADDR_LO)
-    constexpr int kTransAddrHi = 29; // offset 0x74  (TRANS_ADDR_HI)
+    // mcaErr (baseOffset=0)
+    constexpr int kStatusLo    =  2;
+    constexpr int kStatusHi    =  3;
+    constexpr int kAddrLo      =  4;
+    constexpr int kAddrHi      =  5;
+    constexpr int kIpidLo      = 10;
+    constexpr int kIpidHi      = 11;
+    constexpr int kSyndLo      = 12;
+    constexpr int kTransAddrLo = 28;
+    constexpr int kTransAddrHi = 29;
 
     for (uint16_t s = sectionStart; s < sectionStart + sectionCount; ++s)
     {
@@ -227,9 +225,6 @@ void generatePprJsonFiles(const std::shared_ptr<McaRuntimeCperRecord>& ptr,
         DpprclRepairEntry e{};
         e.Valid      = 1U;
         e.ErrorCause = corrected ? 1U : 3U; // 1=corrected, 3=deferred
-        // Python: Device = transaddr >> 42 & 0x1f  when deferred (no valid-bit gate;
-        //         when transaddr=0, this naturally gives 0).
-        //         Device = 0x1F always for corrected errors.
         e.Device = deferOnly
                        ? static_cast<uint8_t>((transAddr >> 42) & 0x1FU)
                        : 0x1FU;
