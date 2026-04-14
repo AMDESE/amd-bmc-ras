@@ -2988,7 +2988,14 @@ void Manager::runTimeErrorPolling()
     {
         lg2::info("Setting PCIE OOB Config");
 
-        setPcieOobConfig();
+        ret = setPcieOobConfig();
+
+        if (ret != OOB_SUCCESS)
+        {
+            lg2::error("Failed to set PCIe OOB config during runtime error "
+                       "polling init. Error code: {ERR}",
+                       "ERR", ret);
+        }
 
         lg2::info(
             "Starting seprate threads to perform runtime error polling as "
@@ -3027,7 +3034,14 @@ void Manager::runTimeErrorPolling()
     }
     else
     {
-        setPcieErrThreshold();
+        ret = setPcieErrThreshold();
+
+        if (ret != OOB_SUCCESS)
+        {
+            lg2::error("Failed to set PCIe error reporting threshold. "
+                       "Error code: {ERR}",
+                       "ERR", ret);
+        }
     }
 }
 
@@ -3093,12 +3107,27 @@ oob_status_t Manager::setPcieOobRegisters()
     struct oob_config_d_in oob_config;
 
     memset(&oob_config, 0, sizeof(oob_config));
-    getRasOobConfig(&oob_config);
+    ret = getRasOobConfig(&oob_config);
+
+    if (ret != OOB_SUCCESS)
+    {
+        lg2::error("Failed to get RAS OOB config for PCIe OOB register setup. "
+                   "Error code: {ERR}",
+                   "ERR", ret);
+        return ret;
+    }
 
     oob_config.pcie_err_reporting_en = 1;
     oob_config.core_mca_err_reporting_en = 1;
 
     ret = setRasOobConfig(oob_config);
+
+    if (ret != OOB_SUCCESS)
+    {
+        lg2::error("Failed to set PCIe OOB registers. Error code: {ERR}", "ERR",
+                   ret);
+    }
+
     return ret;
 }
 
@@ -3113,6 +3142,12 @@ oob_status_t Manager::setPcieOobConfig()
     if (*PcieAerPollingEn == true)
     {
         ret = setPcieOobRegisters();
+
+        if (ret != OOB_SUCCESS)
+        {
+            lg2::error("Failed to set PCIe OOB config. Error code: {ERR}",
+                       "ERR", ret);
+        }
     }
     return ret;
 }
@@ -3160,7 +3195,15 @@ oob_status_t Manager::setPcieErrThreshold()
 
     if (*pcieAerThresholdEn)
     {
-        setPcieOobRegisters();
+        ret = setPcieOobRegisters();
+
+        if (ret != OOB_SUCCESS)
+        {
+            lg2::error("Failed to set PCIe OOB registers for threshold config. "
+                       "Error code: {ERR}",
+                       "ERR", ret);
+            return ret;
+        }
 
         th.err_type = 2; /*00 = PCIE error type*/
 
@@ -3175,6 +3218,13 @@ oob_status_t Manager::setPcieErrThreshold()
         lg2::info("Setting PCIE error threshold");
 
         ret = setRasErrThreshold(th);
+
+        if (ret != OOB_SUCCESS)
+        {
+            lg2::error("Failed to set PCIe error threshold. "
+                       "Error code: {ERR}",
+                       "ERR", ret);
+        }
     }
     return ret;
 }
