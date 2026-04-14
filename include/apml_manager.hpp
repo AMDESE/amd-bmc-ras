@@ -54,20 +54,26 @@ class Manager : public amd::ras::Manager
      *  configures PCIE settings, and clears the SbrmiAlertMask register for
      *  crashdump readiness.
      */
-    virtual void init();
+    void init() override;
+
+    /** @brief Configure APML RAS settings.
+     *
+     *  @details This function reads the gpio configuration from the
+     *  amd_ras_gpio_config.json file including alert handle mode and
+     *  GPIO alert line names.
+     */
+    void configure() override;
 
     /** @brief Register udev or request GPIO event for APML alert handling.
      *
      *  @details This function registers for udev events from Alertl_L driver on
-     *  RAS alerts or sets up GPIO event handling fot APML alerts based on
+     *  RAS alerts or sets up GPIO event handling for APML alerts based on
      *  apmlAlertFlag. If APML Alert_L is enabled, it uses the APML API to
      *  register for udev events. Otherwise, it requests GPIO events for alert
      *  handling by binding the alert event handler to the respective GPIO
-     * lines. The number of GPIO lines to be monitored and the flag
-     * apmlAlertFlag value is read from the amd_ras_gpio_config.json file.
+     *  lines.
      */
-
-    virtual void configure();
+    void registerEventHandler() override;
 
     /** @brief Unregister the APML Alert_L udev events.
      *
@@ -90,14 +96,11 @@ class Manager : public amd::ras::Manager
     sdbusplus::asio::object_server& objectServer;
     std::shared_ptr<sdbusplus::asio::connection>& systemBus;
 
-    size_t whFamilyId;
-    size_t whModel;
     uint8_t progId;
     size_t contextType;
     uint64_t recordId;
     size_t watchdogTimerCounter;
     boost::asio::io_context& io;
-    std::vector<uint8_t> blockId;
     bool apmlInitialized;
     bool platformInitialized;
     bool runtimeErrPollingSupported;
@@ -113,6 +116,7 @@ class Manager : public amd::ras::Manager
     std::vector<gpiod::line> gpioLines;
     std::vector<apml_udev_monitor> ud;
     std::string alertHandleMode;
+    std::vector<std::string> socketNames;
 
     /**
      * @brief Handler for alert events.
@@ -244,12 +248,15 @@ class Manager : public amd::ras::Manager
      */
     void clearSbrmiAlertMask(uint8_t socNum);
 
-    /** @brief Monitors the current host power state.
+    /** @brief Called when the host power state changes.
      *
-     *  @details This API monitors the current host power state using
-     *  xyz.openbmc_project.State.Host D-bus Interface.
+     *  @details Performs APML-specific actions on host state transitions,
+     *  such as waiting for OOB config readiness and triggering platform
+     *  initialization.
+     *
+     *  @param[in] hostOff - true if the host transitioned to Off state.
      */
-    void currentHostStateMonitor();
+    void onHostStateChanged(bool hostOff) override;
 
     /** @brief Initializes platform-specific settings.
      *

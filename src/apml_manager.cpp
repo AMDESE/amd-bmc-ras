@@ -122,81 +122,39 @@ Manager::Manager(amd::ras::config::Manager& manager,
     pcieErrorHarvestMtx()
 {}
 
-void Manager::currentHostStateMonitor()
+void Manager::onHostStateChanged(bool hostOff)
 {
-    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
-    boost::system::error_code ec;
+    apmlInitialized = false;
 
-    static auto match = sdbusplus::bus::match::match(
-        bus,
-        "type='signal',member='PropertiesChanged', "
-        "interface='org.freedesktop.DBus.Properties', "
-        "arg0='xyz.openbmc_project.State.Host'",
-        [this](sdbusplus::message::message& message) {
-            oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
-            std::string intfName;
-            std::map<std::string, std::variant<std::string>> properties;
+    if (!hostOff)
+    {
+        lg2::info("Current host state monitor changed");
+        oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
+        uint32_t dataOut = 0;
 
-            try
+        while (ret != OOB_SUCCESS)
+        {
+            ret = get_bmc_ras_oob_config(0, &dataOut);
+
+            if (ret == OOB_SUCCESS)
             {
-                message.read(intfName, properties);
+                platformInitialize();
+                watchdogTimerCounter = 0;
+                break;
             }
-            catch (std::exception& e)
-            {
-                lg2::info("Unable to read host state");
-                return;
-            }
-            if (properties.empty())
-            {
-                lg2::error("ERROR: Empty PropertiesChanged signal received");
-                return;
-            }
-
-            // We only want to check for currentHostState
-            if (properties.begin()->first != "CurrentHostState")
-            {
-                return;
-            }
-            std::string* currentHostState =
-                std::get_if<std::string>(&(properties.begin()->second));
-            if (currentHostState == nullptr)
-            {
-                lg2::error("currentHostState Property invalid");
-                return;
-            }
-
-            apmlInitialized = false;
-
-            if (*currentHostState !=
-                "xyz.openbmc_project.State.Host.HostState.Off")
-            {
-                lg2::info("Current host state monitor changed");
-                uint32_t dataOut = 0;
-
-                while (ret != OOB_SUCCESS)
-                {
-                    ret = get_bmc_ras_oob_config(0, &dataOut);
-
-                    if (ret == OOB_SUCCESS)
-                    {
-                        platformInitialize();
-                        watchdogTimerCounter = 0;
-                        break;
-                    }
-                    sleep(1);
-                }
-            }
-        });
+            sleep(1);
+        }
+    }
 }
 
 void Manager::platformInitialize()
 {
+    lg2::info("Initializing Platform over APML transport");
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     struct processor_info platInfo[1];
 
     if (platformInitialized == false)
     {
-        lg2::debug("Initializing Platfrom...");
         while (ret != OOB_SUCCESS)
         {
             uint8_t socNum = 0;
@@ -402,37 +360,7 @@ void Manager::init()
         sleep(1);
     }
 
-    lg2::info("PLATFORM INIT");
-
-    std::ifstream file("/var/lib/platform-config/platform.json");
-    if (!file.is_open())
-    {
-        file.open(PLATFORM_DEFAULT_FILE);
-    }
-
-    nlohmann::json jsonData = nlohmann::json::parse(file);
-
-    if (jsonData.contains("Model"))
-    {
-        std::string modelStr = jsonData["Model"];
-        whModel = std::stoi(modelStr, nullptr, 16);
-    }
-
-    if (jsonData.contains("FamilyID"))
-    {
-        std::string familyIdStr = jsonData["FamilyID"];
-        whFamilyId = std::stoi(familyIdStr, nullptr, 16);
-    }
-
-    if (jsonData.contains("DebugLogID"))
-    {
-        for (const auto& id : jsonData["DebugLogID"])
-        {
-            blockId.push_back(static_cast<uint8_t>(id));
-        }
-    }
-
-    file.close();
+    loadPlatformConfig();
 
     platformInitialize();
 
@@ -525,9 +453,6 @@ void Manager::init()
 
 void Manager::configure()
 {
-    std::vector<std::string> socketNames;
-    amd::ras::util::cper::createRecord(objectServer, systemBus, node);
-
     std::string gpioConfigFile =
         "/var/lib/amd-bmc-ras/amd_ras_gpio_config" + node + ".json";
 
@@ -578,6 +503,11 @@ void Manager::configure()
     {
         throw std::runtime_error("Invalid mode of Alert handling");
     }
+}
+
+void Manager::registerEventHandler()
+{
+    amd::ras::util::cper::createRecord(objectServer, systemBus, node);
 
     if (alertHandleMode == "UEVENT")
     {
@@ -2977,7 +2907,7 @@ void Manager::runTimeErrorPolling()
 {
     oob_status_t ret;
 
-    lg2::info("Setting MCA and DRAM OOB Config");
+    lg2::info("runTimeErrorPolling: Setting MCA and DRAM OOB Config");
 
     ret = setMcaOobConfig();
 
@@ -2986,7 +2916,7 @@ void Manager::runTimeErrorPolling()
       is supported for the platform*/
     if (ret != OOB_MAILBOX_CMD_UNKNOWN)
     {
-        lg2::info("Setting PCIE OOB Config");
+        lg2::info("runTimeErrorPolling: Setting PCIE OOB Config");
 
         setPcieOobConfig();
 
