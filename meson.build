@@ -21,6 +21,7 @@ cpp_args = [
     '-DINDEX_FILE="' + index_file + '"',
     '-DSRC_CONFIG_FILE="' + src_config_file + '"',
     '-DRAS_DIR="' + ras_dir + '"',
+    '-DAPML',
 ]
 
 libdir = meson.current_source_dir() + './lib/'
@@ -44,17 +45,8 @@ deps = [
     dependency('sdbusplus'),
     dependency('libsystemd'),
     dependency('nlohmann_json', include_type: 'system'),
+    apml_dep,
 ]
-
-apml = get_option('apml-interface')
-if apml
-    add_project_arguments('-DAPML', language: 'cpp')
-endif
-
-pldm = get_option('pldm-interface')
-if pldm
-    add_project_arguments('-DPLDM', language: 'cpp')
-endif
 
 apml_nda = get_option('apml-nda')
 if apml_nda
@@ -66,15 +58,11 @@ sources = [
     'src/main.cpp',
     'src/base_manager.cpp',
     'src/apml_manager.cpp',
+    'src/pldm_manager.cpp',
     'src/utils/util.cpp',
     'src/utils/cper.cpp',
     'src/crashdump_manager.cpp',
 ]
-
-if apml
-    sources += 'src/apml_manager.cpp'
-    deps += apml_dep
-endif
 
 executable(
     'amd-ras-manager',

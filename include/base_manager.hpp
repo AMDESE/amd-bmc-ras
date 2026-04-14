@@ -52,10 +52,19 @@ class Manager
 
      * @details This pure virtual function must be overridden by any derived
      class. It is intended to perform any necessary configuration specific to
-     the derived class.
+     the derived class such as setting thresholds from a JSON file.
      *
      */
     virtual void configure() = 0;
+
+    /** @brief Registers event handlers for RAS alert handling.
+
+     * @details This pure virtual function must be overridden by any derived
+     class. It is intended to set up the event handling mechanism for
+     receiving RAS notifications.
+     *
+     */
+    virtual void registerEventHandler() = 0;
 
   protected:
     size_t errCount;
@@ -74,6 +83,9 @@ class Manager
     std::shared_ptr<CoreDebugDumpCperRecord> coreDebugDumpPtr;
     std::string node;
     std::vector<size_t> socIndex;
+    size_t whFamilyId;
+    size_t whModel;
+    std::vector<uint8_t> blockId;
 
     /** @brief Get the CPU socket information.
      *
@@ -82,6 +94,31 @@ class Manager
      *
      */
     void getCpuSocketInfo();
+
+    /** @brief Load platform configuration from JSON.
+     *
+     *  @details This API reads the platform configuration JSON file
+     *  and populates Model, FamilyID, and DebugLogID fields.
+     */
+    void loadPlatformConfig();
+
+    /** @brief Monitors the current host power state.
+     *
+     *  @details This API monitors the current host power state using
+     *  xyz.openbmc_project.State.Host D-bus Interface. When the host
+     *  state changes, it calls onHostStateChanged() which derived
+     *  classes override for transport-specific behavior.
+     */
+    void currentHostStateMonitor();
+
+    /** @brief Called when the host power state changes.
+     *
+     *  @details Derived classes override this to perform
+     *  transport-specific actions on host state transitions.
+     *
+     *  @param[in] hostOff - true if the host transitioned to Off state.
+     */
+    virtual void onHostStateChanged(bool hostOff) = 0;
 };
 
 } // namespace ras

@@ -6,6 +6,7 @@
 #include <boost/asio/io_context.hpp>
 #include <nlohmann/json.hpp>
 #include <phosphor-logging/lg2.hpp>
+#include <sdbusplus/bus/match.hpp>
 
 #include <fstream>
 
@@ -142,8 +143,89 @@ void Manager::getCpuSocketInfo()
 
 Manager::Manager(amd::ras::config::Manager& manager, std::string& node) :
     errCount(0), configMgr(manager), rcd(nullptr), mcaPtr(nullptr),
-    dramPtr(nullptr), pciePtr(nullptr), coreDebugDumpPtr(nullptr), node(node)
+    dramPtr(nullptr), pciePtr(nullptr), coreDebugDumpPtr(nullptr), node(node),
+    whFamilyId(0), whModel(0)
 {}
+
+void Manager::loadPlatformConfig()
+{
+    std::ifstream file("/var/lib/platform-config/platform.json");
+    if (!file.is_open())
+    {
+        file.open(PLATFORM_DEFAULT_FILE);
+    }
+
+    nlohmann::json jsonData = nlohmann::json::parse(file);
+
+    if (jsonData.contains("Model"))
+    {
+        std::string modelStr = jsonData["Model"];
+        whModel = std::stoi(modelStr, nullptr, 16);
+    }
+
+    if (jsonData.contains("FamilyID"))
+    {
+        std::string familyIdStr = jsonData["FamilyID"];
+        whFamilyId = std::stoi(familyIdStr, nullptr, 16);
+    }
+
+    if (jsonData.contains("DebugLogID"))
+    {
+        for (const auto& id : jsonData["DebugLogID"])
+        {
+            blockId.push_back(static_cast<uint8_t>(id));
+        }
+    }
+
+    file.close();
+}
+
+void Manager::currentHostStateMonitor()
+{
+    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+
+    static auto match = sdbusplus::bus::match::match(
+        bus,
+        "type='signal',member='PropertiesChanged', "
+        "interface='org.freedesktop.DBus.Properties', "
+        "arg0='xyz.openbmc_project.State.Host'",
+        [this](sdbusplus::message::message& message) {
+            std::string intfName;
+            std::map<std::string, std::variant<std::string>> properties;
+
+            try
+            {
+                message.read(intfName, properties);
+            }
+            catch (std::exception& e)
+            {
+                lg2::info("Unable to read host state");
+                return;
+            }
+            if (properties.empty())
+            {
+                lg2::error("ERROR: Empty PropertiesChanged signal received");
+                return;
+            }
+
+            // We only want to check for currentHostState
+            if (properties.begin()->first != "CurrentHostState")
+            {
+                return;
+            }
+            std::string* currentHostState =
+                std::get_if<std::string>(&(properties.begin()->second));
+            if (currentHostState == nullptr)
+            {
+                lg2::error("currentHostState Property invalid");
+                return;
+            }
+
+            bool hostOff = (*currentHostState ==
+                            "xyz.openbmc_project.State.Host.HostState.Off");
+            onHostStateChanged(hostOff);
+        });
+}
 
 } // namespace ras
 } // namespace amd
