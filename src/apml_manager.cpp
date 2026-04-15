@@ -3343,13 +3343,13 @@ void Manager::dumpProcErrorSection(
 
         if ((category == 0) || (category == 1))
         {
-            memcpy(ProcPtr->SectionDescriptor[socNum].FruString + offLo1,
+            memcpy(ProcPtr->SectionDescriptor[section].FruString + offLo1,
                    &mcaPspSynd1Lo, copySize);
-            memcpy(ProcPtr->SectionDescriptor[socNum].FruString + offHi1,
+            memcpy(ProcPtr->SectionDescriptor[section].FruString + offHi1,
                    &mcaPspSynd1Hi, copySize);
-            memcpy(ProcPtr->SectionDescriptor[socNum].FruString + offLo2,
+            memcpy(ProcPtr->SectionDescriptor[section].FruString + offLo2,
                    &mcaPspSynd2Lo, copySize);
-            memcpy(ProcPtr->SectionDescriptor[socNum].FruString + offHi2,
+            memcpy(ProcPtr->SectionDescriptor[section].FruString + offHi2,
                    &mcaPspSynd2Hi, copySize);
 
             CheckInfo[section] = 0;
