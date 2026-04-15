@@ -56,6 +56,8 @@ constexpr size_t mcaPspSynd1LoCode = 80;
 constexpr size_t mcaPspSynd1HiCode = 84;
 constexpr size_t mcaPspSynd2LoCode = 88;
 constexpr size_t mcaPspSynd2HiCode = 92;
+constexpr size_t mcaIpidHiOffset = 0x2C;
+constexpr uint32_t umcHardwareId = 0x96;
 constexpr size_t offLo1 = 0;
 constexpr size_t offHi1 = 4;
 constexpr size_t offLo2 = 8;
@@ -3177,6 +3179,7 @@ void Manager::dumpProcErrorSection(
     uint32_t mcaPspSynd1Hi = 0;
     uint32_t mcaPspSynd2Lo = 0;
     uint32_t mcaPspSynd2Hi = 0;
+    uint32_t mcaIpidHi = 0;
 
     amd::ras::config::Manager::AttributeValue apmlRetry =
         configMgr.getAttribute("ApmlRetries");
@@ -3280,6 +3283,11 @@ void Manager::dumpProcErrorSection(
                                         mcaStatusRegister;
                 }
 
+                if (dataIn.offset == mcaIpidHiOffset)
+                {
+                    mcaIpidHi = dataOut;
+                }
+
                 if (dataIn.offset == mcaPspSynd1LoCode + baseOffset)
                 {
                     mcaPspSynd1Lo = dataOut;
@@ -3331,6 +3339,15 @@ void Manager::dumpProcErrorSection(
                    &mcaPspSynd2Lo, copySize);
             memcpy(ProcPtr->SectionDescriptor[section].FruString + offHi2,
                    &mcaPspSynd2Hi, copySize);
+
+            if (category == 0 && mcaPspSynd1Lo == 0 && mcaPspSynd1Hi == 0 &&
+                mcaPspSynd2Lo == 0 && mcaPspSynd2Hi == 0 &&
+                (mcaIpidHi & 0xFFF) == umcHardwareId)
+            {
+                std::strncpy(ProcPtr->SectionDescriptor[section].FruString,
+                             "MemoryError", 19);
+                ProcPtr->SectionDescriptor[section].FruString[19] = '\0';
+            }
 
             CheckInfo[section] = 0;
             CheckInfo[section] |= ((mcaStatusRegister >> 57) & 1ULL) << 19;
