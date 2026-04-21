@@ -11,14 +11,21 @@
             "SystemRecoveryMode": {
                 "Description": "System recovery mode",
                 "Value": "NO_RESET",
-                "ValidOptions": ["COLD_RESET", "WARM_RESET", "NO_RESET"]
+                "ValidOptions": [
+                    "COLD_RESET",
+                    "WARM_RESET",
+                    "NO_RESET"
+                ]
             }
         },
         {
             "ResetSignalType": {
                 "Description": "Reset Signal Type",
                 "Value": "SYS_RST",
-                "ValidOptions": ["SYS_RST", "RSMRST"]
+                "ValidOptions": [
+                    "SYS_RST",
+                    "RSMRST"
+                ]
             }
         },
         {
@@ -144,6 +151,24 @@
             "PcieAerErrThresholdCnt": {
                 "Description": "Error threshold count for PCIE AER errors",
                 "Value": 1
+            }
+        },
+        {
+            "Soc0MPList": {
+                "Description": "List of Socket 0 MP's where tracelogs are enabled",
+                "Value": [
+                    "IOD0_MPART",
+                    "IOD0_MPASP"
+                ]
+            }
+        },
+        {
+            "Soc1MPList": {
+                "Description": "List of Socket 1 MP's where tracelogs are enabled",
+                "Value": [
+                    "IOD0_MPART",
+                    "IOD0_MPASP"
+                ]
             }
         }
     ]

@@ -790,6 +790,7 @@ void createFile(const std::shared_ptr<PtrType>& data,
     }
 
     std::string cperFilePath = RAS_DIR + cperFileName;
+    lg2::info("Creating CPER file: {CPERFILE}", "CPERFILE", cperFilePath.c_str());
 
     file = fopen(cperFilePath.c_str(), "w");
 
@@ -904,6 +905,170 @@ void createFile(const std::shared_ptr<PtrType>& data,
         }
     }
     fclose(file);
+}
+
+void mergeFile(const std::string& sourceFile, const std::string& destFile)
+{
+    constexpr size_t hdrSz = sizeof(EFI_COMMON_ERROR_RECORD_HEADER);
+    constexpr size_t descSz = sizeof(EFI_ERROR_SECTION_DESCRIPTOR);
+
+    // Helper: read entire file into byte vector.
+    auto readBinary = [](const std::string& path,
+                         std::vector<uint8_t>& buf) -> bool {
+        std::ifstream in(path, std::ios::binary);
+        if (!in.is_open())
+        {
+            return false;
+        }
+        in.seekg(0, std::ios::end);
+        buf.resize(static_cast<size_t>(in.tellg()));
+        in.seekg(0, std::ios::beg);
+        return !!in.read(reinterpret_cast<char*>(buf.data()),
+                         static_cast<std::streamsize>(buf.size()));
+    };
+
+    std::vector<uint8_t> destBuf, srcBuf;
+
+    if (!readBinary(destFile, destBuf) || !readBinary(sourceFile, srcBuf))
+    {
+        lg2::error("mergeFile: failed to read source or dest CPER file");
+        return;
+    }
+
+    if (destBuf.size() < hdrSz || srcBuf.size() < hdrSz)
+    {
+        lg2::error("mergeFile: file too small to contain a CPER header");
+        return;
+    }
+
+    auto* srcHdr =
+        reinterpret_cast<EFI_COMMON_ERROR_RECORD_HEADER*>(srcBuf.data());
+    uint16_t srcSecCount = srcHdr->SectionCount;
+    lg2::info("mergeFile: source CPER has {SRC_CNT} sections", "SRC_CNT",
+             srcSecCount);
+
+    if (srcSecCount == 0)
+    {
+        lg2::info("mergeFile: source CPER has 0 sections, nothing to merge");
+        return;
+    }
+
+    if (srcBuf.size() < hdrSz + descSz * srcSecCount)
+    {
+        lg2::error("mergeFile: source file too small for declared sections");
+        return;
+    }
+
+    auto* srcDescs = reinterpret_cast<EFI_ERROR_SECTION_DESCRIPTOR*>(
+        srcBuf.data() + hdrSz);
+
+    // Collect each source section payload using SectionOffset/SectionLength.
+    std::vector<std::vector<uint8_t>> srcPayloads(srcSecCount);
+    for (uint16_t s = 0; s < srcSecCount; ++s)
+    {
+        uint32_t off = srcDescs[s].SectionOffset;
+        uint32_t len = srcDescs[s].SectionLength;
+        lg2::info(
+            "mergeFile: source section {IDX} has offset {OFF} and length {LEN}",
+            "IDX", s, "OFF", off, "LEN", len);
+        if (off + len > srcBuf.size())
+        {
+            lg2::error(
+                "mergeFile: source section {IDX} extends past end of file",
+                "IDX", s);
+            return;
+        }
+        srcPayloads[s].assign(srcBuf.begin() + off,
+                              srcBuf.begin() + off + len);
+    }
+
+    auto* destHdr =
+        reinterpret_cast<EFI_COMMON_ERROR_RECORD_HEADER*>(destBuf.data());
+    uint16_t destSecCount = destHdr->SectionCount;
+    uint16_t newSecCount = destSecCount + srcSecCount;
+
+    lg2::info(
+        "mergeFile: dest has {DST_CNT} sections, source has {SRC_CNT} sections, "
+        "merging into a total of {NEW_CNT} sections",
+        "DST_CNT", destSecCount, "SRC_CNT", srcSecCount, "NEW_CNT", newSecCount);
+    size_t extraDescBytes = static_cast<size_t>(srcSecCount) * descSz;
+    size_t extraPayloadBytes = 0;
+    for (auto& p : srcPayloads)
+    {
+        extraPayloadBytes += p.size();
+    }
+
+    // Build merged file buffer.
+    std::vector<uint8_t> merged;
+    merged.resize(destBuf.size() + extraDescBytes + extraPayloadBytes);
+    size_t pos = 0;
+
+    // 1) Copy header.
+    std::memcpy(merged.data(), destBuf.data(), hdrSz);
+    pos = hdrSz;
+
+    // 2) Copy original descriptors, shifting SectionOffset by extraDescBytes.
+    size_t destDescStart = hdrSz;
+    for (uint16_t d = 0; d < destSecCount; ++d)
+    {
+        EFI_ERROR_SECTION_DESCRIPTOR desc;
+        std::memcpy(&desc, destBuf.data() + destDescStart + d * descSz,
+                     descSz);
+        desc.SectionOffset += static_cast<uint32_t>(extraDescBytes);
+        std::memcpy(merged.data() + pos, &desc, descSz);
+        pos += descSz;
+    }
+
+    // 3) Append source descriptors with offsets pointing past original data.
+    size_t appendBase = destBuf.size() + extraDescBytes;
+    size_t payloadCursor = 0;
+    for (uint16_t s = 0; s < srcSecCount; ++s)
+    {
+        EFI_ERROR_SECTION_DESCRIPTOR desc = srcDescs[s];
+        desc.SectionOffset =
+            static_cast<uint32_t>(appendBase + payloadCursor);
+        std::memcpy(merged.data() + pos, &desc, descSz);
+        pos += descSz;
+        payloadCursor += srcPayloads[s].size();
+    }
+
+    // 4) Copy original section data.
+    size_t destDataStart = hdrSz + destSecCount * descSz;
+    size_t destDataLen = destBuf.size() - destDataStart;
+    std::memcpy(merged.data() + pos, destBuf.data() + destDataStart,
+                destDataLen);
+    pos += destDataLen;
+
+    // 5) Append source payloads.
+    for (uint16_t s = 0; s < srcSecCount; ++s)
+    {
+        std::memcpy(merged.data() + pos, srcPayloads[s].data(),
+                    srcPayloads[s].size());
+        pos += srcPayloads[s].size();
+    }
+
+    // 6) Update header fields.
+    auto* mergedHdr =
+        reinterpret_cast<EFI_COMMON_ERROR_RECORD_HEADER*>(merged.data());
+    mergedHdr->SectionCount = newSecCount;
+    mergedHdr->RecordLength = static_cast<uint32_t>(pos);
+
+    // 7) Rewrite the destination file.
+    std::ofstream out(destFile, std::ios::binary | std::ios::trunc);
+    if (out.is_open())
+    {
+        out.write(reinterpret_cast<const char*>(merged.data()),
+                  static_cast<std::streamsize>(pos));
+        out.close();
+        lg2::info(
+            "mergeFile: merged {SRC_CNT} sections from {SRC} into {DST}",
+            "SRC_CNT", srcSecCount, "SRC", sourceFile, "DST", destFile);
+    }
+    else
+    {
+        lg2::error("mergeFile: failed to write merged CPER to {DST}", "DST",
+                   destFile);
+    }
 }
 
 } // namespace cper

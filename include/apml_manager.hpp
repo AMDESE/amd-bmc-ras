@@ -277,6 +277,12 @@ class Manager : public amd::ras::Manager
     bool decodeInterrupt(uint8_t, uint32_t);
     bool decodeInterrupt(uint8_t);
 
+    /** @brief Merge autonomous MP trace data from amd-traces service into CPER.
+     *
+     *  @param[in] fullPath - Full path to the CPER file to merge into.
+     */
+     void mergeAutonomousTraceData(const std::string& fullPath);
+
     /** @brief Check the validity of MCA banks.
      *
      * @details This function performs a validity check on the MCA banks.
