@@ -75,20 +75,6 @@
             }
         },
         {
-            "DramCeccOobEcMode": {
-                "Description": "DRAM CECC OOB error counter mode: 0=disabled, 1=no-leak mode, 2=leaky bucket mode",
-                "Value": 1,
-                "MaxBoundLimit": 2
-            }
-        },
-        {
-            "DramCeccLeakRate": {
-                "Description": "DRAM CECC leaky bucket leak rate (0x00-0x1F). Only used when DramCeccOobEcMode=2",
-                "Value": 0,
-                "MaxBoundLimit": 31
-            }
-        },
-        {
             "DramCeccThresholdEn": {
                 "Description": "If this field is true, error thresholding for DRAM ECC correctable errors will be enabled",
                 "Value": false
