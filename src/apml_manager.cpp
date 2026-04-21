@@ -2029,7 +2029,20 @@ oob_status_t Manager::setMcaErrThreshold()
 
         getOobRegisters(&oob_config);
 
-        oob_config.dram_cecc_oob_ec_mode = 1;
+        amd::ras::config::Manager::AttributeValue dramCeccOobEcModeVal =
+            configMgr.getAttribute("DramCeccOobEcMode");
+        int64_t* dramCeccOobEcMode =
+            std::get_if<int64_t>(&dramCeccOobEcModeVal);
+
+        amd::ras::config::Manager::AttributeValue dramCeccLeakRateVal =
+            configMgr.getAttribute("DramCeccLeakRate");
+        int64_t* dramCeccLeakRate =
+            std::get_if<int64_t>(&dramCeccLeakRateVal);
+
+        oob_config.dram_cecc_oob_ec_mode =
+            static_cast<uint8_t>(*dramCeccOobEcMode);
+        oob_config.dram_cecc_leak_rate =
+            static_cast<uint8_t>(*dramCeccLeakRate);
         oob_config.mca_oob_misc0_ec_enable = 1;
 
         ret = setRasOobConfig(oob_config);
@@ -2148,8 +2161,21 @@ oob_status_t Manager::setMcaOobConfig()
     if (*dramCeccPollingEn == true)
     {
         /* DRAM CECC OOB Error Counter Mode */
+        amd::ras::config::Manager::AttributeValue dramCeccOobEcModeVal =
+            configMgr.getAttribute("DramCeccOobEcMode");
+        int64_t* dramCeccOobEcMode =
+            std::get_if<int64_t>(&dramCeccOobEcModeVal);
+
+        amd::ras::config::Manager::AttributeValue dramCeccLeakRateVal =
+            configMgr.getAttribute("DramCeccLeakRate");
+        int64_t* dramCeccLeakRate =
+            std::get_if<int64_t>(&dramCeccLeakRateVal);
+
         oob_config.core_mca_err_reporting_en = 1;
-        oob_config.dram_cecc_oob_ec_mode = 1; /*Enabled in No leak mode*/
+        oob_config.dram_cecc_oob_ec_mode =
+            static_cast<uint8_t>(*dramCeccOobEcMode);
+        oob_config.dram_cecc_leak_rate =
+            static_cast<uint8_t>(*dramCeccLeakRate);
     }
 
     ret = setRasOobConfig(oob_config);
