@@ -39,7 +39,7 @@ constexpr uint8_t minorRevision = 0x0C;
  * match is found.
  */
 std::string findCperFilename(size_t);
-
+std::string findCperFilename(size_t number, const std::string& node);
 /** @brief Creates an index file and reads the error count from it.
  *
  *  @details Creates an index file in the specified RAS directory using the
@@ -281,6 +281,20 @@ void populateSignatureId(EFI_AMD_FATAL_ERROR_DATA& errorRecord,
 void populateFruStringPspSynd(EFI_ERROR_SECTION_DESCRIPTOR& sectionDesc,
                               uint32_t pspSynd1Lo, uint32_t pspSynd1Hi,
                               uint32_t pspSynd2Lo, uint32_t pspSynd2Hi);
+/**
+ * @brief Merges the contents of the source file into the destination file.
+ *
+ * This function reads the contents of the file specified by sourceFile
+ * and appends or merges it into the file specified by destFile.
+ * The exact merging behavior (e.g., append, overwrite, or custom logic)
+ * depends on the implementation.
+ *
+ * @param[in] sourceFile The path to the source file whose contents are to be merged.
+ * @param[inout] destFile The path to the destination file where the contents will be merged.
+ *
+ * @throws std::runtime_error if there is an error reading the source file or writing to the destination file.
+ */
+void mergeFile(const std::string& sourceFile, const std::string& destFile);
 
 } // namespace cper
 } // namespace util
