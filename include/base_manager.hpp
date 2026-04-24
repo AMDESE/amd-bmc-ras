@@ -3,6 +3,8 @@
 #include "config_manager.hpp"
 #include "oem_cper.hpp"
 
+#include <mutex>
+
 constexpr size_t socket1 = 1;
 constexpr size_t socket2 = 2;
 
@@ -71,6 +73,8 @@ class Manager
     size_t cpuCount;
     uint32_t boardId;
     uint32_t familyId;
+    uint8_t progId;
+    uint64_t recordId;
     std::unique_ptr<CpuId[]> cpuId;
     std::unique_ptr<uint32_t[]> uCode;
     std::unique_ptr<uint64_t[]> ppin;
@@ -86,6 +90,7 @@ class Manager
     size_t whFamilyId;
     size_t whModel;
     std::vector<uint8_t> blockId;
+    std::mutex harvestMutex;
 
     /** @brief Get the CPU socket information.
      *
@@ -119,6 +124,44 @@ class Manager
      *  @param[in] hostOff - true if the host transitioned to Off state.
      */
     virtual void onHostStateChanged(bool hostOff) = 0;
+
+    /** @brief Handle FCH error.
+     *
+     *  @details Logs the FCH error to the journal and Redfish,
+     *  increments the noncorrectable other error count, and saves.
+     *
+     *  @param[in] socNum - Socket number where the error occurred.
+     */
+    void handleFchError(uint8_t socNum);
+
+    /** @brief Initialize the fatal CPER record structures.
+     *
+     *  @details Allocates section descriptors and error records if not
+     *  already allocated, and populates the CPER header and error
+     *  descriptor with fatal error information.
+     *
+     *  @param[in] sectionCount - Number of CPER sections.
+     */
+    void initFatalCperRecord(uint16_t sectionCount);
+
+    /** @brief Process MCA bank signature IDs and PSP syndromes.
+     *
+     *  @details For each MCA bank, extracts signature ID fields
+     *  (MCA_STATUS, MCA_IPID, MCA_SYND) and PSP syndrome values
+     *  from the CrashDumpData, then populates the CPER record
+     *  with signature ID and FRU string information.
+     *
+     *  @param[in] socNum - Socket number.
+     *  @param[in] numBanks - Number of MCA banks to process.
+     */
+    void processMcaBankSignatures(uint8_t socNum, uint16_t numBanks);
+
+    /** @brief Clean up the fatal CPER record.
+     *
+     *  @details Frees the SectionDescriptor and ErrorRecord arrays
+     *  and resets the shared pointer to nullptr.
+     */
+    void cleanupFatalCperRecord();
 };
 
 } // namespace ras
