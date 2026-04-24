@@ -7,7 +7,7 @@ extern "C"
 #include "esmi_mailbox.h"
 }
 
-#include <boost/asio/deadline_timer.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/posix/stream_descriptor.hpp>
 #include <gpiod.hpp>
 
@@ -76,9 +76,9 @@ class Manager : public amd::ras::Manager
     bool platformInitialized;
     bool runtimeErrPollingSupported;
     std::vector<bool> cpuAlertProcessed;
-    boost::asio::deadline_timer* McaErrorPollingEvent;
-    boost::asio::deadline_timer* DramCeccErrorPollingEvent;
-    boost::asio::deadline_timer* PcieAerErrorPollingEvent;
+    boost::asio::steady_timer* McaErrorPollingEvent;
+    boost::asio::steady_timer* DramCeccErrorPollingEvent;
+    boost::asio::steady_timer* PcieAerErrorPollingEvent;
     std::mutex harvestMutex;
     std::mutex mcaErrorHarvestMtx;
     std::mutex dramErrorHarvestMtx;
