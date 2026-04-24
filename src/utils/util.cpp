@@ -287,6 +287,32 @@ ReturnType getProperty(sdbusplus::bus::bus& bus, const char* service,
     return std::get<ReturnType>(value);
 }
 
+void postRedfishEvent(const std::string& messageId,
+                      const std::string& messageArgs,
+                      const std::string& severity)
+{
+    std::map<std::string, std::string> addData{
+        {"REDFISH_MESSAGE_ID",   messageId},
+        {"REDFISH_MESSAGE_ARGS", messageArgs},
+    };
+    try
+    {
+        auto bus = sdbusplus::bus::new_default();
+        auto method = bus.new_method_call(
+            "xyz.openbmc_project.Logging",
+            "/xyz/openbmc_project/logging",
+            "xyz.openbmc_project.Logging.Create",
+            "Create");
+        method.append(messageId, severity, addData);
+        bus.call_noreply(method);
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to post Redfish EventLog entry {ID}: {ERR}",
+                   "ID", messageId, "ERR", e.what());
+    }
+}
+
 } // namespace util
 } // namespace ras
 } // namespace amd

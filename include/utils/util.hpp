@@ -123,6 +123,18 @@ template <typename ReturnType>
 ReturnType getProperty(sdbusplus::bus::bus&, const char*, const char*,
                        const char*, const char*);
 
+/** @brief Posts a Redfish event to the BMC logging service.
+ *
+ *  @param[in] messageId   - Redfish message registry ID.
+ *  @param[in] messageArgs - message arguments.
+ *  @param[in] severity    - phosphor-logging severity.
+ */
+void postRedfishEvent(
+    const std::string& messageId,
+    const std::string& messageArgs,
+    const std::string& severity =
+        "xyz.openbmc_project.Logging.Entry.Level.Error");
+
 } // namespace util
 } // namespace ras
 } // namespace amd

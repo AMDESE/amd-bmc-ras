@@ -1543,10 +1543,8 @@ bool Manager::decodeInterrupt(uint8_t socNum)
         {
             std::string err_msg =
                 "The APML_ALERT_L is asserted due to MCE error";
-            sd_journal_send("MESSAGE=%s", err_msg.c_str(), "PRIORITY=%i",
-                            LOG_ERR, "REDFISH_MESSAGE_ID=%s",
-                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
-                            err_msg.c_str(), NULL);
+
+            amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", err_msg);
 
             uint8_t buffer;
             oob_status_t ret;
@@ -1610,10 +1608,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         "Fatal error detected in the control fabric. "
                         "BMC may trigger a reset based on policy set. ";
 
-                    sd_journal_send(
-                        "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
-                        "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                        "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+                    amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", rasErrMsg);
 
                     harvestBreakEvent(socNum);
                     cpuAlertProcessed.assign(cpuCount, true);
@@ -1624,10 +1619,8 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         "System hang while resetting in syncflood."
                         "Suggested next step is to do an additional manual "
                         "immediate reset";
-                    sd_journal_send(
-                        "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
-                        "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                        "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+
+                    amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", rasErrMsg);
 
                     fchHangError = true;
                 }
@@ -1655,10 +1648,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         contextType = crashdump;
                     }
 
-                    sd_journal_send(
-                        "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
-                        "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                        "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+                    amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", rasErrMsg);
 
                     if (false == harvestMcaValidityCheck(socNum, &errorCheck))
                     {
@@ -1672,10 +1662,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                     std::string rasErrMsg =
                         "Non MCA Shutdown error detected in the system";
 
-                    sd_journal_send(
-                        "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
-                        "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                        "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+                    amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", rasErrMsg);
 
                     nonMcaShutdownError = true;
                 }
@@ -1688,11 +1675,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         std::string mcaErrOverflowMsg =
                             "MCA runtime error counter overflow occured";
 
-                        sd_journal_send(
-                            "MESSAGE=%s", mcaErrOverflowMsg.c_str(),
-                            "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
-                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
-                            mcaErrOverflowMsg.c_str(), NULL);
+                        amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", mcaErrOverflowMsg);
 
                         runtimeError = true;
                     }
@@ -1703,11 +1686,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         std::string dramErrOverlowMsg =
                             "DRAM CECC runtime error counter overflow occured";
 
-                        sd_journal_send(
-                            "MESSAGE=%s", dramErrOverlowMsg.c_str(),
-                            "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
-                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
-                            dramErrOverlowMsg.c_str(), NULL);
+                        amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", dramErrOverlowMsg);
 
                         runtimeError = true;
                     }
@@ -1718,11 +1697,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         std::string pcieErrOverlowMsg =
                             "PCIE runtime error counter overflow occured";
 
-                        sd_journal_send(
-                            "MESSAGE=%s", pcieErrOverlowMsg.c_str(),
-                            "PRIORITY=%i", LOG_ERR, "REDFISH_MESSAGE_ID=%s",
-                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
-                            pcieErrOverlowMsg.c_str(), NULL);
+                        amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", pcieErrOverlowMsg);
 
                         runtimeError = true;
                     }
@@ -1842,11 +1817,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                                                 }
                                             }
 
-                                            sd_journal_send(
-                                                "PRIORITY=%i", LOG_INFO,
-                                                "REDFISH_MESSAGE_ID=%s",
-                                                "OpenBMC.0.1.AmdAifsFailureMatch",
-                                                NULL);
+                                            amd::ras::util::postRedfishEvent(
+                                                "OpenBMC.0.1.AmdAifsFailureMatch", "",
+                                                "xyz.openbmc_project.Logging.Entry.Level.Informational");
 
                                             break;
                                         }
