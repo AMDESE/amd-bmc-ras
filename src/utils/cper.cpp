@@ -915,6 +915,37 @@ void cper::dumpCoreDebugDumpHeader(
     hdr.cpuidInfo.edx = cpuId[0].edx;
 }
 
+void cper::populateSignatureId(EFI_AMD_FATAL_ERROR_DATA& errorRecord,
+                               uint32_t mcaSyndLo, uint32_t mcaSyndHi,
+                               uint32_t mcaIpidLo, uint32_t mcaIpidHi,
+                               uint32_t mcaStatusLo, uint32_t mcaStatusHi)
+{
+    errorRecord.SignatureID[0] = mcaSyndLo;
+    errorRecord.SignatureID[1] = mcaSyndHi;
+    errorRecord.SignatureID[2] = mcaIpidLo;
+    errorRecord.SignatureID[3] = mcaIpidHi;
+    errorRecord.SignatureID[4] = mcaStatusLo;
+    errorRecord.SignatureID[5] = mcaStatusHi;
+
+    errorRecord.ProcError.ValidFields = errorRecord.ProcError.ValidFields | 0x4;
+}
+
+void cper::populateFruStringPspSynd(EFI_ERROR_SECTION_DESCRIPTOR& sectionDesc,
+                                    uint32_t pspSynd1Lo, uint32_t pspSynd1Hi,
+                                    uint32_t pspSynd2Lo, uint32_t pspSynd2Hi)
+{
+    constexpr size_t off1Lo = 0;
+    constexpr size_t off1Hi = 4;
+    constexpr size_t off2Lo = 8;
+    constexpr size_t off2Hi = 12;
+    constexpr size_t cpSize = 4;
+
+    memcpy(sectionDesc.FruString + off1Lo, &pspSynd1Lo, cpSize);
+    memcpy(sectionDesc.FruString + off1Hi, &pspSynd1Hi, cpSize);
+    memcpy(sectionDesc.FruString + off2Lo, &pspSynd2Lo, cpSize);
+    memcpy(sectionDesc.FruString + off2Hi, &pspSynd2Hi, cpSize);
+}
+
 } // namespace util
 } // namespace ras
 } // namespace amd

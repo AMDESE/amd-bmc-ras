@@ -3,6 +3,8 @@
 #include "utils/cper.hpp"
 #include "utils/util.hpp"
 
+#include <systemd/sd-journal.h>
+
 #include <boost/asio/io_context.hpp>
 #include <nlohmann/json.hpp>
 #include <phosphor-logging/lg2.hpp>
@@ -142,9 +144,9 @@ void Manager::getCpuSocketInfo()
 }
 
 Manager::Manager(amd::ras::config::Manager& manager, std::string& node) :
-    errCount(0), configMgr(manager), rcd(nullptr), mcaPtr(nullptr),
-    dramPtr(nullptr), pciePtr(nullptr), coreDebugDumpPtr(nullptr), node(node),
-    whFamilyId(0), whModel(0)
+    errCount(0), progId(1), recordId(1), configMgr(manager), rcd(nullptr),
+    mcaPtr(nullptr), dramPtr(nullptr), pciePtr(nullptr),
+    coreDebugDumpPtr(nullptr), node(node), whFamilyId(0), whModel(0)
 {}
 
 void Manager::loadPlatformConfig()
@@ -225,6 +227,119 @@ void Manager::currentHostStateMonitor()
                             "xyz.openbmc_project.State.Host.HostState.Off");
             onHostStateChanged(hostOff);
         });
+}
+
+void Manager::handleFchError(uint8_t socNum)
+{
+    std::string rasErrMsg = "System hang while resetting in syncflood."
+                            "Suggested next step is to do an additional manual "
+                            "immediate reset";
+    sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
+                    "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
+                    "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+
+    configMgr.incrementNoncorrectableOtherError(socNum);
+    configMgr.updateErrorCountDbus();
+    configMgr.saveErrorCounts();
+}
+
+void Manager::cleanupFatalCperRecord()
+{
+    if (rcd != nullptr)
+    {
+        if (rcd->SectionDescriptor != nullptr)
+        {
+            delete[] rcd->SectionDescriptor;
+            rcd->SectionDescriptor = nullptr;
+        }
+        if (rcd->ErrorRecord != nullptr)
+        {
+            delete[] rcd->ErrorRecord;
+            rcd->ErrorRecord = nullptr;
+        }
+        rcd = nullptr;
+    }
+}
+
+void Manager::initFatalCperRecord(uint16_t sectionCount)
+{
+    uint32_t errorSeverity = 1;
+
+    if (rcd->SectionDescriptor == nullptr)
+    {
+        rcd->SectionDescriptor = new EFI_ERROR_SECTION_DESCRIPTOR[sectionCount];
+        std::memset(rcd->SectionDescriptor, 0,
+                    sectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR));
+    }
+
+    if (rcd->ErrorRecord == nullptr)
+    {
+        rcd->ErrorRecord = new EFI_AMD_FATAL_ERROR_DATA[sectionCount];
+        std::memset(rcd->ErrorRecord, 0,
+                    sectionCount * sizeof(EFI_AMD_FATAL_ERROR_DATA));
+    }
+
+    amd::ras::util::cper::dumpHeader(rcd, sectionCount, errorSeverity, fatalErr,
+                                     boardId, recordId);
+    amd::ras::util::cper::dumpErrorDescriptor(rcd, sectionCount, fatalErr,
+                                              &errorSeverity, progId);
+}
+
+void Manager::processMcaBankSignatures(uint8_t socNum, uint16_t numBanks)
+{
+    amd::ras::config::Manager::AttributeValue sigIdOffsetVal =
+        configMgr.getAttribute("SigIdOffset");
+    std::vector<std::string>* sigIDOffset =
+        std::get_if<std::vector<std::string>>(&sigIdOffsetVal);
+
+    uint32_t syndOffsetLo = std::stoul((*sigIDOffset)[0], nullptr, base16);
+    uint32_t syndOffsetHi = std::stoul((*sigIDOffset)[1], nullptr, base16);
+    uint32_t ipidOffsetLo = std::stoul((*sigIDOffset)[2], nullptr, base16);
+    uint32_t ipidOffsetHi = std::stoul((*sigIDOffset)[3], nullptr, base16);
+    uint32_t statusOffsetLo = std::stoul((*sigIDOffset)[4], nullptr, base16);
+    uint32_t statusOffsetHi = std::stoul((*sigIDOffset)[5], nullptr, base16);
+
+    for (uint16_t n = 0; n < numBanks; n++)
+    {
+        uint32_t mcaStatusLo = rcd->ErrorRecord[socNum]
+                                   .CrashDumpData[n]
+                                   .McaData[statusOffsetLo / 4];
+        uint32_t mcaStatusHi = rcd->ErrorRecord[socNum]
+                                   .CrashDumpData[n]
+                                   .McaData[statusOffsetHi / 4];
+        uint32_t mcaIpidLo =
+            rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[ipidOffsetLo / 4];
+        uint32_t mcaIpidHi =
+            rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[ipidOffsetHi / 4];
+        uint32_t mcaSyndLo =
+            rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[syndOffsetLo / 4];
+        uint32_t mcaSyndHi =
+            rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[syndOffsetHi / 4];
+
+        uint32_t mcaPspSynd1Lo = rcd->ErrorRecord[socNum]
+                                     .CrashDumpData[n]
+                                     .McaData[mcaPspSynd1LoCode / 4];
+        uint32_t mcaPspSynd1Hi = rcd->ErrorRecord[socNum]
+                                     .CrashDumpData[n]
+                                     .McaData[mcaPspSynd1HiCode / 4];
+        uint32_t mcaPspSynd2Lo = rcd->ErrorRecord[socNum]
+                                     .CrashDumpData[n]
+                                     .McaData[mcaPspSynd2LoCode / 4];
+        uint32_t mcaPspSynd2Hi = rcd->ErrorRecord[socNum]
+                                     .CrashDumpData[n]
+                                     .McaData[mcaPspSynd2HiCode / 4];
+
+        if ((mcaStatusHi & (1 << 25)) && (mcaStatusHi & (1 << 23)))
+        {
+            amd::ras::util::cper::populateSignatureId(
+                rcd->ErrorRecord[socNum], mcaSyndLo, mcaSyndHi, mcaIpidLo,
+                mcaIpidHi, mcaStatusLo, mcaStatusHi);
+        }
+
+        amd::ras::util::cper::populateFruStringPspSynd(
+            rcd->SectionDescriptor[socNum], mcaPspSynd1Lo, mcaPspSynd1Hi,
+            mcaPspSynd2Lo, mcaPspSynd2Hi);
+    }
 }
 
 } // namespace ras

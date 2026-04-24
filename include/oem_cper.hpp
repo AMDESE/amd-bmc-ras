@@ -7,6 +7,10 @@ extern "C"
 
 constexpr uint8_t mcaDataBankLen = 128;
 constexpr uint16_t debugDumpDataLen = 12124;
+constexpr size_t mcaPspSynd1LoCode = 80;
+constexpr size_t mcaPspSynd1HiCode = 84;
+constexpr size_t mcaPspSynd2LoCode = 88;
+constexpr size_t mcaPspSynd2HiCode = 92;
 constexpr size_t length4 = 4;
 constexpr size_t length8 = 8;
 constexpr size_t length32 = 32;

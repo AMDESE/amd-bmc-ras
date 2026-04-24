@@ -5,6 +5,7 @@
 #include <boost/asio/deadline_timer.hpp>
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/object_server.hpp>
+#include <sdbusplus/bus/match.hpp>
 
 namespace amd
 {
@@ -12,6 +13,25 @@ namespace ras
 {
 namespace pldm
 {
+
+/** @brief PLDM RAS Event IDs from the RasStatus Sensor (0x4C) */
+constexpr uint16_t eventIdFatalError = 0x4C01;
+constexpr uint16_t eventIdFchError = 0x4C02;
+constexpr uint16_t eventIdMcaOverflow = 0x4C08;
+constexpr uint16_t eventIdDramCeccOverflow = 0x4C10;
+constexpr uint16_t eventIdNonMcaCoreShutdown = 0x4C40;
+constexpr uint16_t eventIdMcaCoreShutdown = 0x4C41;
+
+/** @brief DataTransferHandle opcode in upper byte */
+constexpr uint8_t opcodeDbgLogDump = 0x5C;
+constexpr uint8_t opcodeDbgLogValidityCheck = 0x5B;
+constexpr uint8_t opcodeDbgLogDumpAlt = 0x62;
+constexpr uint8_t opcodeDbgLogValidityCheckAlt = 0x61;
+
+/** @brief Error context types matching APML definitions */
+constexpr size_t crashdump = 1;
+constexpr size_t shutdown = 2;
+
 /** @brief Manages RAS (Reliability, Availability, and Serviceability)
  * operations for PLDM.
  *
@@ -74,6 +94,9 @@ class Manager : public amd::ras::Manager
     // Indicates whether runtime error polling is supported for PLDM
     bool runtimeErrPollingSupported;
 
+    // D-Bus match rule for PLDM message poll events
+    std::unique_ptr<sdbusplus::bus::match_t> pldmEventMatch;
+
     /** @brief Called when the host power state changes.
      *
      *  @details Performs PLDM-specific actions on host state transitions,
@@ -90,6 +113,65 @@ class Manager : public amd::ras::Manager
      *  error reporting.
      */
     void platformInitialize();
+
+    /** @brief Handles incoming PLDM RAS event signals.
+     *
+     *  @details Processes the PldmMessagePollEvent signal, extracts
+     *  the event ID and data transfer handle, reads error data from
+     *  the file descriptor, and dispatches appropriate error handling
+     *  based on the RAS event type.
+     *
+     *  @param[in] msg - The D-Bus message containing the PLDM event.
+     */
+    void handlePldmRasEvent(sdbusplus::message_t& msg);
+
+    /** @brief Reads event data from a file descriptor.
+     *
+     *  @details Performs a complete read of eventDataSize bytes from
+     *  the given file descriptor, handling partial reads and EINTR.
+     *
+     *  @param[in] fd - File descriptor to read from.
+     *  @param[in] eventDataSize - Number of bytes to read.
+     *  @param[out] eventData - Buffer populated with the read data.
+     *  @return true on success, false on read failure.
+     */
+    bool readEventDataFromFd(int fd, uint16_t eventDataSize,
+                             std::vector<uint8_t>& eventData);
+
+    /** @brief Handles fatal error or MCA core shutdown events via PLDM.
+     *
+     *  @details Processes the error event data from PMFW,
+     *  populates the CPER record with MCA bank data and debug log
+     *  dumps, generates the CPER file, exports to D-Bus, and
+     *  triggers the configured recovery action.
+     *
+     *  @param[in] eventData - Raw event data from PMFW containing
+     *                         MCA banks and debug log dump data.
+     *  @param[in] socNum - Socket number derived from terminus info.
+     *  @param[in] contextType - Error context (crashdump or shutdown).
+     */
+    void handleFatalOrShutdownError(const std::vector<uint8_t>& eventData,
+                                    uint8_t socNum, size_t contextType);
+
+    /** @brief Extracts socket number from PLDM terminus name.
+     *
+     *  @param[in] terminusName - The terminus name string.
+     *  @return Socket number (0-based).
+     */
+    uint8_t getSocketFromTerminus(const std::string& terminusName);
+
+    /** @brief Harvests the CPER fatal error record from PLDM event data.
+     *
+     *  @details Parses the event data payload from PMFW and fills in
+     *  the FatalCperRecord structures including MCA bank data and
+     *  debug log ID data.
+     *
+     *  @param[in] eventData - Raw event data payload.
+     *  @param[in] socNum - Socket number.
+     *  @param[in] contextType - Context type (crashdump or shutdown).
+     */
+    void harvestMcaDataBanksOverPldm(const std::vector<uint8_t>& eventData,
+                                     uint8_t socNum, size_t contextType);
 };
 
 } // namespace pldm
