@@ -194,12 +194,16 @@ void generatePprJsonFiles(const std::shared_ptr<McaRuntimeCperRecord>& ptr,
         const bool transAddrValid = static_cast<bool>((transAddr >> 62) & 0x1U);
 
         // UMC bank detection
-        const uint32_t hwId    = static_cast<uint32_t>((mcaIpid >> 32) & 0xFFFU);
-        const uint32_t mcaType = static_cast<uint32_t>((mcaIpid >> 48) & 0xFFFFU);
-
-        if (hwId != umcHardwareId || mcaType != umcMcaType)
+        if (!isDram)
         {
-            continue; // Not a UMC bank no need for PPRs
+            const uint32_t hwId =
+                static_cast<uint32_t>((mcaIpid >> 32) & 0xFFFU);
+            const uint32_t mcaType =
+                static_cast<uint32_t>((mcaIpid >> 48) & 0xFFFFU);
+            if (hwId != umcHardwareId || mcaType != umcMcaType)
+            {
+                continue; // Not a UMC bank — no PPR needed
+            }
         }
 
         // Severity
