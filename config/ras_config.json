@@ -109,7 +109,7 @@
         {
             "McaPollingEn": {
                 "Description": "If this field is true, Machine Check Architecture (MCA) correctable errors will be polled",
-                "Value": true
+                "Value": false
             }
         },
         {
