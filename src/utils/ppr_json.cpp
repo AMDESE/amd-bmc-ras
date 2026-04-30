@@ -154,9 +154,6 @@ void generatePprJsonFiles(const std::shared_ptr<McaRuntimeCperRecord>& ptr,
         return;
     }
 
-    const int wOff = isDram ? -1 : 0;
-
-    // mcaErr (baseOffset=0)
     constexpr int kStatusLo    =  2;
     constexpr int kStatusHi    =  3;
     constexpr int kAddrLo      =  4;
@@ -175,25 +172,22 @@ void generatePprJsonFiles(const std::shared_ptr<McaRuntimeCperRecord>& ptr,
 
         // Extract MCA registers
         const uint64_t mcaStatus =
-            (static_cast<uint64_t>(d[kStatusHi + wOff]) << 32) |
-             d[kStatusLo + wOff];
+            (static_cast<uint64_t>(d[kStatusHi]) << 32) | d[kStatusLo];
 
         const uint64_t mcaAddr =
-            (static_cast<uint64_t>(d[kAddrHi + wOff]) << 32) |
-             d[kAddrLo + wOff];
+            (static_cast<uint64_t>(d[kAddrHi]) << 32) | d[kAddrLo];
 
         const uint64_t mcaIpid =
-            (static_cast<uint64_t>(d[kIpidHi + wOff]) << 32) |
-             d[kIpidLo + wOff];
+            (static_cast<uint64_t>(d[kIpidHi]) << 32) | d[kIpidLo];
 
-        const uint32_t mcaSynd = d[kSyndLo + wOff];
+        const uint32_t mcaSynd = d[kSyndLo];
 
         const uint64_t transAddr =
             (static_cast<uint64_t>(d[kTransAddrHi]) << 32) |
              d[kTransAddrLo];
         const bool transAddrValid = static_cast<bool>((transAddr >> 62) & 0x1U);
 
-        // UMC bank detection
+        // UMC bank detection — for MCA errors verify via IPID.
         if (!isDram)
         {
             const uint32_t hwId =

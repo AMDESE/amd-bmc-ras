@@ -28,17 +28,16 @@ constexpr uint32_t errCodeEcsRow  = 0x08;
 constexpr uint32_t pprRepairTypeRtSoft = 0x0000;
 constexpr uint32_t pprRepairTypeBtSoft = 0x8000;
 
-//  mcaErr offsets
-//    MCA_STATUS_LO  offset 0x08  DumpData[2]
-//    MCA_STATUS_HI  offset 0x0C  DumpData[3]
-//    MCA_ADDR_LO    offset 0x10  DumpData[4]
-//    MCA_ADDR_HI    offset 0x14  DumpData[5]
-//    MCA_IPID_LO    offset 0x28  DumpData[10]
-//    MCA_IPID_HI    offset 0x2C  DumpData[11]
-//    MCA_SYND_LO    offset 0x30  DumpData[12]
-//    TRANS_ADDR_LO  offset 0x70  DumpData[28]
-//    TRANS_ADDR_HI  offset 0x74  DumpData[29]
-//  dramCeccErr baseOffset=4
+//    DumpData[0..1]   = MCA_CTL
+//    DumpData[2]      = MCA_STATUS_LO
+//    DumpData[3]      = MCA_STATUS_HI
+//    DumpData[4]      = MCA_ADDR_LO
+//    DumpData[5]      = MCA_ADDR_HI
+//    DumpData[10]     = MCA_IPID_LO
+//    DumpData[11]     = MCA_IPID_HI
+//    DumpData[12]     = MCA_SYND_LO
+//    DumpData[28]     = TRANS_ADDR_LO
+//    DumpData[29]     = TRANS_ADDR_HI
 
 /** @brief Function to generate PPR json files
  *
