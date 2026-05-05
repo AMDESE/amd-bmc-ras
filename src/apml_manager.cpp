@@ -20,6 +20,8 @@ extern "C"
 #include <phosphor-logging/lg2.hpp>
 #include <phosphor-logging/log.hpp>
 
+#include <set>
+
 namespace amd
 {
 namespace ras
@@ -69,6 +71,9 @@ constexpr size_t breakEvent = 3;
 constexpr uint16_t breakEventBanks = 1;
 constexpr size_t index28 = 28;
 constexpr size_t blockId25 = 25;
+constexpr uint16_t coreMcaHardwareId = 0xb0;
+constexpr size_t coresPerCcd = 32;
+constexpr size_t maxCoreIndex = 256;
 
 void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
 {
@@ -762,6 +767,7 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
     uint32_t highestSeverity;
     uint32_t sectionDesSize;
     uint32_t sectionSize;
+    uint64_t thresholdCount = 1;
 
     uint16_t sectionCount = p0Inst.number_of_inst + p1Inst.number_of_inst;
 
@@ -819,7 +825,8 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         amd::ras::util::cper::exportToDBus(errCount, mcaPtr->Header.TimeStamp,
                                            objectServer, systemBus, node);
         amd::ras::util::cper::updateIndexFile(errCount, node);
-
+        thresholdCount = configMgr.getThresholdCount("McaErrThresholdEnable",
+                                                     "McaErrThresholdCount");
         if (mcaPtr->SectionDescriptor != nullptr)
         {
             delete[] mcaPtr->SectionDescriptor;
@@ -881,6 +888,8 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         amd::ras::util::cper::exportToDBus(errCount, dramPtr->Header.TimeStamp,
                                            objectServer, systemBus, node);
         amd::ras::util::cper::updateIndexFile(errCount, node);
+        thresholdCount = configMgr.getThresholdCount(
+            "DramCeccErrThresholdEnable", "DramCeccErrThresholdCount");
 
         if (dramPtr->SectionDescriptor != nullptr)
         {
@@ -937,6 +946,8 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         amd::ras::util::cper::exportToDBus(errCount, pciePtr->Header.TimeStamp,
                                            objectServer, systemBus, node);
         amd::ras::util::cper::updateIndexFile(errCount, node);
+        thresholdCount = configMgr.getThresholdCount("PcieErrThresholdEnable",
+                                                     "PcieErrThresholdCount");
 
         if (pciePtr->SectionDescriptor != nullptr)
         {
@@ -950,6 +961,16 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
             pciePtr->PcieErrorData = nullptr;
         }
     }
+    if (p0Inst.number_of_inst != 0)
+    {
+        configMgr.incrementCorrectableOtherError(socIndex[0], thresholdCount);
+    }
+    if (p1Inst.number_of_inst != 0)
+    {
+        configMgr.incrementCorrectableOtherError(socIndex[1], thresholdCount);
+    }
+    configMgr.updateErrorCountDbus();
+    configMgr.saveErrorCounts();
 
     if (checkInfo != nullptr)
     {
@@ -1656,6 +1677,8 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
     uint32_t buffer;
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     bool validSignatureId = false;
+    bool uncorrectableError = false;
+    std::set<size_t> errorCores;
 
     uint32_t syndOffsetLo = 0;
     uint32_t syndOffsetHi = 0;
@@ -1812,6 +1835,13 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
                 {
                     validSignatureId = true;
                 }
+
+                /*Bit 29 of MCA_STATUS_HI indicates if the error is
+                    uncorrectable*/
+                if (mcaStatusHi & (1 << 29))
+                {
+                    uncorrectableError = true;
+                }
             }
             if (dfError.input[0] == ipidOffsetLo)
             {
@@ -1860,6 +1890,8 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
             rcd->ErrorRecord[socNum].ProcError.ValidFields =
                 rcd->ErrorRecord[socNum].ProcError.ValidFields | 0x4;
 
+            decodeIpidForCore(socNum, mcaIpidHi, mcaIpidLo, errorCores);
+
             validSignatureId = false;
         }
         else
@@ -1882,6 +1914,86 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
                &mcaPspSynd2Hi, copySize);
 
         n++;
+    }
+
+    // Increment per-core noncorrectable error counts for cores that
+    // had MCA errors, based on IPID decode.
+    if (!errorCores.empty())
+    {
+        for (size_t core : errorCores)
+        {
+            if (uncorrectableError)
+            {
+                configMgr.incrementNoncorrectableCPUError(socNum, core);
+                lg2::info(
+                    "Socket {SOCKET}: Incrementing non-correctable CPU error count "
+                    "for core {CORE}",
+                    "SOCKET", socNum, "CORE", core);
+            }
+            else
+            {
+                configMgr.incrementCorrectableCPUError(socNum, core);
+                lg2::info(
+                    "Socket {SOCKET}: Incrementing correctable CPU error count "
+                    "for core {CORE}",
+                    "SOCKET", socNum, "CORE", core);
+            }
+        }
+    }
+    else
+    {
+        // No per-core bank identified; increment socket-level non-correctable
+        // Other error count
+        configMgr.incrementNoncorrectableOtherError(socNum);
+        lg2::info(
+            "Socket {SOCKET}: No per-core bank identified, Incrementing non-correctable Other error count",
+            "SOCKET", socNum);
+    }
+}
+
+void Manager::decodeIpidForCore(uint8_t socNum, uint32_t mcaIpidHi,
+                                uint32_t mcaIpidLo,
+                                std::set<size_t>& errorCores)
+{
+    // Decode IPID to identify the logical core for per-core
+    // error counting. MCA_IPID 64-bit register layout:
+    //   [63:48] = mca_type, [47:44] = instance_id_hi,
+    //   [43:32] = hardware_id, [31:0] = instance_id
+    uint16_t ipidHwId = mcaIpidHi & 0xFFF;
+    uint8_t instanceIdHi = (mcaIpidHi >> 12) & 0xF;
+    uint16_t ipidMcaType = (mcaIpidHi >> 16) & 0xFFFF;
+    lg2::info(
+        "Socket {SOCKET}: Decoded IPID - HW ID: {HWID}, MCA Type: {MCATYPE}, "
+        "Instance ID Hi: {INSTHI}, Instance ID Lo: {INSTLO}",
+        "SOCKET", socNum, "HWID", lg2::hex, ipidHwId, "MCATYPE", lg2::hex,
+        ipidMcaType, "INSTHI", instanceIdHi, "INSTLO", lg2::hex, mcaIpidLo);
+
+    if (ipidHwId == coreMcaHardwareId)
+    {
+        switch (ipidMcaType)
+        {
+            case 0x0: // LS
+            case 0x1: // IF
+            case 0x2: // L2
+            case 0x3: // DE
+            case 0x5: // EX
+            case 0x6: // FP
+            {
+                uint32_t instanceId = mcaIpidLo;
+                uint8_t ccdNum = (instanceIdHi << 4) |
+                                 ((instanceId >> 24) & 0xF);
+                uint8_t coreNum = (instanceId >> 17) & 0x1F;
+                size_t logicalCore =
+                    static_cast<size_t>(ccdNum) * coresPerCcd + coreNum;
+                if (logicalCore < maxCoreIndex)
+                {
+                    errorCores.insert(logicalCore);
+                }
+                break;
+            }
+            default:
+                break;
+        }
     }
 }
 
@@ -1990,11 +2102,6 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
 
             harvestBreakEvent(socNum);
             cpuAlertProcessed.assign(cpuCount, true);
-            // TODO: Get the core number on which the error happened and update
-            // the error count
-            configMgr.incrementNoncorrectableCPUError(socNum, 0);
-            configMgr.updateErrorCountDbus();
-            configMgr.saveErrorCounts();
         }
         else if (src & resetHangErr)
         {
@@ -2008,10 +2115,8 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                             rasErrMsg.c_str(), NULL);
 
             fchHangError = true;
-            configMgr.incrementNoncorrectableOtherError(socNum);
-            configMgr.updateErrorCountDbus();
-            configMgr.saveErrorCounts();
         }
+        configMgr.incrementNoncorrectableOtherError(socNum);
     }
     else
     {
@@ -2039,11 +2144,6 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                             LOG_ERR, "REDFISH_MESSAGE_ID=%s",
                             "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
                             rasErrMsg.c_str(), NULL);
-            // TODO: Get the core number on which the error happened and update
-            // the error count
-            configMgr.incrementNoncorrectableCPUError(socNum, 0);
-            configMgr.updateErrorCountDbus();
-            configMgr.saveErrorCounts();
 
             if (false == harvestMcaValidityCheck(socNum, &errorCheck))
             {
@@ -2064,8 +2164,6 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
 
             nonMcaShutdownError = true;
             configMgr.incrementNoncorrectableOtherError(socNum);
-            configMgr.updateErrorCountDbus();
-            configMgr.saveErrorCounts();
         }
         else
         {
@@ -2086,8 +2184,6 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                     "McaErrThresholdEnable", "McaErrThresholdCount");
                 configMgr.incrementCorrectableOtherError(socNum,
                                                          thresholdCount);
-                configMgr.updateErrorCountDbus();
-                configMgr.saveErrorCounts();
             }
             if (src & dramCeccErrOverflow)
             {
@@ -2100,14 +2196,11 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                     "MESSAGE=%s", dramErrOverlowMsg.c_str(), "PRIORITY=%i",
                     LOG_ERR, "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
                     "REDFISH_MESSAGE_ARGS=%s", dramErrOverlowMsg.c_str(), NULL);
-                // TODO: Get the core number on which the error happened and
-                // update the error count
+
                 uint64_t thresholdCount = configMgr.getThresholdCount(
                     "DramCeccErrThresholdEnable", "DramCeccErrThresholdCount");
                 configMgr.incrementCorrectableOtherError(socNum,
                                                          thresholdCount);
-                configMgr.updateErrorCountDbus();
-                configMgr.saveErrorCounts();
                 runtimeError = true;
             }
             if (src & pcieErrOverflow)
@@ -2127,8 +2220,6 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                     "PcieErrThresholdEnable", "PcieErrThresholdCount");
                 configMgr.incrementCorrectableOtherError(socNum,
                                                          thresholdCount);
-                configMgr.updateErrorCountDbus();
-                configMgr.saveErrorCounts();
             }
             if (src & x86ExceptionBit)
             {
@@ -2142,11 +2233,13 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                     "REDFISH_MESSAGE_ARGS=%s", x86ErrMsg.c_str(), NULL);
 
                 harvestX86ExceptionData(socNum);
+                configMgr.incrementCorrectableOtherError(socNum, 1);
                 runtimeError = true;
             }
         }
     }
-
+    configMgr.updateErrorCountDbus();
+    configMgr.saveErrorCounts();
     cpuAlertProcessed[socNum] = true;
 
     if (fchHangError == true || runtimeError == true ||
@@ -2391,11 +2484,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
                     harvestBreakEvent(socNum);
                     cpuAlertProcessed.assign(cpuCount, true);
-                    // TODO: Get the core number on which the error happened and
-                    // update the error count
-                    configMgr.incrementNoncorrectableCPUError(socNum, 0);
-                    configMgr.updateErrorCountDbus();
-                    configMgr.saveErrorCounts();
+                    configMgr.incrementNoncorrectableOtherError(socNum);
                 }
                 else if (buf & resetHangErr)
                 {
@@ -2410,8 +2499,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
                     fchHangError = true;
                     configMgr.incrementNoncorrectableOtherError(socNum);
-                    configMgr.updateErrorCountDbus();
-                    configMgr.saveErrorCounts();
                 }
             }
             else
@@ -2441,11 +2528,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
                         "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
                         "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
-                    // TODO: Get the core number on which the error happened and
-                    // update the error count
-                    configMgr.incrementNoncorrectableCPUError(socNum, 0);
-                    configMgr.updateErrorCountDbus();
-                    configMgr.saveErrorCounts();
+
                     if (false == harvestMcaValidityCheck(socNum, &errorCheck))
                     {
                         lg2::info(
@@ -2465,8 +2548,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
                     nonMcaShutdownError = true;
                     configMgr.incrementNoncorrectableOtherError(socNum);
-                    configMgr.updateErrorCountDbus();
-                    configMgr.saveErrorCounts();
                 }
                 else
                 {
@@ -2488,8 +2569,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                             "McaErrThresholdEnable", "McaErrThresholdCount");
                         configMgr.incrementCorrectableOtherError(
                             socNum, thresholdCount);
-                        configMgr.updateErrorCountDbus();
-                        configMgr.saveErrorCounts();
                     }
                     if (buf & dramCeccErrOverflow)
                     {
@@ -2508,8 +2587,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                             "DramCeccErrThresholdCount");
                         configMgr.incrementCorrectableOtherError(
                             socNum, thresholdCount);
-                        configMgr.updateErrorCountDbus();
-                        configMgr.saveErrorCounts();
                         runtimeError = true;
                     }
                     if (buf & pcieErrOverflow)
@@ -2530,8 +2607,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                             "PcieErrThresholdEnable", "PcieErrThresholdCount");
                         configMgr.incrementCorrectableOtherError(
                             socNum, thresholdCount);
-                        configMgr.updateErrorCountDbus();
-                        configMgr.saveErrorCounts();
                     }
                     if (buf & x86ExceptionBit)
                     {
@@ -2546,11 +2621,13 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                             x86ErrMsg.c_str(), NULL);
 
                         harvestX86ExceptionData(socNum);
+                        configMgr.incrementCorrectableOtherError(socNum, 1);
                         runtimeError = true;
                     }
                 }
             }
-
+            configMgr.updateErrorCountDbus();
+            configMgr.saveErrorCounts();
             cpuAlertProcessed[socNum] = true;
 
             // Clear RAS status register
