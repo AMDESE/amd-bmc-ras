@@ -848,10 +848,10 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         {
             sectionStart = sectionCount - p1Inst.number_of_inst;
 
-            dumpProcErrorSection(mcaPtr, 1, p1Inst, dramCeccErr, sectionStart,
+            dumpProcErrorSection(dramPtr, 1, p1Inst, dramCeccErr, sectionStart,
                                  severity, checkInfo);
             amd::ras::util::cper::dumpProcErrorInfoSection(
-                mcaPtr, p1Inst.number_of_inst, checkInfo, sectionStart,
+                dramPtr, p1Inst.number_of_inst, checkInfo, sectionStart,
                 cpuCount, cpuId);
         }
 
@@ -912,7 +912,7 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         }
 
         amd::ras::util::cper::calculateSeverity(
-            severity, sectionCount, &highestSeverity, runtimeDramErr);
+            severity, sectionCount, &highestSeverity, runtimePcieErr);
 
         amd::ras::util::cper::dumpHeader(pciePtr, sectionCount, highestSeverity,
                                          runtimePcieErr, boardId, recordId);
