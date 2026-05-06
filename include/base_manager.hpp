@@ -3,6 +3,7 @@
 #include "config_manager.hpp"
 #include "oem_cper.hpp"
 
+#include <algorithm>
 #include <mutex>
 
 constexpr size_t socket1 = 1;
@@ -88,7 +89,7 @@ class Manager
     std::string node;
     std::vector<size_t> socIndex;
     size_t whFamilyId;
-    size_t whModel;
+    std::vector<size_t> whModels;
     std::vector<uint8_t> blockId;
     std::mutex harvestMutex;
 

@@ -167,7 +167,8 @@ void Manager::platformInitialize()
         if (ret == OOB_SUCCESS)
         {
             if ((platInfo->family == whFamilyId) &&
-                (platInfo->model == whModel))
+                (std::find(whModels.begin(), whModels.end(), platInfo->model) !=
+                 whModels.end()))
             {
                 currentHostStateMonitor();
                 for (size_t i : socIndex)
