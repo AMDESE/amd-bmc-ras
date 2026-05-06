@@ -146,7 +146,7 @@ void Manager::getCpuSocketInfo()
 Manager::Manager(amd::ras::config::Manager& manager, std::string& node) :
     errCount(0), progId(1), recordId(1), configMgr(manager), rcd(nullptr),
     mcaPtr(nullptr), dramPtr(nullptr), pciePtr(nullptr),
-    coreDebugDumpPtr(nullptr), node(node), whFamilyId(0), whModel(0)
+    coreDebugDumpPtr(nullptr), node(node), whFamilyId(0)
 {}
 
 void Manager::loadPlatformConfig()
@@ -161,8 +161,19 @@ void Manager::loadPlatformConfig()
 
     if (jsonData.contains("Model"))
     {
-        std::string modelStr = jsonData["Model"];
-        whModel = std::stoi(modelStr, nullptr, 16);
+        if (jsonData["Model"].is_array())
+        {
+            for (const auto& m : jsonData["Model"])
+            {
+                whModels.push_back(
+                    std::stoi(m.get<std::string>(), nullptr, 16));
+            }
+        }
+        else
+        {
+            std::string modelStr = jsonData["Model"];
+            whModels.push_back(std::stoi(modelStr, nullptr, 16));
+        }
     }
 
     if (jsonData.contains("FamilyID"))
