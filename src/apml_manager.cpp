@@ -1651,6 +1651,8 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
 void Manager::harvestMcaDataBanks(uint8_t socNum,
                                   struct ras_df_err_chk errorCheck)
 {
+    constexpr size_t mcaConfigLoOffset = 0x20;
+    constexpr uint32_t mcaFruTextInMcaBit = 9;
     uint16_t n = 0;
     uint16_t maxOffset32;
     uint32_t buffer;
@@ -1674,6 +1676,7 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
     uint32_t mcaPspSynd1Hi = 0;
     uint32_t mcaPspSynd2Lo = 0;
     uint32_t mcaPspSynd2Hi = 0;
+    uint32_t mcaConfigLo = 0;
 
     amd::ras::config::Manager::AttributeValue sigIdOffsetVal =
         configMgr.getAttribute("SigIdOffset");
@@ -1748,6 +1751,7 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
 
     while (n < errorCheck.df_block_instances)
     {
+        mcaConfigLo = 0;
         for (uint32_t offset = 0; offset < maxOffset32; offset++)
         {
             memset(&buffer, 0, sizeof(buffer));
@@ -1845,6 +1849,10 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
             {
                 mcaPspSynd2Hi = buffer;
             }
+            if (dfError.input[0] == mcaConfigLoOffset)
+            {
+                mcaConfigLo = buffer;
+            }
 
         } // for loop
 
@@ -1872,14 +1880,17 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
             mcaStatusHi = 0;
         }
 
-        memcpy(rcd->SectionDescriptor[socNum].FruString + offLo1,
-               &mcaPspSynd1Lo, copySize);
-        memcpy(rcd->SectionDescriptor[socNum].FruString + offHi1,
-               &mcaPspSynd1Hi, copySize);
-        memcpy(rcd->SectionDescriptor[socNum].FruString + offLo2,
-               &mcaPspSynd2Lo, copySize);
-        memcpy(rcd->SectionDescriptor[socNum].FruString + offHi2,
-               &mcaPspSynd2Hi, copySize);
+        if ((mcaConfigLo & (1U << mcaFruTextInMcaBit)) != 0)
+        {
+            memcpy(rcd->SectionDescriptor[socNum].FruString + offLo1,
+                   &mcaPspSynd1Lo, copySize);
+            memcpy(rcd->SectionDescriptor[socNum].FruString + offHi1,
+                   &mcaPspSynd1Hi, copySize);
+            memcpy(rcd->SectionDescriptor[socNum].FruString + offLo2,
+                   &mcaPspSynd2Lo, copySize);
+            memcpy(rcd->SectionDescriptor[socNum].FruString + offHi2,
+                   &mcaPspSynd2Hi, copySize);
+        }
 
         n++;
     }
@@ -3170,6 +3181,8 @@ void Manager::dumpProcErrorSection(
     struct ras_rt_valid_err_inst inst, uint8_t category, uint16_t section,
     uint32_t* Severity, uint64_t* CheckInfo)
 {
+    constexpr size_t mcaConfigLoOffset = 0x20;
+    constexpr uint32_t mcaFruTextInMcaBit = 9;
     uint16_t n = 0;
     struct run_time_err_d_in dataIn;
     uint32_t dataOut = 0;
@@ -3183,6 +3196,7 @@ void Manager::dumpProcErrorSection(
     uint32_t mcaPspSynd2Lo = 0;
     uint32_t mcaPspSynd2Hi = 0;
     uint32_t mcaIpidHi = 0;
+    uint32_t mcaConfigLo = 0;
 
     amd::ras::config::Manager::AttributeValue apmlRetry =
         configMgr.getAttribute("ApmlRetries");
@@ -3209,6 +3223,7 @@ void Manager::dumpProcErrorSection(
 
     while (n < inst.number_of_inst)
     {
+        mcaConfigLo = 0;
         if (category ==
             1) // For Dram Cecc error , the dump started from offset 4
         {
@@ -3290,6 +3305,10 @@ void Manager::dumpProcErrorSection(
                 {
                     mcaIpidHi = dataOut;
                 }
+                else if (dataIn.offset == mcaConfigLoOffset + baseOffset)
+                {
+                    mcaConfigLo = dataOut;
+                }
 
                 if (dataIn.offset == mcaPspSynd1LoCode + baseOffset)
                 {
@@ -3334,22 +3353,37 @@ void Manager::dumpProcErrorSection(
 
         if ((category == 0) || (category == 1))
         {
-            memcpy(ProcPtr->SectionDescriptor[section].FruString + offLo1,
-                   &mcaPspSynd1Lo, copySize);
-            memcpy(ProcPtr->SectionDescriptor[section].FruString + offHi1,
-                   &mcaPspSynd1Hi, copySize);
-            memcpy(ProcPtr->SectionDescriptor[section].FruString + offLo2,
-                   &mcaPspSynd2Lo, copySize);
-            memcpy(ProcPtr->SectionDescriptor[section].FruString + offHi2,
-                   &mcaPspSynd2Hi, copySize);
-
-            if (category == 0 && mcaPspSynd1Lo == 0 && mcaPspSynd1Hi == 0 &&
-                mcaPspSynd2Lo == 0 && mcaPspSynd2Hi == 0 &&
-                (mcaIpidHi & 0xFFF) == umcHardwareId)
+            if ((mcaConfigLo & (1U << mcaFruTextInMcaBit)) != 0)
             {
-                std::strncpy(ProcPtr->SectionDescriptor[section].FruString,
-                             "MemoryError", 19);
-                ProcPtr->SectionDescriptor[section].FruString[19] = '\0';
+                memcpy(ProcPtr->SectionDescriptor[section].FruString + offLo1,
+                       &mcaPspSynd1Lo, copySize);
+                memcpy(ProcPtr->SectionDescriptor[section].FruString + offHi1,
+                       &mcaPspSynd1Hi, copySize);
+                memcpy(ProcPtr->SectionDescriptor[section].FruString + offLo2,
+                       &mcaPspSynd2Lo, copySize);
+                memcpy(ProcPtr->SectionDescriptor[section].FruString + offHi2,
+                       &mcaPspSynd2Hi, copySize);
+
+                if (category == 0 && mcaPspSynd1Lo == 0 && mcaPspSynd1Hi == 0 &&
+                    mcaPspSynd2Lo == 0 && mcaPspSynd2Hi == 0 &&
+                    (mcaIpidHi & 0xFFF) == umcHardwareId)
+                {
+                    std::strncpy(ProcPtr->SectionDescriptor[section].FruString,
+                                 "MemoryError", 19);
+                    ProcPtr->SectionDescriptor[section].FruString[19] = '\0';
+                }
+            }
+            else
+            {
+                if (mcaPspSynd1Lo == 0 && mcaPspSynd1Hi == 0 &&
+                    mcaPspSynd2Lo == 0 && mcaPspSynd2Hi == 0)
+                {
+                    std::memset(ProcPtr->SectionDescriptor[section].FruString,
+                                0, 20);
+                }
+                ProcPtr->SectionDescriptor[section].FruString[0] = 'P';
+                ProcPtr->SectionDescriptor[section].FruString[1] = '0' + socNum;
+                ProcPtr->SectionDescriptor[section].FruString[2] = '\0';
             }
 
             CheckInfo[section] = 0;
