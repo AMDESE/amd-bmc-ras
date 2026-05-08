@@ -242,7 +242,7 @@ void Manager::currentHostStateMonitor()
 
 void Manager::handleFchError(uint8_t socNum)
 {
-    std::string rasErrMsg = "System hang while resetting in syncflood. "
+    std::string rasErrMsg = "System hang while resetting in syncflood."
                             "Suggested next step is to do an additional manual "
                             "immediate reset";
     sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
