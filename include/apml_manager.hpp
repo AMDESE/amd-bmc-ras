@@ -96,9 +96,7 @@ class Manager : public amd::ras::Manager
     sdbusplus::asio::object_server& objectServer;
     std::shared_ptr<sdbusplus::asio::connection>& systemBus;
 
-    uint8_t progId;
     size_t contextType;
-    uint64_t recordId;
     size_t watchdogTimerCounter;
     boost::asio::io_context& io;
     bool apmlInitialized;
@@ -109,7 +107,6 @@ class Manager : public amd::ras::Manager
     boost::asio::deadline_timer* DramCeccErrorPollingEvent;
     boost::asio::deadline_timer* PcieAerErrorPollingEvent;
     boost::asio::deadline_timer* ApmlAlertEvent;
-    std::mutex harvestMutex;
     std::mutex mcaErrorHarvestMtx;
     std::mutex dramErrorHarvestMtx;
     std::mutex pcieErrorHarvestMtx;
@@ -356,6 +353,21 @@ class Manager : public amd::ras::Manager
      *
      */
     void harvestMcaDataBanks(uint8_t, struct ras_df_err_chk);
+
+    /** @brief Decode MCA IPID register to identify the logical core.
+     *
+     * @details Decodes the MCA_IPID 64-bit register to extract hardware ID,
+     * MCA type, and instance IDs. If the bank belongs to a core MCA unit
+     * (LS, IF, L2, DE, EX, FP), the logical core index is computed and
+     * inserted into the provided set.
+     *
+     * @param[in] socNum - Socket number of the processor.
+     * @param[in] mcaIpidHi - Upper 32 bits of MCA_IPID register.
+     * @param[in] mcaIpidLo - Lower 32 bits of MCA_IPID register.
+     * @param[out] errorCores - Set of logical core indices with errors.
+     */
+    void decodeIpidForCore(uint8_t socNum, uint32_t mcaIpidHi,
+                           uint32_t mcaIpidLo, std::set<size_t>& errorCores);
 
     /** @brief Retrieves the last transaction address.
      *

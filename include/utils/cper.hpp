@@ -25,7 +25,7 @@ constexpr uint8_t cperValidTimestamp = 0x2;
 constexpr uint8_t addcGenNumber3 = 0x03;
 constexpr uint8_t familyId1ah = 0x1A;
 constexpr uint16_t pcieVendorId = 0x1022;
-constexpr uint8_t minorRevision = 0xB;
+constexpr uint8_t minorRevision = 0x0C;
 
 /** @brief Finds a filename in the RAS directory that matches a given pattern.
  *
@@ -252,6 +252,35 @@ bool calculateSeverity(uint32_t*, uint16_t, uint32_t*, const std::string_view&);
 void dumpCoreDebugDumpHeader(
     const std::shared_ptr<CoreDebugDumpCperRecord>& coreDebugPtr,
     uint16_t sectionIdx, const std::unique_ptr<CpuId[]>& cpuId);
+
+/** @brief Populates the SignatureID and sets the ValidFields bit in a fatal
+ *         error record when a valid signature is found.
+ *
+ *  @param[in,out] errorRecord - Fatal error data record to update.
+ *  @param[in] mcaSyndLo - MCA Syndrome register low 32 bits.
+ *  @param[in] mcaSyndHi - MCA Syndrome register high 32 bits.
+ *  @param[in] mcaIpidLo - MCA IPID register low 32 bits.
+ *  @param[in] mcaIpidHi - MCA IPID register high 32 bits.
+ *  @param[in] mcaStatusLo - MCA Status register low 32 bits.
+ *  @param[in] mcaStatusHi - MCA Status register high 32 bits.
+ */
+void populateSignatureId(EFI_AMD_FATAL_ERROR_DATA& errorRecord,
+                         uint32_t mcaSyndLo, uint32_t mcaSyndHi,
+                         uint32_t mcaIpidLo, uint32_t mcaIpidHi,
+                         uint32_t mcaStatusLo, uint32_t mcaStatusHi);
+
+/** @brief Copies PSP syndrome data into the FruString field of a section
+ *         descriptor.
+ *
+ *  @param[in,out] sectionDesc - Section descriptor whose FruString is updated.
+ *  @param[in] pspSynd1Lo - PSP Syndrome 1 low 32 bits.
+ *  @param[in] pspSynd1Hi - PSP Syndrome 1 high 32 bits.
+ *  @param[in] pspSynd2Lo - PSP Syndrome 2 low 32 bits.
+ *  @param[in] pspSynd2Hi - PSP Syndrome 2 high 32 bits.
+ */
+void populateFruStringPspSynd(EFI_ERROR_SECTION_DESCRIPTOR& sectionDesc,
+                              uint32_t pspSynd1Lo, uint32_t pspSynd1Hi,
+                              uint32_t pspSynd2Lo, uint32_t pspSynd2Hi);
 
 } // namespace cper
 } // namespace util
