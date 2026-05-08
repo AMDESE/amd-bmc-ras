@@ -347,9 +347,18 @@ void Manager::processMcaBankSignatures(uint8_t socNum, uint16_t numBanks)
                 mcaIpidHi, mcaStatusLo, mcaStatusHi);
         }
 
-        amd::ras::util::cper::populateFruStringPspSynd(
-            rcd->SectionDescriptor[socNum], mcaPspSynd1Lo, mcaPspSynd1Hi,
-            mcaPspSynd2Lo, mcaPspSynd2Hi);
+        constexpr size_t mcaConfigLoOffset = 0x20;
+        constexpr uint32_t mcaFruTextInMcaBit = 9;
+        uint32_t mcaConfigLo = rcd->ErrorRecord[socNum]
+                                   .CrashDumpData[n]
+                                   .McaData[mcaConfigLoOffset / 4];
+
+        if ((mcaConfigLo & (1U << mcaFruTextInMcaBit)) != 0)
+        {
+            amd::ras::util::cper::populateFruStringPspSynd(
+                rcd->SectionDescriptor[socNum], mcaPspSynd1Lo, mcaPspSynd1Hi,
+                mcaPspSynd2Lo, mcaPspSynd2Hi);
+        }
     }
 }
 

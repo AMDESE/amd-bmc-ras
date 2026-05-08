@@ -3093,6 +3093,8 @@ void Manager::dumpProcErrorSection(
     struct ras_rt_valid_err_inst inst, uint8_t category, uint16_t section,
     uint32_t* Severity, uint64_t* CheckInfo)
 {
+    constexpr size_t mcaConfigLoOffset = 0x20;
+    constexpr uint32_t mcaFruTextInMcaBit = 9;
     uint16_t n = 0;
     struct run_time_err_d_in dataIn;
     uint32_t dataOut = 0;
@@ -3106,6 +3108,7 @@ void Manager::dumpProcErrorSection(
     uint32_t mcaPspSynd2Lo = 0;
     uint32_t mcaPspSynd2Hi = 0;
     uint32_t mcaIpidHi = 0;
+    uint32_t mcaConfigLo = 0;
 
     amd::ras::config::Manager::AttributeValue apmlRetry =
         configMgr.getAttribute("ApmlRetries");
@@ -3132,6 +3135,7 @@ void Manager::dumpProcErrorSection(
 
     while (n < inst.number_of_inst)
     {
+        mcaConfigLo = 0;
         if (category ==
             1) // For Dram Cecc error , the dump started from offset 4
         {
@@ -3213,6 +3217,10 @@ void Manager::dumpProcErrorSection(
                 {
                     mcaIpidHi = dataOut;
                 }
+                else if (dataIn.offset == mcaConfigLoOffset + baseOffset)
+                {
+                    mcaConfigLo = dataOut;
+                }
 
                 if (dataIn.offset == mcaPspSynd1LoCode + baseOffset)
                 {
@@ -3257,17 +3265,32 @@ void Manager::dumpProcErrorSection(
 
         if ((category == 0) || (category == 1))
         {
-            amd::ras::util::cper::populateFruStringPspSynd(
-                ProcPtr->SectionDescriptor[section], mcaPspSynd1Lo,
-                mcaPspSynd1Hi, mcaPspSynd2Lo, mcaPspSynd2Hi);
-
-            if (category == 0 && mcaPspSynd1Lo == 0 && mcaPspSynd1Hi == 0 &&
-                mcaPspSynd2Lo == 0 && mcaPspSynd2Hi == 0 &&
-                (mcaIpidHi & 0xFFF) == umcHardwareId)
+            if ((mcaConfigLo & (1U << mcaFruTextInMcaBit)) != 0)
             {
-                std::strncpy(ProcPtr->SectionDescriptor[section].FruString,
-                             "MemoryError", 19);
-                ProcPtr->SectionDescriptor[section].FruString[19] = '\0';
+                amd::ras::util::cper::populateFruStringPspSynd(
+                    ProcPtr->SectionDescriptor[section], mcaPspSynd1Lo,
+                    mcaPspSynd1Hi, mcaPspSynd2Lo, mcaPspSynd2Hi);
+
+                if (category == 0 && mcaPspSynd1Lo == 0 && mcaPspSynd1Hi == 0 &&
+                    mcaPspSynd2Lo == 0 && mcaPspSynd2Hi == 0 &&
+                    (mcaIpidHi & 0xFFF) == umcHardwareId)
+                {
+                    std::strncpy(ProcPtr->SectionDescriptor[section].FruString,
+                                 "MemoryError", 19);
+                    ProcPtr->SectionDescriptor[section].FruString[19] = '\0';
+                }
+            }
+            else
+            {
+                if (mcaPspSynd1Lo == 0 && mcaPspSynd1Hi == 0 &&
+                    mcaPspSynd2Lo == 0 && mcaPspSynd2Hi == 0)
+                {
+                    std::memset(ProcPtr->SectionDescriptor[section].FruString,
+                                0, 20);
+                }
+                ProcPtr->SectionDescriptor[section].FruString[0] = 'P';
+                ProcPtr->SectionDescriptor[section].FruString[1] = '0' + socNum;
+                ProcPtr->SectionDescriptor[section].FruString[2] = '\0';
             }
 
             CheckInfo[section] = 0;
