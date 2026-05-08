@@ -63,6 +63,10 @@ constexpr size_t blockId25 = 25;
 constexpr uint16_t coreMcaHardwareId = 0xb0;
 constexpr size_t coresPerCcd = 32;
 constexpr size_t maxCoreIndex = 256;
+constexpr uint32_t rootErrStatusOffset = 52;
+constexpr uint32_t fatalErrMsgRcvd = (1 << 6);
+constexpr uint32_t nonfatalErrMsgRcvd = (1 << 5);
+constexpr uint32_t errCorrRcvd = (1 << 0);
 
 void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
 {
@@ -168,7 +172,8 @@ void Manager::platformInitialize()
         if (ret == OOB_SUCCESS)
         {
             if ((platInfo->family == whFamilyId) &&
-                (platInfo->model == whModel))
+                (std::find(whModels.begin(), whModels.end(), platInfo->model) !=
+                 whModels.end()))
             {
                 currentHostStateMonitor();
                 for (size_t i : socIndex)
@@ -855,10 +860,10 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         {
             sectionStart = sectionCount - p1Inst.number_of_inst;
 
-            dumpProcErrorSection(mcaPtr, 1, p1Inst, dramCeccErr, sectionStart,
+            dumpProcErrorSection(dramPtr, 1, p1Inst, dramCeccErr, sectionStart,
                                  severity, checkInfo);
             amd::ras::util::cper::dumpProcErrorInfoSection(
-                mcaPtr, p1Inst.number_of_inst, checkInfo, sectionStart,
+                dramPtr, p1Inst.number_of_inst, checkInfo, sectionStart,
                 cpuCount, cpuId);
         }
 
@@ -921,7 +926,7 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         }
 
         amd::ras::util::cper::calculateSeverity(
-            severity, sectionCount, &highestSeverity, runtimeDramErr);
+            severity, sectionCount, &highestSeverity, runtimePcieErr);
 
         amd::ras::util::cper::dumpHeader(pciePtr, sectionCount, highestSeverity,
                                          runtimePcieErr, boardId, recordId);
@@ -3238,7 +3243,7 @@ void Manager::dumpProcErrorSection(
                     dumpIndex++;
                 }
 
-                if (dataIn.offset == 0)
+                if (dataIn.offset == rootErrStatusOffset)
                 {
                     rootErrStatus = dataOut;
                     continue;
@@ -3289,7 +3294,18 @@ void Manager::dumpProcErrorSection(
         }
         else if (category == 2) // PCIE error
         {
-            Severity[section] = rootErrStatus & 0xFF;
+            if (rootErrStatus & fatalErrMsgRcvd)
+            {
+                Severity[section] = 1; // Fatal
+            }
+            else if (rootErrStatus & nonfatalErrMsgRcvd)
+            {
+                Severity[section] = 0; // Non-fatal uncorrected
+            }
+            else if (rootErrStatus & errCorrRcvd)
+            {
+                Severity[section] = 2; // Corrected
+            }
         }
         n++;
         section++;

@@ -71,7 +71,9 @@ void Manager::platformInitialize()
             sleep(1);
         }
 
-        if ((platInfo->family == whFamilyId) && (platInfo->model == whModel))
+        if ((platInfo->family == whFamilyId) &&
+            (std::find(whModels.begin(), whModels.end(), platInfo->model) !=
+             whModels.end()))
         {
             currentHostStateMonitor();
 
