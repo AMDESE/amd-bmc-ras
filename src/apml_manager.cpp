@@ -36,7 +36,6 @@ constexpr size_t socket0 = 0;
 constexpr size_t socket1 = 1;
 
 constexpr uint32_t badData = 0xBAADDA7A;
-constexpr size_t epycProgSegId = 0x1;
 constexpr size_t fatalError = 1;
 constexpr size_t resetHangErr = 0x2;
 
@@ -50,21 +49,11 @@ constexpr size_t mcaErrOverflow = 8;
 constexpr size_t dramCeccErrOverflow = 16;
 constexpr size_t pcieErrOverflow = 32;
 constexpr size_t x86ExceptionBit = 0x80;
-constexpr size_t base16 = 16;
 constexpr size_t byteMask = 0xFF;
 constexpr size_t cfError = 0x6;
 
-constexpr size_t mcaPspSynd1LoCode = 80;
-constexpr size_t mcaPspSynd1HiCode = 84;
-constexpr size_t mcaPspSynd2LoCode = 88;
-constexpr size_t mcaPspSynd2HiCode = 92;
 constexpr size_t mcaIpidHiOffset = 0x2C;
 constexpr uint32_t umcHardwareId = 0x96;
-constexpr size_t offLo1 = 0;
-constexpr size_t offHi1 = 4;
-constexpr size_t offLo2 = 8;
-constexpr size_t offHi2 = 12;
-constexpr size_t copySize = 4;
 constexpr size_t crashdump = 1;
 constexpr size_t shutdown = 2;
 constexpr size_t breakEvent = 3;
@@ -121,8 +110,8 @@ Manager::Manager(amd::ras::config::Manager& manager,
                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
                  boost::asio::io_context& io, std::string& node) :
     amd::ras::Manager(manager, node), objectServer(objectServer),
-    systemBus(systemBus), progId(1), recordId(1), watchdogTimerCounter(0),
-    io(io), apmlInitialized(false), platformInitialized(false),
+    systemBus(systemBus), watchdogTimerCounter(0), io(io),
+    apmlInitialized(false), platformInitialized(false),
     runtimeErrPollingSupported(false), McaErrorPollingEvent(nullptr),
     DramCeccErrorPollingEvent(nullptr), PcieAerErrorPollingEvent(nullptr),
     ApmlAlertEvent(nullptr), mcaErrorHarvestMtx(), dramErrorHarvestMtx(),
@@ -1438,7 +1427,7 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
 {
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     uint16_t retries = 0;
-    struct ras_df_err_chk dbgLogCheck;
+    struct ras_dbg_log_chk_out dbgLogCheck;
     constexpr uint8_t dbgLogBlockId = 24;
 
     amd::ras::config::Manager::AttributeValue apmlRetry =
@@ -1457,16 +1446,16 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
     {
         retries++;
         ret =
-            read_ras_df_err_validity_check(socNum, dbgLogBlockId, &dbgLogCheck);
+            bmc_ras_dbg_log_validity_check(socNum, dbgLogBlockId, &dbgLogCheck);
 
         if (ret == OOB_SUCCESS)
         {
+            uint16_t errLogLen = dbgLogCheck.err_log_len;
             lg2::info(
                 "Socket {SOCKET}: x86 exception debug log validity check OK. "
                 "Instances: {INST}, Log length: {LEN}",
-                "SOCKET", socNum, "INST",
-                static_cast<unsigned short>(dbgLogCheck.df_block_instances),
-                "LEN", static_cast<unsigned short>(dbgLogCheck.err_log_len));
+                "SOCKET", socNum, "INST", dbgLogCheck.num_instances, "LEN",
+                errLogLen);
             break;
         }
 
@@ -1480,7 +1469,7 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
         sleep(1);
     }
 
-    uint16_t totalInstances = dbgLogCheck.df_block_instances;
+    uint16_t totalInstances = dbgLogCheck.num_instances;
     uint16_t logLenPerInstance = dbgLogCheck.err_log_len;
 
     if (totalInstances == 0)
@@ -1580,7 +1569,7 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
         /* Harvest debug log data for this core's instances */
         uint16_t baseInstance = coreIdx * instancesPerCore;
         uint32_t payloadOffset = 0;
-        union ras_df_err_dump dfError = {0};
+        struct ras_dbg_log_in dfError = {0, 0, 0};
 
         for (uint16_t inst = 0; inst < instancesPerCore; inst++)
         {
@@ -1594,11 +1583,11 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
                 if (!apmlHang)
                 {
                     memset(&dfError, 0, sizeof(dfError));
-                    dfError.input[0] = offset * 4;
-                    dfError.input[1] = dbgLogBlockId;
-                    dfError.input[2] = baseInstance + inst;
+                    dfError.offset = offset * 4;
+                    dfError.dbg_log_block_id = dbgLogBlockId;
+                    dfError.instance_index = baseInstance + inst;
 
-                    ret = read_ras_df_err_dump(socNum, dfError, &data);
+                    ret = bmc_ras_dbg_log_dump(socNum, dfError, &data);
 
                     if (ret != OOB_SUCCESS)
                     {
@@ -1606,11 +1595,11 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
                         while (retryCount > 0)
                         {
                             memset(&dfError, 0, sizeof(dfError));
-                            dfError.input[0] = offset * 4;
-                            dfError.input[1] = dbgLogBlockId;
-                            dfError.input[2] = baseInstance + inst;
+                            dfError.offset = offset * 4;
+                            dfError.dbg_log_block_id = dbgLogBlockId;
+                            dfError.instance_index = baseInstance + inst;
 
-                            ret = read_ras_df_err_dump(socNum, dfError, &data);
+                            ret = bmc_ras_dbg_log_dump(socNum, dfError, &data);
                             if (ret == OOB_SUCCESS)
                             {
                                 break;
@@ -1676,27 +1665,8 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
     uint16_t maxOffset32;
     uint32_t buffer;
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
-    bool validSignatureId = false;
     bool uncorrectableError = false;
     std::set<size_t> errorCores;
-
-    uint32_t syndOffsetLo = 0;
-    uint32_t syndOffsetHi = 0;
-    uint32_t ipidOffsetLo = 0;
-    uint32_t ipidOffsetHi = 0;
-    uint32_t statusOffsetLo = 0;
-    uint32_t statusOffsetHi = 0;
-
-    uint32_t mcaStatusLo = 0;
-    uint32_t mcaStatusHi = 0;
-    uint32_t mcaIpidLo = 0;
-    uint32_t mcaIpidHi = 0;
-    uint32_t mcaSyndLo = 0;
-    uint32_t mcaSyndHi = 0;
-    uint32_t mcaPspSynd1Lo = 0;
-    uint32_t mcaPspSynd1Hi = 0;
-    uint32_t mcaPspSynd2Lo = 0;
-    uint32_t mcaPspSynd2Hi = 0;
 
     amd::ras::config::Manager::AttributeValue sigIdOffsetVal =
         configMgr.getAttribute("SigIdOffset");
@@ -1707,26 +1677,10 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
         configMgr.getAttribute("ApmlRetries");
     int64_t* apmlRetryCount = std::get_if<int64_t>(&apmlRetry);
 
-    uint16_t sectionCount = 2;  // Standard section count is 2
-    uint32_t errorSeverity = 1; // Error severity for fatal error is 1
+    constexpr uint16_t sectionCount = 2;
 
-    if (rcd->SectionDescriptor == nullptr)
-    {
-        rcd->SectionDescriptor = new EFI_ERROR_SECTION_DESCRIPTOR[sectionCount];
-        std::memset(rcd->SectionDescriptor, 0,
-                    2 * sizeof(EFI_ERROR_SECTION_DESCRIPTOR));
-    }
+    initFatalCperRecord(sectionCount);
 
-    if (rcd->ErrorRecord == nullptr)
-    {
-        rcd->ErrorRecord = new EFI_AMD_FATAL_ERROR_DATA[sectionCount];
-        std::memset(rcd->ErrorRecord, 0, 2 * sizeof(EFI_AMD_FATAL_ERROR_DATA));
-    }
-
-    amd::ras::util::cper::dumpHeader(rcd, sectionCount, errorSeverity, fatalErr,
-                                     boardId, recordId);
-    amd::ras::util::cper::dumpErrorDescriptor(rcd, sectionCount, fatalErr,
-                                              &errorSeverity, progId);
     amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
                                              errorCheck.df_block_instances);
     amd::ras::util::cper::dumpContext(rcd, errorCheck.df_block_instances,
@@ -1752,13 +1706,6 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
                                 debugLogIdOffset);
         }
     }
-
-    syndOffsetLo = std::stoul((*sigIDOffset)[0], nullptr, base16);
-    syndOffsetHi = std::stoul((*sigIDOffset)[1], nullptr, base16);
-    ipidOffsetLo = std::stoul((*sigIDOffset)[2], nullptr, base16);
-    ipidOffsetHi = std::stoul((*sigIDOffset)[3], nullptr, base16);
-    statusOffsetLo = std::stoul((*sigIDOffset)[4], nullptr, base16);
-    statusOffsetHi = std::stoul((*sigIDOffset)[5], nullptr, base16);
 
     maxOffset32 = ((errorCheck.err_log_len % 4) ? 1 : 0) +
                   (errorCheck.err_log_len >> 2);
@@ -1820,104 +1767,41 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
             } // if (ret != OOB_SUCCESS)
 
             rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[offset] = buffer;
-
-            if (dfError.input[0] == statusOffsetLo)
-            {
-                mcaStatusLo = buffer;
-            }
-            if (dfError.input[0] == statusOffsetHi)
-            {
-                mcaStatusHi = buffer;
-
-                /*Bit 23 and bit 25 of MCA_STATUS_HI
-                  should be set for a valid signature ID*/
-                if ((mcaStatusHi & (1 << 25)) && (mcaStatusHi & (1 << 23)))
-                {
-                    validSignatureId = true;
-                }
-
-                /*Bit 29 of MCA_STATUS_HI indicates if the error is
-                    uncorrectable*/
-                if (mcaStatusHi & (1 << 29))
-                {
-                    uncorrectableError = true;
-                }
-            }
-            if (dfError.input[0] == ipidOffsetLo)
-            {
-                mcaIpidLo = buffer;
-            }
-            if (dfError.input[0] == ipidOffsetHi)
-            {
-                mcaIpidHi = buffer;
-            }
-            if (dfError.input[0] == syndOffsetLo)
-            {
-                mcaSyndLo = buffer;
-            }
-            if (dfError.input[0] == syndOffsetHi)
-            {
-                mcaSyndHi = buffer;
-            }
-            if (dfError.input[0] == mcaPspSynd1LoCode)
-            {
-                mcaPspSynd1Lo = buffer;
-            }
-            if (dfError.input[0] == mcaPspSynd1HiCode)
-            {
-                mcaPspSynd1Hi = buffer;
-            }
-            if (dfError.input[0] == mcaPspSynd2LoCode)
-            {
-                mcaPspSynd2Lo = buffer;
-            }
-            if (dfError.input[0] == mcaPspSynd2HiCode)
-            {
-                mcaPspSynd2Hi = buffer;
-            }
-
         } // for loop
-
-        if (validSignatureId == true)
-        {
-            rcd->ErrorRecord[socNum].SignatureID[0] = mcaSyndLo;
-            rcd->ErrorRecord[socNum].SignatureID[1] = mcaSyndHi;
-            rcd->ErrorRecord[socNum].SignatureID[2] = mcaIpidLo;
-            rcd->ErrorRecord[socNum].SignatureID[3] = mcaIpidHi;
-            rcd->ErrorRecord[socNum].SignatureID[4] = mcaStatusLo;
-            rcd->ErrorRecord[socNum].SignatureID[5] = mcaStatusHi;
-
-            rcd->ErrorRecord[socNum].ProcError.ValidFields =
-                rcd->ErrorRecord[socNum].ProcError.ValidFields | 0x4;
-
-            decodeIpidForCore(socNum, mcaIpidHi, mcaIpidLo, errorCores);
-
-            validSignatureId = false;
-        }
-        else
-        {
-            mcaSyndLo = 0;
-            mcaSyndHi = 0;
-            mcaIpidLo = 0;
-            mcaIpidHi = 0;
-            mcaStatusLo = 0;
-            mcaStatusHi = 0;
-        }
-
-        memcpy(rcd->SectionDescriptor[socNum].FruString + offLo1,
-               &mcaPspSynd1Lo, copySize);
-        memcpy(rcd->SectionDescriptor[socNum].FruString + offHi1,
-               &mcaPspSynd1Hi, copySize);
-        memcpy(rcd->SectionDescriptor[socNum].FruString + offLo2,
-               &mcaPspSynd2Lo, copySize);
-        memcpy(rcd->SectionDescriptor[socNum].FruString + offHi2,
-               &mcaPspSynd2Hi, copySize);
 
         n++;
     }
 
-    // Increment per-core noncorrectable error counts for cores that
-    // had MCA errors, based on IPID decode.
+    processMcaBankSignatures(socNum, errorCheck.df_block_instances);
+
+    uint32_t ipidOffsetLo = std::stoul((*sigIDOffset)[2], nullptr, base16);
+    uint32_t ipidOffsetHi = std::stoul((*sigIDOffset)[3], nullptr, base16);
+    uint32_t statusOffsetHi = std::stoul((*sigIDOffset)[5], nullptr, base16);
+
+    for (uint16_t bank = 0; bank < errorCheck.df_block_instances; bank++)
+    {
+        uint32_t mcaStatusHi = rcd->ErrorRecord[socNum]
+                                   .CrashDumpData[bank]
+                                   .McaData[statusOffsetHi / 4];
+
+        if ((mcaStatusHi & (1 << 25)) && (mcaStatusHi & (1 << 23)))
+        {
+            uint32_t mcaIpidLo = rcd->ErrorRecord[socNum]
+                                     .CrashDumpData[bank]
+                                     .McaData[ipidOffsetLo / 4];
+            uint32_t mcaIpidHi = rcd->ErrorRecord[socNum]
+                                     .CrashDumpData[bank]
+                                     .McaData[ipidOffsetHi / 4];
+
+            if (mcaStatusHi & (1 << 29))
+            {
+                uncorrectableError = true;
+            }
+
+            decodeIpidForCore(socNum, mcaIpidHi, mcaIpidLo, errorCores);
+        }
+    }
+
     if (!errorCores.empty())
     {
         for (size_t core : errorCores)
@@ -1942,8 +1826,6 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
     }
     else
     {
-        // No per-core bank identified; increment socket-level non-correctable
-        // Other error count
         configMgr.incrementNoncorrectableOtherError(socNum);
         lg2::info(
             "Socket {SOCKET}: No per-core bank identified, Incrementing non-correctable Other error count",
@@ -2102,21 +1984,13 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
 
             harvestBreakEvent(socNum);
             cpuAlertProcessed.assign(cpuCount, true);
+            configMgr.incrementNoncorrectableOtherError(socNum);
         }
         else if (src & resetHangErr)
         {
-            std::string rasErrMsg =
-                "System hang while resetting in syncflood."
-                "Suggested next step is to do an additional manual "
-                "immediate reset";
-            sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i",
-                            LOG_ERR, "REDFISH_MESSAGE_ID=%s",
-                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
-                            rasErrMsg.c_str(), NULL);
-
+            handleFchError(socNum);
             fchHangError = true;
         }
-        configMgr.incrementNoncorrectableOtherError(socNum);
     }
     else
     {
@@ -2370,18 +2244,7 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                                               systemRecovery, resetSignal);
         }
 
-        if (rcd->SectionDescriptor != nullptr)
-        {
-            delete[] rcd->SectionDescriptor;
-            rcd->SectionDescriptor = nullptr;
-        }
-        if (rcd->ErrorRecord != nullptr)
-        {
-            delete[] rcd->ErrorRecord;
-            rcd->ErrorRecord = nullptr;
-        }
-
-        rcd = nullptr;
+        cleanupFatalCperRecord();
 
         cpuAlertProcessed.assign(cpuCount, false);
     }
@@ -2488,17 +2351,8 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                 }
                 else if (buf & resetHangErr)
                 {
-                    std::string rasErrMsg =
-                        "System hang while resetting in syncflood."
-                        "Suggested next step is to do an additional manual "
-                        "immediate reset";
-                    sd_journal_send(
-                        "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
-                        "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
-                        "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
-
+                    handleFchError(socNum);
                     fchHangError = true;
-                    configMgr.incrementNoncorrectableOtherError(socNum);
                 }
             }
             else
@@ -2619,6 +2473,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                             LOG_INFO, "REDFISH_MESSAGE_ID=%s",
                             "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
                             x86ErrMsg.c_str(), NULL);
+                        // adding sleep of 1 sec to increase the window time for
+                        // core exception for both iods.
+                        sleep(1);
 
                         harvestX86ExceptionData(socNum);
                         configMgr.incrementCorrectableOtherError(socNum, 1);
@@ -2777,18 +2634,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                                                       resetSignal);
                 }
 
-                if (rcd->SectionDescriptor != nullptr)
-                {
-                    delete[] rcd->SectionDescriptor;
-                    rcd->SectionDescriptor = nullptr;
-                }
-                if (rcd->ErrorRecord != nullptr)
-                {
-                    delete[] rcd->ErrorRecord;
-                    rcd->ErrorRecord = nullptr;
-                }
-
-                rcd = nullptr;
+                cleanupFatalCperRecord();
 
                 cpuAlertProcessed.assign(cpuCount, false);
             }
@@ -3408,14 +3254,9 @@ void Manager::dumpProcErrorSection(
 
         if ((category == 0) || (category == 1))
         {
-            memcpy(ProcPtr->SectionDescriptor[section].FruString + offLo1,
-                   &mcaPspSynd1Lo, copySize);
-            memcpy(ProcPtr->SectionDescriptor[section].FruString + offHi1,
-                   &mcaPspSynd1Hi, copySize);
-            memcpy(ProcPtr->SectionDescriptor[section].FruString + offLo2,
-                   &mcaPspSynd2Lo, copySize);
-            memcpy(ProcPtr->SectionDescriptor[section].FruString + offHi2,
-                   &mcaPspSynd2Hi, copySize);
+            amd::ras::util::cper::populateFruStringPspSynd(
+                ProcPtr->SectionDescriptor[section], mcaPspSynd1Lo,
+                mcaPspSynd1Hi, mcaPspSynd2Lo, mcaPspSynd2Hi);
 
             if (category == 0 && mcaPspSynd1Lo == 0 && mcaPspSynd1Hi == 0 &&
                 mcaPspSynd2Lo == 0 && mcaPspSynd2Hi == 0 &&

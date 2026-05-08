@@ -96,9 +96,7 @@ class Manager : public amd::ras::Manager
     sdbusplus::asio::object_server& objectServer;
     std::shared_ptr<sdbusplus::asio::connection>& systemBus;
 
-    uint8_t progId;
     size_t contextType;
-    uint64_t recordId;
     size_t watchdogTimerCounter;
     boost::asio::io_context& io;
     bool apmlInitialized;
@@ -109,7 +107,6 @@ class Manager : public amd::ras::Manager
     boost::asio::deadline_timer* DramCeccErrorPollingEvent;
     boost::asio::deadline_timer* PcieAerErrorPollingEvent;
     boost::asio::deadline_timer* ApmlAlertEvent;
-    std::mutex harvestMutex;
     std::mutex mcaErrorHarvestMtx;
     std::mutex dramErrorHarvestMtx;
     std::mutex pcieErrorHarvestMtx;
