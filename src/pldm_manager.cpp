@@ -275,7 +275,7 @@ void Manager::handleFatalOrShutdownError(const std::vector<uint8_t>& eventData,
     else
     {
         rasErrMsg =
-            "MCA CPU shutdown error detected. "
+            "MCA CPU shutdown error detected."
             "System may reset after harvesting MCA data based on policy set.";
         rasStatusByte = 0x41; // fatal_err + shutdown bits
     }
