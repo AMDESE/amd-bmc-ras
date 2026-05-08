@@ -58,6 +58,10 @@ constexpr size_t breakEvent = 3;
 constexpr uint16_t breakEventBanks = 1;
 constexpr size_t index28 = 28;
 constexpr size_t blockId25 = 25;
+constexpr uint32_t rootErrStatusOffset = 52;
+constexpr uint32_t fatalErrMsgRcvd = (1 << 6);
+constexpr uint32_t nonfatalErrMsgRcvd = (1 << 5);
+constexpr uint32_t errCorrRcvd = (1 << 0);
 
 void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
 {
@@ -849,10 +853,10 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         {
             sectionStart = sectionCount - p1Inst.number_of_inst;
 
-            dumpProcErrorSection(mcaPtr, 1, p1Inst, dramCeccErr, sectionStart,
+            dumpProcErrorSection(dramPtr, 1, p1Inst, dramCeccErr, sectionStart,
                                  severity, checkInfo);
             amd::ras::util::cper::dumpProcErrorInfoSection(
-                mcaPtr, p1Inst.number_of_inst, checkInfo, sectionStart,
+                dramPtr, p1Inst.number_of_inst, checkInfo, sectionStart,
                 cpuCount, cpuId);
         }
 
@@ -913,7 +917,7 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         }
 
         amd::ras::util::cper::calculateSeverity(
-            severity, sectionCount, &highestSeverity, runtimeDramErr);
+            severity, sectionCount, &highestSeverity, runtimePcieErr);
 
         amd::ras::util::cper::dumpHeader(pciePtr, sectionCount, highestSeverity,
                                          runtimePcieErr, boardId, recordId);
@@ -1407,7 +1411,7 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
 {
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     uint16_t retries = 0;
-    struct ras_df_err_chk dbgLogCheck;
+    struct ras_dbg_log_chk_out dbgLogCheck;
     constexpr uint8_t dbgLogBlockId = 24;
 
     amd::ras::config::Manager::AttributeValue apmlRetry =
@@ -1426,16 +1430,16 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
     {
         retries++;
         ret =
-            read_ras_df_err_validity_check(socNum, dbgLogBlockId, &dbgLogCheck);
+            bmc_ras_dbg_log_validity_check(socNum, dbgLogBlockId, &dbgLogCheck);
 
         if (ret == OOB_SUCCESS)
         {
+            uint16_t errLogLen = dbgLogCheck.err_log_len;
             lg2::info(
                 "Socket {SOCKET}: x86 exception debug log validity check OK. "
                 "Instances: {INST}, Log length: {LEN}",
-                "SOCKET", socNum, "INST",
-                static_cast<unsigned short>(dbgLogCheck.df_block_instances),
-                "LEN", static_cast<unsigned short>(dbgLogCheck.err_log_len));
+                "SOCKET", socNum, "INST", dbgLogCheck.num_instances, "LEN",
+                errLogLen);
             break;
         }
 
@@ -1449,7 +1453,7 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
         sleep(1);
     }
 
-    uint16_t totalInstances = dbgLogCheck.df_block_instances;
+    uint16_t totalInstances = dbgLogCheck.num_instances;
     uint16_t logLenPerInstance = dbgLogCheck.err_log_len;
 
     if (totalInstances == 0)
@@ -1549,7 +1553,7 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
         /* Harvest debug log data for this core's instances */
         uint16_t baseInstance = coreIdx * instancesPerCore;
         uint32_t payloadOffset = 0;
-        union ras_df_err_dump dfError = {0};
+        struct ras_dbg_log_in dfError = {0, 0, 0};
 
         for (uint16_t inst = 0; inst < instancesPerCore; inst++)
         {
@@ -1563,11 +1567,11 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
                 if (!apmlHang)
                 {
                     memset(&dfError, 0, sizeof(dfError));
-                    dfError.input[0] = offset * 4;
-                    dfError.input[1] = dbgLogBlockId;
-                    dfError.input[2] = baseInstance + inst;
+                    dfError.offset = offset * 4;
+                    dfError.dbg_log_block_id = dbgLogBlockId;
+                    dfError.instance_index = baseInstance + inst;
 
-                    ret = read_ras_df_err_dump(socNum, dfError, &data);
+                    ret = bmc_ras_dbg_log_dump(socNum, dfError, &data);
 
                     if (ret != OOB_SUCCESS)
                     {
@@ -1575,11 +1579,11 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
                         while (retryCount > 0)
                         {
                             memset(&dfError, 0, sizeof(dfError));
-                            dfError.input[0] = offset * 4;
-                            dfError.input[1] = dbgLogBlockId;
-                            dfError.input[2] = baseInstance + inst;
+                            dfError.offset = offset * 4;
+                            dfError.dbg_log_block_id = dbgLogBlockId;
+                            dfError.instance_index = baseInstance + inst;
 
-                            ret = read_ras_df_err_dump(socNum, dfError, &data);
+                            ret = bmc_ras_dbg_log_dump(socNum, dfError, &data);
                             if (ret == OOB_SUCCESS)
                             {
                                 break;
@@ -2375,6 +2379,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                             LOG_INFO, "REDFISH_MESSAGE_ID=%s",
                             "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
                             x86ErrMsg.c_str(), NULL);
+                        // adding sleep of 1 sec to increase the window time for
+                        // core exception for both iods.
+                        sleep(1);
 
                         harvestX86ExceptionData(socNum);
                         runtimeError = true;
@@ -3134,7 +3141,7 @@ void Manager::dumpProcErrorSection(
                     dumpIndex++;
                 }
 
-                if (dataIn.offset == 0)
+                if (dataIn.offset == rootErrStatusOffset)
                 {
                     rootErrStatus = dataOut;
                     continue;
@@ -3185,7 +3192,18 @@ void Manager::dumpProcErrorSection(
         }
         else if (category == 2) // PCIE error
         {
-            Severity[section] = rootErrStatus & 0xFF;
+            if (rootErrStatus & fatalErrMsgRcvd)
+            {
+                Severity[section] = 1; // Fatal
+            }
+            else if (rootErrStatus & nonfatalErrMsgRcvd)
+            {
+                Severity[section] = 0; // Non-fatal uncorrected
+            }
+            else if (rootErrStatus & errCorrRcvd)
+            {
+                Severity[section] = 2; // Corrected
+            }
         }
         n++;
         section++;
