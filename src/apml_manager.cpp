@@ -1774,9 +1774,7 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
             } // if (ret != OOB_SUCCESS)
 
             rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[offset] = buffer;
-
         } // for loop
-
 
         n++;
     }
