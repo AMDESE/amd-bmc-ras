@@ -28,6 +28,7 @@ namespace ras
 {
 namespace apml
 {
+constexpr size_t base16 = 16;
 constexpr size_t sbrmiControlRegister = 0x1;
 constexpr size_t sysMgmtCtrlErr = 0x4;
 constexpr size_t shutdownError = 0x40;
@@ -1790,24 +1791,20 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
                                    .CrashDumpData[bank]
                                    .McaData[statusOffsetHi / 4];
 
-        if ((mcaStatusHi & (1 << 25)) && (mcaStatusHi & (1 << 23)))
+        uint32_t mcaIpidLo = rcd->ErrorRecord[socNum]
+                                 .CrashDumpData[bank]
+                                 .McaData[ipidOffsetLo / 4];
+        uint32_t mcaIpidHi = rcd->ErrorRecord[socNum]
+                                 .CrashDumpData[bank]
+                                 .McaData[ipidOffsetHi / 4];
+
+        if (mcaStatusHi & (1 << 29))
         {
-            uint32_t mcaIpidLo = rcd->ErrorRecord[socNum]
-                                     .CrashDumpData[bank]
-                                     .McaData[ipidOffsetLo / 4];
-            uint32_t mcaIpidHi = rcd->ErrorRecord[socNum]
-                                     .CrashDumpData[bank]
-                                     .McaData[ipidOffsetHi / 4];
-
-            if (mcaStatusHi & (1 << 29))
-            {
-                uncorrectableError = true;
-            }
-
-            decodeIpidForCore(socNum, mcaIpidHi, mcaIpidLo, errorCores);
+            uncorrectableError = true;
         }
-    }
 
+        decodeIpidForCore(socNum, mcaIpidHi, mcaIpidLo, errorCores);
+    }
     if (!errorCores.empty())
     {
         for (size_t core : errorCores)
