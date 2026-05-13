@@ -29,6 +29,20 @@ void Manager::setAttribute(AttributeName attribute, AttributeValue value)
         throw sdbusplus::xyz::openbmc_project::Common::File::Error::Open();
     }
 
+    if (jsonFile.peek() == std::ifstream::traits_type::eof())
+    {
+        jsonFile.close();
+        lg2::error("Config file is empty: {FILE}, restoring from source",
+                   "FILE", configFile);
+        fs::copy_file(SRC_CONFIG_FILE, configFile,
+                      fs::copy_options::overwrite_existing);
+        jsonFile.open(configFile);
+        if (!jsonFile.is_open())
+        {
+            throw sdbusplus::xyz::openbmc_project::Common::File::Error::Open();
+        }
+    }
+
     jsonFile >> data;
     jsonFile.close();
 
@@ -111,7 +125,8 @@ void Manager::setAttribute(AttributeName attribute, AttributeValue value)
             }
         }
 
-        std::ofstream jsonFileOut(configFile);
+        std::string tmpFile = configFile + ".tmp";
+        std::ofstream jsonFileOut(tmpFile);
 
         if (!jsonFileOut.is_open())
         {
@@ -119,7 +134,20 @@ void Manager::setAttribute(AttributeName attribute, AttributeValue value)
         }
 
         jsonFileOut << data.dump(4);
+        jsonFileOut.flush();
         jsonFileOut.close();
+
+        try
+        {
+            fs::rename(tmpFile, configFile);
+        }
+        catch (const fs::filesystem_error& e)
+        {
+            lg2::error("Failed to rename temp file {TMP} to {CFG}: {ERR}",
+                       "TMP", tmpFile, "CFG", configFile, "ERR", e.what());
+            fs::remove(tmpFile);
+            throw sdbusplus::xyz::openbmc_project::Common::File::Error::Open();
+        }
         rasConfigTable(configMap);
 
         lg2::debug("Attribute {{ATTRIBUTE} updated successfully", "ATTRIBUTE",
@@ -199,7 +227,6 @@ void Manager::updateConfigToDbus()
     }
 
     std::ifstream jsonRead(configFile);
-    nlohmann::json data = nlohmann::json::parse(jsonRead);
 
     if (!jsonRead.is_open())
     {
@@ -207,6 +234,24 @@ void Manager::updateConfigToDbus()
                    strerror(errno));
         throw std::runtime_error("Error: Could not read config file");
     }
+
+    if (jsonRead.peek() == std::ifstream::traits_type::eof())
+    {
+        jsonRead.close();
+        lg2::error("Config file is empty: {FILE}, restoring from source",
+                   "FILE", configFile);
+        fs::copy_file(SRC_CONFIG_FILE, configFile,
+                      fs::copy_options::overwrite_existing);
+        jsonRead.open(configFile);
+        if (!jsonRead.is_open())
+        {
+            lg2::error("Could not read config file after restore: {ERROR}",
+                       "ERROR", strerror(errno));
+            throw std::runtime_error("Error: Could not read config file");
+        }
+    }
+
+    nlohmann::json data = nlohmann::json::parse(jsonRead);
 
     ConfigTable configMap;
 
@@ -427,13 +472,28 @@ void Manager::saveErrorCounts()
     data["p1CorrectableOtherErrors"] = p1CorrectableOtherErrors;
     data["p1NoncorrectableOtherErrors"] = p1NoncorrectableOtherErrors;
 
-    std::ofstream file(errorCountFile);
+    std::string tmpFile = errorCountFile + ".tmp";
+    std::ofstream file(tmpFile);
     if (!file.is_open())
     {
-        lg2::error("Failed to open {FILE} for writing", "FILE", errorCountFile);
+        lg2::error("Failed to open {FILE} for writing", "FILE", tmpFile);
         return;
     }
     file << data.dump(4);
+    file.flush();
+    file.close();
+
+    try
+    {
+        fs::rename(tmpFile, errorCountFile);
+    }
+    catch (const fs::filesystem_error& e)
+    {
+        lg2::error("Failed to rename temp file {TMP} to {DST}: {ERR}", "TMP",
+                   tmpFile, "DST", errorCountFile, "ERR", e.what());
+        fs::remove(tmpFile);
+        return;
+    }
     updateErrorCountDbus();
 }
 
