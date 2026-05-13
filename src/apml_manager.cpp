@@ -36,6 +36,8 @@ constexpr size_t shutdownError = 0x40;
 constexpr size_t socket0 = 0;
 constexpr size_t socket1 = 1;
 
+constexpr auto secondNodeId = "2";
+
 constexpr uint32_t badData = 0xBAADDA7A;
 constexpr size_t fatalError = 1;
 constexpr size_t resetHangErr = 0x2;
@@ -547,7 +549,7 @@ void Manager::registerEventHandler()
             requestGPIOEvents(socketNames[i],
                               std::bind(&ras::apml::Manager::alertEventHandler,
                                         this, std::ref(gpioEventDescriptors[i]),
-                                        std::ref(gpioLines[i]), i),
+                                        std::ref(gpioLines[i]), socIndex[i]),
                               gpioLines[i], gpioEventDescriptors[i]);
         }
     }
@@ -637,7 +639,7 @@ void Manager::clearSbrmiAlertMask(uint8_t socNum)
 void Manager::alertSrcHandler(struct apml_udev_monitor* udev_mon,
                               uint8_t socket)
 {
-    uint8_t soc_num = 0;
+    uint8_t soc_num = (node == secondNodeId) ? socket1 : socket0;
     uint32_t src = 0;
     bool block = false;
     oob_status_t ret;
@@ -2117,7 +2119,14 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
     }
     configMgr.updateErrorCountDbus();
     configMgr.saveErrorCounts();
-    cpuAlertProcessed[socNum] = true;
+
+    // Map physical socNum to logical index in cpuAlertProcessed
+    auto socIt = std::find(socIndex.begin(), socIndex.end(),
+                           static_cast<size_t>(socNum));
+    if (socIt != socIndex.end())
+    {
+        cpuAlertProcessed[std::distance(socIndex.begin(), socIt)] = true;
+    }
 
     if (fchHangError == true || runtimeError == true ||
         nonMcaShutdownError == true)
@@ -2488,7 +2497,15 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             }
             configMgr.updateErrorCountDbus();
             configMgr.saveErrorCounts();
-            cpuAlertProcessed[socNum] = true;
+
+            // Map physical socNum to logical index in cpuAlertProcessed
+            auto socIt = std::find(socIndex.begin(), socIndex.end(),
+                                   static_cast<size_t>(socNum));
+            if (socIt != socIndex.end())
+            {
+                cpuAlertProcessed[std::distance(socIndex.begin(), socIt)] =
+                    true;
+            }
 
             // Clear RAS status register
             // 0x4c is a SB-RMI register acting as write to clear
