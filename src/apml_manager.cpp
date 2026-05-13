@@ -465,6 +465,14 @@ void Manager::configure()
     }
 
     nlohmann::json config;
+
+    if (jsonFile.peek() == std::ifstream::traits_type::eof())
+    {
+        jsonFile.close();
+        lg2::error("GPIO config file is empty: {FILE}", "FILE", gpioConfigFile);
+        throw std::runtime_error("GPIO config file is empty");
+    }
+
     jsonFile >> config;
     jsonFile.close();
 
@@ -1451,9 +1459,8 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
     while (ret != OOB_SUCCESS)
     {
         retries++;
-        ret =
-            bmc_ras_dbg_log_validity_check(socNum, dbgLogBlockId,
-                                           &validityCheck);
+        ret = bmc_ras_dbg_log_validity_check(socNum, dbgLogBlockId,
+                                             &validityCheck);
 
         if (ret == OOB_SUCCESS)
         {
@@ -2160,7 +2167,10 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
             if (inputFile.is_open())
             {
                 nlohmann::json jsonData;
-                inputFile >> jsonData;
+                if (inputFile.peek() != std::ifstream::traits_type::eof())
+                {
+                    inputFile >> jsonData;
+                }
 
                 if (jsonData.find("subscriptions") != jsonData.end())
                 {
@@ -2542,7 +2552,11 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                     if (inputFile.is_open())
                     {
                         nlohmann::json jsonData;
-                        inputFile >> jsonData;
+                        if (inputFile.peek() !=
+                            std::ifstream::traits_type::eof())
+                        {
+                            inputFile >> jsonData;
+                        }
 
                         if (jsonData.find("subscriptions") != jsonData.end())
                         {
