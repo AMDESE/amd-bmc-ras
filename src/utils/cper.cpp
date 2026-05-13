@@ -186,9 +186,19 @@ void createIndexFile(size_t& errCount, const std::string& node)
     {
         if (!(file >> errCount))
         {
-            throw std::runtime_error("Failed to read CPER index number");
+            // File is empty or unreadable, default to 0
+            errCount = 0;
+            file.close();
+            std::ofstream out(indexFile, std::ios::trunc);
+            if (out)
+            {
+                out << errCount;
+            }
         }
-        file.close();
+        else
+        {
+            file.close();
+        }
     }
     else
     {

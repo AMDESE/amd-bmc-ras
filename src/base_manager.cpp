@@ -48,6 +48,16 @@ void Manager::getCpuSocketInfo()
         file.open(PLATFORM_DEFAULT_FILE);
     }
 
+    if (!file.is_open())
+    {
+        throw std::runtime_error("Unable to open platform config file");
+    }
+
+    if (file.peek() == std::ifstream::traits_type::eof())
+    {
+        throw std::runtime_error("Platform config file is empty");
+    }
+
     nlohmann::json jsonData = nlohmann::json::parse(file);
 
     if (jsonData.contains("CpuCount"))
@@ -155,6 +165,16 @@ void Manager::loadPlatformConfig()
     if (!file.is_open())
     {
         file.open(PLATFORM_DEFAULT_FILE);
+    }
+
+    if (!file.is_open())
+    {
+        throw std::runtime_error("Unable to open platform config file");
+    }
+
+    if (file.peek() == std::ifstream::traits_type::eof())
+    {
+        throw std::runtime_error("Platform config file is empty");
     }
 
     nlohmann::json jsonData = nlohmann::json::parse(file);
