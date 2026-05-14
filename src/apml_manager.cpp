@@ -45,6 +45,35 @@ constexpr size_t interruptMode = 1;
 constexpr size_t mcaErr = 0;
 constexpr size_t dramCeccErr = 1;
 constexpr size_t pcieErr = 2;
+
+static const char* getErrorTypeStr(uint8_t errType)
+{
+    switch (errType)
+    {
+        case mcaErr:
+            return "MCA";
+        case dramCeccErr:
+            return "DRAM_CECC";
+        case pcieErr:
+            return "PCIE";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+static const char* getRequestTypeStr(uint8_t reqType)
+{
+    switch (reqType)
+    {
+        case pollingMode:
+            return "POLLING";
+        case interruptMode:
+            return "INTERRUPT";
+        default:
+            return "UNKNOWN";
+    }
+}
+
 constexpr size_t chipSelNumPos = 21;
 constexpr size_t mcaErrOverflow = 8;
 constexpr size_t dramCeccErrOverflow = 16;
@@ -828,6 +857,18 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         amd::ras::util::cper::exportToDBus(errCount, mcaPtr->Header.TimeStamp,
                                            objectServer, systemBus, node);
         amd::ras::util::cper::updateIndexFile(errCount, node);
+
+        // Per-core CPU error counting for runtime MCA errors
+        if (p0Inst.number_of_inst != 0)
+        {
+            countRuntimeMcaErrors(socIndex[0], 0, p0Inst.number_of_inst);
+        }
+        if (p1Inst.number_of_inst != 0)
+        {
+            uint16_t p1Start = sectionCount - p1Inst.number_of_inst;
+            countRuntimeMcaErrors(socIndex[1], p1Start, sectionCount);
+        }
+
         thresholdCount = configMgr.getThresholdCount("McaErrThresholdEnable",
                                                      "McaErrThresholdCount");
         if (mcaPtr->SectionDescriptor != nullptr)
@@ -964,13 +1005,18 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
             pciePtr->PcieErrorData = nullptr;
         }
     }
-    if (p0Inst.number_of_inst != 0)
+    if (errorPollingType != mcaErr)
     {
-        configMgr.incrementCorrectableOtherError(socIndex[0], thresholdCount);
-    }
-    if (p1Inst.number_of_inst != 0)
-    {
-        configMgr.incrementCorrectableOtherError(socIndex[1], thresholdCount);
+        if (p0Inst.number_of_inst != 0)
+        {
+            configMgr.incrementCorrectableOtherError(socIndex[0],
+                                                     thresholdCount);
+        }
+        if (p1Inst.number_of_inst != 0)
+        {
+            configMgr.incrementCorrectableOtherError(socIndex[1],
+                                                     thresholdCount);
+        }
     }
     configMgr.updateErrorCountDbus();
     configMgr.saveErrorCounts();
@@ -1032,6 +1078,10 @@ void Manager::runTimeErrorInfoCheck(uint8_t errType, uint8_t reqType)
     if (((p0_ret == OOB_SUCCESS) && (p0_inst.number_of_inst > 0)) ||
         ((p1_ret == OOB_SUCCESS) && (p1_inst.number_of_inst > 0)))
     {
+        lg2::info(
+            "Harvesting runtime error. Error Type: {ERRTYPE} Request Type: {REQTYPE}",
+            "ERRTYPE", getErrorTypeStr(errType), "REQTYPE",
+            getRequestTypeStr(reqType));
         if (errType == mcaErr)
         {
             if (mcaPtr == nullptr)
@@ -1812,6 +1862,13 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
 
         decodeIpidForCore(socNum, mcaIpidHi, mcaIpidLo, errorCores);
     }
+
+    updatePerCoreErrorCounts(socNum, uncorrectableError, errorCores);
+}
+
+void Manager::updatePerCoreErrorCounts(uint8_t socNum, bool uncorrectableError,
+                                       const std::set<size_t>& errorCores)
+{
     if (!errorCores.empty())
     {
         for (size_t core : errorCores)
@@ -1837,10 +1894,36 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
     else
     {
         configMgr.incrementNoncorrectableOtherError(socNum);
-        lg2::info(
-            "Socket {SOCKET}: No per-core bank identified, Incrementing non-correctable Other error count",
-            "SOCKET", socNum);
+        lg2::info("Socket {SOCKET}: No per-core bank identified, "
+                  "Incrementing non-correctable Other error count",
+                  "SOCKET", socNum);
     }
+}
+
+void Manager::countRuntimeMcaErrors(uint8_t socNum, uint16_t startIdx,
+                                    uint16_t endIdx)
+{
+    bool uncorrectableError = false;
+    std::set<size_t> errorCores;
+
+    for (uint16_t i = startIdx; i < endIdx; i++)
+    {
+        uint32_t mcaStatusHi = mcaPtr->McaErrorInfo[i].DumpData[3]; // offset 12
+        uint32_t mcaIpidHi = mcaPtr->McaErrorInfo[i]
+                                 .DumpData[mcaIpidHiOffset / 4]; // offset 0x2C
+        uint32_t mcaIpidLo =
+            mcaPtr->McaErrorInfo[i]
+                .DumpData[(mcaIpidHiOffset - 4) / 4]; // offset 0x28
+
+        if (mcaStatusHi & (1 << 29))
+        {
+            uncorrectableError = true;
+        }
+
+        decodeIpidForCore(socNum, mcaIpidHi, mcaIpidLo, errorCores);
+    }
+
+    updatePerCoreErrorCounts(socNum, uncorrectableError, errorCores);
 }
 
 void Manager::decodeIpidForCore(uint8_t socNum, uint32_t mcaIpidHi,
@@ -1880,12 +1963,30 @@ void Manager::decodeIpidForCore(uint8_t socNum, uint32_t mcaIpidHi,
                 if (logicalCore < maxCoreIndex)
                 {
                     errorCores.insert(logicalCore);
+                    lg2::info(
+                        "Socket {SOCKET}: Per-core CPU MCA identified at logical core {CORE}",
+                        "SOCKET", socNum, "CORE", logicalCore);
+                }
+                else
+                {
+                    lg2::info(
+                        "Socket {SOCKET}: Decoded logical core {CORE} out of range; skipping per-core CPU accounting",
+                        "SOCKET", socNum, "CORE", logicalCore);
                 }
                 break;
             }
             default:
+                lg2::debug(
+                    "Socket {SOCKET}: MCA type {MCATYPE} does not map to per-core CPU accounting",
+                    "SOCKET", socNum, "MCATYPE", lg2::hex, ipidMcaType);
                 break;
         }
+    }
+    else
+    {
+        lg2::debug(
+            "Socket {SOCKET}: IPID HW ID {HWID} is not a core MCA bank; using Other error accounting path",
+            "SOCKET", socNum, "HWID", lg2::hex, ipidHwId);
     }
 }
 
