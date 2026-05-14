@@ -369,6 +369,34 @@ class Manager : public amd::ras::Manager
     void decodeIpidForCore(uint8_t socNum, uint32_t mcaIpidHi,
                            uint32_t mcaIpidLo, std::set<size_t>& errorCores);
 
+    /** @brief Count per-core MCA errors from runtime error info and update
+     *         error counters.
+     *
+     * @details Scans MCA error info entries in the given index range,
+     *          decodes IPID to identify affected cores, and increments
+     *          the appropriate correctable/non-correctable CPU or Other
+     *          error counters.
+     *
+     * @param[in] socNum - Socket number of the processor.
+     * @param[in] startIdx - Start index into McaErrorInfo array.
+     * @param[in] endIdx - End index (exclusive) into McaErrorInfo array.
+     */
+    void countRuntimeMcaErrors(uint8_t socNum, uint16_t startIdx,
+                               uint16_t endIdx);
+
+    /** @brief Update per-core error counters based on decoded error cores.
+     *
+     * @details Increments correctable or non-correctable CPU error counts
+     *          for each identified core, or increments the Other error
+     *          count if no per-core bank was identified.
+     *
+     * @param[in] socNum - Socket number of the processor.
+     * @param[in] uncorrectableError - Whether an uncorrectable error was found.
+     * @param[in] errorCores - Set of logical core indices with errors.
+     */
+    void updatePerCoreErrorCounts(uint8_t socNum, bool uncorrectableError,
+                                  const std::set<size_t>& errorCores);
+
     /** @brief Retrieves the last transaction address.
      *
      * @details This function retrieves the last transaction address
