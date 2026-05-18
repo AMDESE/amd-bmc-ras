@@ -315,14 +315,12 @@ class Manager : public amd::ras::Manager
      * error polling type
      *
      * @param[in] errorPollingType - The type of error polling.
-     * @param[in] p0Inst - Structure representing a valid RAS error instance for
-     * processor 0.
-     * @param[in] p1Inst - Structure representing a valid RAS error instance for
-     * processor 1.
+     * @param[in] instVec - Vector of valid RAS error instances, one per
+     *            socket in socIndex order.
      *
      */
-    void harvestRuntimeErrors(uint8_t, struct ras_rt_valid_err_inst,
-                              struct ras_rt_valid_err_inst);
+    void harvestRuntimeErrors(uint8_t,
+                              std::vector<struct ras_rt_valid_err_inst>&);
 
     /** @brief Check runtime error information.
      *

@@ -8,6 +8,8 @@
 
 constexpr size_t socket1 = 1;
 constexpr size_t socket2 = 2;
+constexpr size_t socket3 = 3;
+constexpr size_t socket4 = 4;
 
 namespace amd
 {

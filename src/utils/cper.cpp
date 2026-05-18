@@ -8,6 +8,7 @@
 #include <phosphor-logging/lg2.hpp>
 #include <phosphor-logging/log.hpp>
 
+#include <array>
 #include <filesystem>
 #include <regex>
 
@@ -152,7 +153,7 @@ template void createFile(const std::shared_ptr<CoreDebugDumpCperRecord>&,
 std::string findCperFilename(size_t number, const std::string& node)
 {
     std::regex pattern;
-    if (node == "1" || node == "2")
+    if (node != "0")
     {
         pattern = std::regex(
             ".*" + node + ".*error" + std::to_string(number) + "\\.cper");
@@ -259,7 +260,7 @@ void createRecord(sdbusplus::asio::object_server& objectServer,
 
     if (std::filesystem::exists(std::filesystem::path(RAS_DIR)))
     {
-        if (node == "1" || node == "2")
+        if (node != "0")
         {
             pattern =
                 std::regex("node" + node + ".*ras-error([[:digit:]]+).cper");
@@ -395,25 +396,27 @@ std::string getCperFilename(size_t num)
 }
 
 bool checkSignatureIdMatch(std::map<std::string, std::string>* configSigIdList,
-                           const std::shared_ptr<FatalCperRecord>& rcd)
+                           const std::shared_ptr<FatalCperRecord>& rcd,
+                           size_t cpuCount)
 {
     bool ret = false;
     size_t socNum = 0;
-    uint32_t tempVar[2][8];
+    std::vector<std::array<uint32_t, 8>> tempVar(cpuCount);
 
-    for (socNum = 0; socNum < socket2; socNum++)
+    for (socNum = 0; socNum < cpuCount; socNum++)
     {
-        std::memcpy(tempVar[socNum], rcd->ErrorRecord[socNum].SignatureID,
+        std::memcpy(tempVar[socNum].data(),
+                    rcd->ErrorRecord[socNum].SignatureID,
                     sizeof(tempVar[socNum]));
     }
 
-    for (socNum = 0; socNum < socket2; socNum++)
+    for (socNum = 0; socNum < cpuCount; socNum++)
     {
         bool equal = false;
         for (const auto& pair : *configSigIdList)
         {
-            bool equal =
-                amd::ras::util::compareBitwiseAnd(tempVar[socNum], pair.second);
+            bool equal = amd::ras::util::compareBitwiseAnd(
+                tempVar[socNum].data(), pair.second);
 
             if (equal == true)
             {
@@ -773,7 +776,7 @@ void createFile(const std::shared_ptr<PtrType>& data,
         cperFileName = "core-debug-dump-" + cperFileName;
     }
 
-    if (node == "1" || node == "2")
+    if (node != "0")
     {
         cperFileName = "node" + node + "-" + cperFileName;
     }

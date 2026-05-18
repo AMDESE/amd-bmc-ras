@@ -206,10 +206,10 @@ void triggerWarmReset(std::string& node)
     oob_status_t ret;
     uint32_t ackResp = 0;
     uint8_t socNum = 0;
-    /* In a 2P config, it is recommended to only send this command to P0
+    /* In a multi-host config, it is recommended to only send this command to P0
     Hence, sending the Signal only to socket 0*/
 
-    if (node == "1" || node == "2")
+    if (node != "0")
     {
         socNum = std::stoul(node) - 1;
     }

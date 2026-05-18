@@ -124,35 +124,21 @@ class Manager : public amd::ras::config::ConfigIface
     void updateErrorCountDbus();
 
     /** @brief Increment the correctable CPU error count for a given index.
-     *  @param[in] socNum - socket number (0 or 1).
+     *  @param[in] socNum - socket number (0-3).
      *  @param[in] index - CPU error index to increment.
      */
     void incrementCorrectableCPUError(size_t socNum, size_t index)
     {
-        if (socNum == 0)
-        {
-            p0CorrectableCPUErrors.at(index)++;
-        }
-        else
-        {
-            p1CorrectableCPUErrors.at(index)++;
-        }
+        correctableCPUErrors.at(socNum).at(index)++;
     }
 
     /** @brief Increment the noncorrectable CPU error count for a given index.
-     *  @param[in] socNum - socket number (0 or 1).
+     *  @param[in] socNum - socket number (0-3).
      *  @param[in] index - CPU error index to increment.
      */
     void incrementNoncorrectableCPUError(size_t socNum, size_t index)
     {
-        if (socNum == 0)
-        {
-            p0NoncorrectableCPUErrors.at(index)++;
-        }
-        else
-        {
-            p1NoncorrectableCPUErrors.at(index)++;
-        }
+        noncorrectableCPUErrors.at(socNum).at(index)++;
     }
 
     /** @brief Get the threshold count for a given error category.
@@ -171,48 +157,31 @@ class Manager : public amd::ras::config::ConfigIface
                                const std::string& thresholdCntKey);
 
     /** @brief Increment the correctable other error count.
-     *  @param[in] socNum - socket number (0 or 1).
+     *  @param[in] socNum - socket number (0-3).
      *  @param[in] thresholdCount - threshold count to increment by.
      */
     void incrementCorrectableOtherError(size_t socNum, uint64_t thresholdCount)
     {
-        if (socNum == 0)
-        {
-            p0CorrectableOtherErrors += thresholdCount;
-        }
-        else
-        {
-            p1CorrectableOtherErrors += thresholdCount;
-        }
+        correctableOtherErrors.at(socNum) += thresholdCount;
     }
 
     /** @brief Increment the noncorrectable other error count.
-     *  @param[in] socNum - socket number (0 or 1).
+     *  @param[in] socNum - socket number (0-3).
      */
     void incrementNoncorrectableOtherError(size_t socNum)
     {
-        if (socNum == 0)
-        {
-            p0NoncorrectableOtherErrors++;
-        }
-        else
-        {
-            p1NoncorrectableOtherErrors++;
-        }
+        noncorrectableOtherErrors.at(socNum)++;
     }
 
   private:
     static constexpr size_t maxErrorIndex = 256;
-    inline static std::array<uint64_t, maxErrorIndex> p0CorrectableCPUErrors{};
-    inline static std::array<uint64_t, maxErrorIndex>
-        p0NoncorrectableCPUErrors{};
-    inline static uint64_t p0CorrectableOtherErrors{};
-    inline static uint64_t p0NoncorrectableOtherErrors{};
-    inline static std::array<uint64_t, maxErrorIndex> p1CorrectableCPUErrors{};
-    inline static std::array<uint64_t, maxErrorIndex>
-        p1NoncorrectableCPUErrors{};
-    inline static uint64_t p1CorrectableOtherErrors{};
-    inline static uint64_t p1NoncorrectableOtherErrors{};
+    static constexpr size_t maxSockets = 4;
+    inline static std::array<std::array<uint64_t, maxErrorIndex>, maxSockets>
+        correctableCPUErrors{};
+    inline static std::array<std::array<uint64_t, maxErrorIndex>, maxSockets>
+        noncorrectableCPUErrors{};
+    inline static std::array<uint64_t, maxSockets> correctableOtherErrors{};
+    inline static std::array<uint64_t, maxSockets> noncorrectableOtherErrors{};
     sdbusplus::asio::object_server& objServer;
     std::shared_ptr<sdbusplus::asio::connection>& systemBus;
     std::string node;
