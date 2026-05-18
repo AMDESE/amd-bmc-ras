@@ -361,10 +361,9 @@ void Manager::deleteAll()
     {
         std::string filename = entry.path().filename().string();
 
-        if (node == "1" || node == "2")
+        if (node != "0")
         {
-            if (filename.starts_with("node" + node) &&
-                filename.starts_with("node" + node))
+            if (filename.starts_with("node" + node))
             {
                 lg2::info("{FILE} deleted", "FILE", filename);
                 fs::remove(entry.path());
@@ -419,25 +418,23 @@ void Manager::loadErrorCounts()
         try
         {
             nlohmann::json data = nlohmann::json::parse(file);
-            for (size_t i = 0; i < maxErrorIndex; ++i)
+            for (size_t s = 0; s < maxSockets; ++s)
             {
-                p0CorrectableCPUErrors[i] =
-                    data["p0CorrectableCPUErrors"][i].get<uint64_t>();
-                p0NoncorrectableCPUErrors[i] =
-                    data["p0NoncorrectableCPUErrors"][i].get<uint64_t>();
-                p1CorrectableCPUErrors[i] =
-                    data["p1CorrectableCPUErrors"][i].get<uint64_t>();
-                p1NoncorrectableCPUErrors[i] =
-                    data["p1NoncorrectableCPUErrors"][i].get<uint64_t>();
+                std::string prefix = "p" + std::to_string(s);
+                for (size_t i = 0; i < maxErrorIndex; ++i)
+                {
+                    correctableCPUErrors[s][i] =
+                        data[prefix + "CorrectableCPUErrors"][i]
+                            .get<uint64_t>();
+                    noncorrectableCPUErrors[s][i] =
+                        data[prefix + "NoncorrectableCPUErrors"][i]
+                            .get<uint64_t>();
+                }
+                correctableOtherErrors[s] =
+                    data[prefix + "CorrectableOtherErrors"].get<uint64_t>();
+                noncorrectableOtherErrors[s] =
+                    data[prefix + "NoncorrectableOtherErrors"].get<uint64_t>();
             }
-            p0CorrectableOtherErrors =
-                data["p0CorrectableOtherErrors"].get<uint64_t>();
-            p0NoncorrectableOtherErrors =
-                data["p0NoncorrectableOtherErrors"].get<uint64_t>();
-            p1CorrectableOtherErrors =
-                data["p1CorrectableOtherErrors"].get<uint64_t>();
-            p1NoncorrectableOtherErrors =
-                data["p1NoncorrectableOtherErrors"].get<uint64_t>();
             lg2::info("Error counts loaded from {FILE}", "FILE",
                       errorCountFile);
             updateErrorCountDbus();
@@ -463,14 +460,15 @@ void Manager::saveErrorCounts()
         std::filesystem::path(errorCountFile).parent_path());
 
     nlohmann::json data;
-    data["p0CorrectableCPUErrors"] = p0CorrectableCPUErrors;
-    data["p0NoncorrectableCPUErrors"] = p0NoncorrectableCPUErrors;
-    data["p0CorrectableOtherErrors"] = p0CorrectableOtherErrors;
-    data["p0NoncorrectableOtherErrors"] = p0NoncorrectableOtherErrors;
-    data["p1CorrectableCPUErrors"] = p1CorrectableCPUErrors;
-    data["p1NoncorrectableCPUErrors"] = p1NoncorrectableCPUErrors;
-    data["p1CorrectableOtherErrors"] = p1CorrectableOtherErrors;
-    data["p1NoncorrectableOtherErrors"] = p1NoncorrectableOtherErrors;
+    for (size_t s = 0; s < maxSockets; ++s)
+    {
+        std::string prefix = "p" + std::to_string(s);
+        data[prefix + "CorrectableCPUErrors"] = correctableCPUErrors[s];
+        data[prefix + "NoncorrectableCPUErrors"] = noncorrectableCPUErrors[s];
+        data[prefix + "CorrectableOtherErrors"] = correctableOtherErrors[s];
+        data[prefix + "NoncorrectableOtherErrors"] =
+            noncorrectableOtherErrors[s];
+    }
 
     std::string tmpFile = errorCountFile + ".tmp";
     std::ofstream file(tmpFile);
@@ -504,30 +502,22 @@ void Manager::updateErrorCountDbus()
         return;
     }
 
-    errorCountIface->set_property(
-        "P0CorrectableCPUErrors",
-        std::vector<uint64_t>(p0CorrectableCPUErrors.begin(),
-                              p0CorrectableCPUErrors.end()));
-    errorCountIface->set_property(
-        "P0NoncorrectableCPUErrors",
-        std::vector<uint64_t>(p0NoncorrectableCPUErrors.begin(),
-                              p0NoncorrectableCPUErrors.end()));
-    errorCountIface->set_property("P0CorrectableOtherErrors",
-                                  p0CorrectableOtherErrors);
-    errorCountIface->set_property("P0NoncorrectableOtherErrors",
-                                  p0NoncorrectableOtherErrors);
-    errorCountIface->set_property(
-        "P1CorrectableCPUErrors",
-        std::vector<uint64_t>(p1CorrectableCPUErrors.begin(),
-                              p1CorrectableCPUErrors.end()));
-    errorCountIface->set_property(
-        "P1NoncorrectableCPUErrors",
-        std::vector<uint64_t>(p1NoncorrectableCPUErrors.begin(),
-                              p1NoncorrectableCPUErrors.end()));
-    errorCountIface->set_property("P1CorrectableOtherErrors",
-                                  p1CorrectableOtherErrors);
-    errorCountIface->set_property("P1NoncorrectableOtherErrors",
-                                  p1NoncorrectableOtherErrors);
+    for (size_t s = 0; s < maxSockets; ++s)
+    {
+        std::string prefix = "P" + std::to_string(s);
+        errorCountIface->set_property(
+            prefix + "CorrectableCPUErrors",
+            std::vector<uint64_t>(correctableCPUErrors[s].begin(),
+                                  correctableCPUErrors[s].end()));
+        errorCountIface->set_property(
+            prefix + "NoncorrectableCPUErrors",
+            std::vector<uint64_t>(noncorrectableCPUErrors[s].begin(),
+                                  noncorrectableCPUErrors[s].end()));
+        errorCountIface->set_property(prefix + "CorrectableOtherErrors",
+                                      correctableOtherErrors[s]);
+        errorCountIface->set_property(prefix + "NoncorrectableOtherErrors",
+                                      noncorrectableOtherErrors[s]);
+    }
 }
 
 Manager::Manager(sdbusplus::asio::object_server& objectServer,
@@ -543,29 +533,23 @@ Manager::Manager(sdbusplus::asio::object_server& objectServer,
     errorCountIface =
         objServer.add_interface(errorCountPath, errorCountInterface);
 
-    std::vector<uint64_t> p0CorCPU(p0CorrectableCPUErrors.begin(),
-                                   p0CorrectableCPUErrors.end());
-    std::vector<uint64_t> p0NoncorCPU(p0NoncorrectableCPUErrors.begin(),
-                                      p0NoncorrectableCPUErrors.end());
-    std::vector<uint64_t> p1CorCPU(p1CorrectableCPUErrors.begin(),
-                                   p1CorrectableCPUErrors.end());
-    std::vector<uint64_t> p1NoncorCPU(p1NoncorrectableCPUErrors.begin(),
-                                      p1NoncorrectableCPUErrors.end());
+    for (size_t s = 0; s < maxSockets; ++s)
+    {
+        std::string prefix = "P" + std::to_string(s);
+        std::vector<uint64_t> corCPU(correctableCPUErrors[s].begin(),
+                                     correctableCPUErrors[s].end());
+        std::vector<uint64_t> noncorCPU(noncorrectableCPUErrors[s].begin(),
+                                        noncorrectableCPUErrors[s].end());
 
-    errorCountIface->register_property("P0CorrectableCPUErrors", p0CorCPU);
-    errorCountIface->register_property("P0NoncorrectableCPUErrors",
-                                       p0NoncorCPU);
-    errorCountIface->register_property("P0CorrectableOtherErrors",
-                                       p0CorrectableOtherErrors);
-    errorCountIface->register_property("P0NoncorrectableOtherErrors",
-                                       p0NoncorrectableOtherErrors);
-    errorCountIface->register_property("P1CorrectableCPUErrors", p1CorCPU);
-    errorCountIface->register_property("P1NoncorrectableCPUErrors",
-                                       p1NoncorCPU);
-    errorCountIface->register_property("P1CorrectableOtherErrors",
-                                       p1CorrectableOtherErrors);
-    errorCountIface->register_property("P1NoncorrectableOtherErrors",
-                                       p1NoncorrectableOtherErrors);
+        errorCountIface->register_property(prefix + "CorrectableCPUErrors",
+                                           corCPU);
+        errorCountIface->register_property(prefix + "NoncorrectableCPUErrors",
+                                           noncorCPU);
+        errorCountIface->register_property(prefix + "CorrectableOtherErrors",
+                                           correctableOtherErrors[s]);
+        errorCountIface->register_property(prefix + "NoncorrectableOtherErrors",
+                                           noncorrectableOtherErrors[s]);
+    }
 
     errorCountIface->initialize();
 }

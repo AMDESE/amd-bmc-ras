@@ -221,7 +221,8 @@ void createFile(const std::shared_ptr<T>&, const std::string_view&, uint16_t,
  *  @return Returns true if the signature ID matches, false otherwise.
  */
 bool checkSignatureIdMatch(std::map<std::string, std::string>*,
-                           const std::shared_ptr<FatalCperRecord>&);
+                           const std::shared_ptr<FatalCperRecord>&,
+                           size_t cpuCount);
 
 /** @brief Determines the highest severity level from section severities for
  * CPER.

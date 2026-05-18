@@ -794,9 +794,9 @@ void Manager::alertEventHandler(
         });
 }
 
-void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
-                                   struct ras_rt_valid_err_inst p0Inst,
-                                   struct ras_rt_valid_err_inst p1Inst)
+void Manager::harvestRuntimeErrors(
+    uint8_t errorPollingType,
+    std::vector<struct ras_rt_valid_err_inst>& instVec)
 {
     uint32_t* severity = nullptr;
     uint64_t* checkInfo = nullptr;
@@ -805,7 +805,11 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
     uint32_t sectionSize;
     uint64_t thresholdCount = 1;
 
-    uint16_t sectionCount = p0Inst.number_of_inst + p1Inst.number_of_inst;
+    uint16_t sectionCount = 0;
+    for (const auto& inst : instVec)
+    {
+        sectionCount += inst.number_of_inst;
+    }
 
     severity = new uint32_t[sectionCount];
     checkInfo = new uint64_t[sectionCount];
@@ -825,25 +829,19 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
 
         uint16_t sectionStart = 0;
 
-        if (p0Inst.number_of_inst != 0)
+        for (size_t idx = 0; idx < instVec.size(); ++idx)
         {
-            dumpProcErrorSection(mcaPtr, socIndex[0], p0Inst, mcaErr,
-                                 sectionStart, severity, checkInfo);
+            if (instVec[idx].number_of_inst != 0)
+            {
+                dumpProcErrorSection(mcaPtr, socIndex[idx], instVec[idx],
+                                     mcaErr, sectionStart, severity, checkInfo);
 
-            amd::ras::util::cper::dumpProcErrorInfoSection(
-                mcaPtr, p0Inst.number_of_inst, checkInfo, sectionStart,
-                cpuCount, cpuId);
-        }
-        if (p1Inst.number_of_inst != 0)
-        {
-            sectionStart = sectionCount - p1Inst.number_of_inst;
+                amd::ras::util::cper::dumpProcErrorInfoSection(
+                    mcaPtr, instVec[idx].number_of_inst, checkInfo,
+                    sectionStart, cpuCount, cpuId);
 
-            dumpProcErrorSection(mcaPtr, socIndex[1], p1Inst, mcaErr,
-                                 sectionStart, severity, checkInfo);
-
-            amd::ras::util::cper::dumpProcErrorInfoSection(
-                mcaPtr, p1Inst.number_of_inst, checkInfo, sectionStart,
-                cpuCount, cpuId);
+                sectionStart += instVec[idx].number_of_inst;
+            }
         }
 
         amd::ras::util::cper::calculateSeverity(
@@ -902,23 +900,18 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
 
         uint16_t sectionStart = 0;
 
-        if (p0Inst.number_of_inst != 0)
+        for (size_t idx = 0; idx < instVec.size(); ++idx)
         {
-            dumpProcErrorSection(dramPtr, 0, p0Inst, dramCeccErr, sectionStart,
-                                 severity, checkInfo);
-            amd::ras::util::cper::dumpProcErrorInfoSection(
-                dramPtr, p0Inst.number_of_inst, checkInfo, sectionStart,
-                cpuCount, cpuId);
-        }
-        if (p1Inst.number_of_inst != 0)
-        {
-            sectionStart = sectionCount - p1Inst.number_of_inst;
+            if (instVec[idx].number_of_inst != 0)
+            {
+                dumpProcErrorSection(dramPtr, idx, instVec[idx], dramCeccErr,
+                                     sectionStart, severity, checkInfo);
+                amd::ras::util::cper::dumpProcErrorInfoSection(
+                    dramPtr, instVec[idx].number_of_inst, checkInfo,
+                    sectionStart, cpuCount, cpuId);
 
-            dumpProcErrorSection(dramPtr, 1, p1Inst, dramCeccErr, sectionStart,
-                                 severity, checkInfo);
-            amd::ras::util::cper::dumpProcErrorInfoSection(
-                dramPtr, p1Inst.number_of_inst, checkInfo, sectionStart,
-                cpuCount, cpuId);
+                sectionStart += instVec[idx].number_of_inst;
+            }
         }
 
         amd::ras::util::cper::calculateSeverity(
@@ -966,17 +959,15 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
 
         uint16_t sectionStart = 0;
 
-        if (p0Inst.number_of_inst != 0)
+        for (size_t idx = 0; idx < instVec.size(); ++idx)
         {
-            dumpProcErrorSection(pciePtr, 0, p0Inst, pcieErr, sectionStart,
-                                 severity, checkInfo);
-        }
-        if (p1Inst.number_of_inst != 0)
-        {
-            sectionStart = sectionCount - p1Inst.number_of_inst;
+            if (instVec[idx].number_of_inst != 0)
+            {
+                dumpProcErrorSection(pciePtr, idx, instVec[idx], pcieErr,
+                                     sectionStart, severity, checkInfo);
 
-            dumpProcErrorSection(pciePtr, 0, p1Inst, pcieErr, sectionStart,
-                                 severity, checkInfo);
+                sectionStart += instVec[idx].number_of_inst;
+            }
         }
 
         amd::ras::util::cper::calculateSeverity(
@@ -1009,16 +1000,11 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
             pciePtr->PcieErrorData = nullptr;
         }
     }
-    if (errorPollingType != mcaErr)
+    for (size_t idx = 0; idx < instVec.size(); ++idx)
     {
-        if (p0Inst.number_of_inst != 0)
+        if (instVec[idx].number_of_inst != 0)
         {
-            configMgr.incrementCorrectableOtherError(socIndex[0],
-                                                     thresholdCount);
-        }
-        if (p1Inst.number_of_inst != 0)
-        {
-            configMgr.incrementCorrectableOtherError(socIndex[1],
+            configMgr.incrementCorrectableOtherError(socIndex[idx],
                                                      thresholdCount);
         }
     }
@@ -1059,28 +1045,31 @@ oob_status_t Manager::runTimeErrValidityCheck(
 
 void Manager::runTimeErrorInfoCheck(uint8_t errType, uint8_t reqType)
 {
-    struct ras_rt_valid_err_inst p0_inst, p1_inst;
+    std::vector<struct ras_rt_valid_err_inst> instVec(cpuCount);
+    std::vector<oob_status_t> retVec(cpuCount, OOB_MAILBOX_CMD_UNKNOWN);
     struct ras_rt_err_req_type rt_err_category;
-
-    oob_status_t p0_ret = OOB_MAILBOX_CMD_UNKNOWN;
-    oob_status_t p1_ret = OOB_MAILBOX_CMD_UNKNOWN;
 
     rt_err_category.err_type = errType;
     rt_err_category.req_type = reqType;
 
-    memset(&p0_inst, 0, sizeof(p0_inst));
-    memset(&p1_inst, 0, sizeof(p1_inst));
-
-    p0_ret = runTimeErrValidityCheck(socIndex[0], rt_err_category, &p0_inst);
-
-    if (cpuCount == 2)
+    for (size_t i = 0; i < cpuCount; ++i)
     {
-        p1_ret =
-            runTimeErrValidityCheck(socIndex[1], rt_err_category, &p1_inst);
+        memset(&instVec[i], 0, sizeof(instVec[i]));
+        retVec[i] =
+            runTimeErrValidityCheck(socIndex[i], rt_err_category, &instVec[i]);
     }
 
-    if (((p0_ret == OOB_SUCCESS) && (p0_inst.number_of_inst > 0)) ||
-        ((p1_ret == OOB_SUCCESS) && (p1_inst.number_of_inst > 0)))
+    bool hasErrors = false;
+    for (size_t i = 0; i < cpuCount; ++i)
+    {
+        if ((retVec[i] == OOB_SUCCESS) && (instVec[i].number_of_inst > 0))
+        {
+            hasErrors = true;
+            break;
+        }
+    }
+
+    if (hasErrors)
     {
         lg2::info(
             "Harvesting runtime error. Error Type: {ERRTYPE} Request Type: {REQTYPE}",
@@ -1092,19 +1081,18 @@ void Manager::runTimeErrorInfoCheck(uint8_t errType, uint8_t reqType)
             {
                 mcaPtr = std::make_shared<McaRuntimeCperRecord>();
             }
-            harvestRuntimeErrors(errType, p0_inst, p1_inst);
+            harvestRuntimeErrors(errType, instVec);
         }
         else if (errType == dramCeccErr)
         {
             if (reqType == pollingMode)
             {
-                if (p0_inst.number_of_inst != 0)
+                for (size_t i = 0; i < cpuCount; ++i)
                 {
-                    harvestDramCeccErrorCounters(p0_inst, 0);
-                }
-                if (p1_inst.number_of_inst != 0)
-                {
-                    harvestDramCeccErrorCounters(p1_inst, 1);
+                    if (instVec[i].number_of_inst != 0)
+                    {
+                        harvestDramCeccErrorCounters(instVec[i], i);
+                    }
                 }
             }
             else if (reqType == interruptMode)
@@ -1113,7 +1101,7 @@ void Manager::runTimeErrorInfoCheck(uint8_t errType, uint8_t reqType)
                 {
                     dramPtr = std::make_shared<McaRuntimeCperRecord>();
                 }
-                harvestRuntimeErrors(errType, p0_inst, p1_inst);
+                harvestRuntimeErrors(errType, instVec);
             }
         }
         else if (errType == pcieErr)
@@ -1122,7 +1110,7 @@ void Manager::runTimeErrorInfoCheck(uint8_t errType, uint8_t reqType)
             {
                 pciePtr = std::make_shared<PcieRuntimeCperRecord>();
             }
-            harvestRuntimeErrors(errType, p0_inst, p1_inst);
+            harvestRuntimeErrors(errType, instVec);
         }
     }
 }
@@ -2417,8 +2405,8 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
             std::get_if<std::map<std::string, std::string>>(&configSigId);
 
         if ((*aifsArmedFlag == true) &&
-            (amd::ras::util::cper::checkSignatureIdMatch(configSigIdList,
-                                                         rcd) == true))
+            (amd::ras::util::cper::checkSignatureIdMatch(configSigIdList, rcd,
+                                                         cpuCount) == true))
         {
             lg2::info("AIFS armed for the system");
 
@@ -2810,7 +2798,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
                 if ((*aifsArmedFlag == true) &&
                     (amd::ras::util::cper::checkSignatureIdMatch(
-                         configSigIdList, rcd) == true))
+                         configSigIdList, rcd, cpuCount) == true))
                 {
                     lg2::info("AIFS armed for the system");
 
