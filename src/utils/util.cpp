@@ -164,7 +164,7 @@ void triggerRsmrstReset()
         "xyz.openbmc_project.Control.Host.SOCReset", "SOCReset");
 
     sleep(1);
-    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+    sdbusplus::bus_t bus = sdbusplus::bus::new_default();
     std::string currentHostState = amd::ras::util::getProperty<std::string>(
         bus, "xyz.openbmc_project.State.Host",
         "/xyz/openbmc_project/state/host0", "xyz.openbmc_project.State.Host",
@@ -257,16 +257,16 @@ void rasRecoveryAction(std::string& node, uint8_t buf,
     }
 }
 
-template std::string getProperty(sdbusplus::bus::bus& bus, const char* service,
+template std::string getProperty(sdbusplus::bus_t& bus, const char* service,
                                  const char* path, const char* interface,
                                  const char* propertyName);
 
-template uint16_t getProperty(sdbusplus::bus::bus& bus, const char* service,
+template uint16_t getProperty(sdbusplus::bus_t& bus, const char* service,
                               const char* path, const char* interface,
                               const char* propertyName);
 
 template <typename ReturnType>
-ReturnType getProperty(sdbusplus::bus::bus& bus, const char* service,
+ReturnType getProperty(sdbusplus::bus_t& bus, const char* service,
                        const char* path, const char* interface,
                        const char* propertyName)
 {

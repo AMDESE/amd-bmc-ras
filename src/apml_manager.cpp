@@ -108,24 +108,25 @@ oob_status_t readOobRegister(uint8_t info, uint32_t reg, uint8_t* value)
 
 Manager::Manager(amd::ras::config::Manager& manager,
                  boost::asio::io_context& io, std::string& node) :
-    amd::ras::Manager(manager, node), progId(1), recordId(1), watchdogTimerCounter(0),
-    io(io), apmlInitialized(false), platformInitialized(false),
-    runtimeErrPollingSupported(false), McaErrorPollingEvent(nullptr),
-    DramCeccErrorPollingEvent(nullptr), PcieAerErrorPollingEvent(nullptr),
-    mcaErrorHarvestMtx(), dramErrorHarvestMtx(), pcieErrorHarvestMtx()
+    amd::ras::Manager(manager, node), progId(1), recordId(1),
+    watchdogTimerCounter(0), io(io), apmlInitialized(false),
+    platformInitialized(false), runtimeErrPollingSupported(false),
+    McaErrorPollingEvent(nullptr), DramCeccErrorPollingEvent(nullptr),
+    PcieAerErrorPollingEvent(nullptr), mcaErrorHarvestMtx(),
+    dramErrorHarvestMtx(), pcieErrorHarvestMtx()
 {}
 
 void Manager::currentHostStateMonitor()
 {
-    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+    sdbusplus::bus_t bus = sdbusplus::bus::new_default();
     boost::system::error_code ec;
 
-    static auto match = sdbusplus::bus::match::match(
+    static auto match = sdbusplus::bus::match_t(
         bus,
         "type='signal',member='PropertiesChanged', "
         "interface='org.freedesktop.DBus.Properties', "
         "arg0='xyz.openbmc_project.State.Host'",
-        [this](sdbusplus::message::message& message) {
+        [this](sdbusplus::message_t& message) {
             oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
             std::string intfName;
             std::map<std::string, std::variant<std::string>> properties;
@@ -428,15 +429,15 @@ void Manager::init()
 
     platformInitialize();
 
-    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+    sdbusplus::bus_t bus = sdbusplus::bus::new_default();
     boost::system::error_code ec;
 
-    static auto match = sdbusplus::bus::match::match(
+    static auto match = sdbusplus::bus::match_t(
         bus,
         "type='signal',member='PropertiesChanged', "
         "interface='org.freedesktop.DBus.Properties', "
         "arg0='xyz.openbmc_project.State.Watchdog'",
-        [this](sdbusplus::message::message& message) {
+        [this](sdbusplus::message_t& message) {
             std::string intfName;
             std::map<std::string, std::variant<bool>> properties;
 
@@ -466,7 +467,7 @@ void Manager::init()
 
             if (*currentTimerEnable == false)
             {
-                sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+                sdbusplus::bus_t bus = sdbusplus::bus::new_default();
                 std::string currentTimerUse =
                     amd::ras::util::getProperty<std::string>(
                         bus, "xyz.openbmc_project.Watchdog",
@@ -523,7 +524,8 @@ void Manager::configure()
     std::ifstream jsonFile(gpioConfigFile);
     if (!jsonFile.is_open())
     {
-        throw std::runtime_error("Failed to open GPIO config file: " + gpioConfigFile);
+        throw std::runtime_error(
+            "Failed to open GPIO config file: " + gpioConfigFile);
     }
 
     nlohmann::json config;
@@ -2577,7 +2579,7 @@ void Manager::harvestDramCeccErrorCounters(struct ras_rt_valid_err_inst inst,
             std::string objectPath =
                 "/xyz/openbmc_project/inventory/Memory/" + rootErrStatus;
 
-            sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+            sdbusplus::bus_t bus = sdbusplus::bus::new_default();
             uint16_t correctableErrorCount =
                 amd::ras::util::getProperty<uint16_t>(
                     bus, "xyz.openbmc_project.PCIe", objectPath.c_str(),

@@ -94,7 +94,7 @@ void Manager::getCpuSocketInfo()
 
     if (*uCodeVersionFlag == true)
     {
-        sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+        sdbusplus::bus_t bus = sdbusplus::bus::new_default();
 
         for (size_t i = 0; i < cpuCount; i++)
         {
@@ -117,7 +117,7 @@ void Manager::getCpuSocketInfo()
         configMgr.getAttribute("HarvestPPIN");
     bool* harvestPpinFlag = std::get_if<bool>(&harvestPpin);
 
-    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+    sdbusplus::bus_t bus = sdbusplus::bus::new_default();
 
     if (*harvestPpinFlag == true)
     {

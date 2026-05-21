@@ -120,8 +120,8 @@ void rasRecoveryAction(std::string&, uint8_t, const std::string*,
  */
 
 template <typename ReturnType>
-ReturnType getProperty(sdbusplus::bus::bus&, const char*, const char*,
-                       const char*, const char*);
+ReturnType getProperty(sdbusplus::bus_t&, const char*, const char*, const char*,
+                       const char*);
 
 /** @brief Posts a Redfish event to the BMC logging service.
  *
