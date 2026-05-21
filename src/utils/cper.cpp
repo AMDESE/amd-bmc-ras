@@ -608,8 +608,10 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
 
             data->SectionDescriptor[i].Severity = singleBit; // 1 = Fatal
 
+            std::memset(data->SectionDescriptor[i].FruString, 0, 20);
             data->SectionDescriptor[i].FruString[0] = 'P';
             data->SectionDescriptor[i].FruString[1] = '0' + i;
+            data->SectionDescriptor[i].FruString[2] = '\0';
         }
         else if ((errorType == runtimeMcaErr) || (errorType == runtimeDramErr))
         {
