@@ -276,6 +276,7 @@ void Manager::handleFchError(uint8_t socNum)
 
 void Manager::cleanupFatalCperRecord()
 {
+    fatalDescriptorsInitialized = false;
     if (rcd != nullptr)
     {
         if (rcd->SectionDescriptor != nullptr)
@@ -310,10 +311,14 @@ void Manager::initFatalCperRecord(uint16_t sectionCount)
                     sectionCount * sizeof(EFI_AMD_FATAL_ERROR_DATA));
     }
 
-    amd::ras::util::cper::dumpHeader(rcd, sectionCount, errorSeverity, fatalErr,
-                                     boardId, recordId);
-    amd::ras::util::cper::dumpErrorDescriptor(rcd, sectionCount, fatalErr,
-                                              &errorSeverity, progId);
+    if (!fatalDescriptorsInitialized)
+    {
+        amd::ras::util::cper::dumpHeader(rcd, sectionCount, errorSeverity,
+                                         fatalErr, boardId, recordId);
+        amd::ras::util::cper::dumpErrorDescriptor(rcd, sectionCount, fatalErr,
+                                                  &errorSeverity, progId);
+        fatalDescriptorsInitialized = true;
+    }
 }
 
 void Manager::processMcaBankSignatures(uint8_t socNum, uint16_t numBanks)

@@ -94,6 +94,7 @@ class Manager
     std::vector<size_t> whModels;
     std::vector<uint8_t> blockId;
     std::mutex harvestMutex;
+    bool fatalDescriptorsInitialized = false;
 
     /** @brief Get the CPU socket information.
      *
