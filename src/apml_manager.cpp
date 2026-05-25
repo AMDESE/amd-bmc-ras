@@ -1573,8 +1573,7 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
     std::memset(coreDebugDumpPtr->DebugDumpSection, 0,
                 sectionCount * sizeof(CoreDebugDumpSection));
 
-    /* Informational severity = 3 */
-    uint32_t errorSeverity = 3;
+    uint32_t errorSeverity = amd::ras::util::cper::sevInformational;
     amd::ras::util::cper::dumpHeader(coreDebugDumpPtr, sectionCount,
                                      errorSeverity, coreDebugDumpErr, boardId,
                                      recordId);
@@ -1582,7 +1581,7 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
     uint32_t* severity = new uint32_t[sectionCount];
     for (uint16_t i = 0; i < sectionCount; i++)
     {
-        severity[i] = 3; // Informational
+        severity[i] = amd::ras::util::cper::sevInformational;
     }
     amd::ras::util::cper::dumpErrorDescriptor(
         coreDebugDumpPtr, sectionCount, coreDebugDumpErr, severity, progId);
