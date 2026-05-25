@@ -432,14 +432,15 @@ bool checkSignatureIdMatch(std::map<std::string, std::string>* configSigIdList,
 }
 
 /*The function returns the highest severity out of all Section Severity for CPER
-  header Severity Order = Fatal > non-fatal uncorrected > corrected*/
+    header Severity Order = Fatal > non-fatal uncorrected > corrected >
+    informational*/
 bool calculateSeverity(uint32_t* severity, uint16_t sectionCount,
                        uint32_t* highestSeverity,
                        const std::string_view& errorType)
 {
     bool rc = true;
 
-    *highestSeverity = sevNonFatalCorrected;
+    *highestSeverity = sevInformational;
 
     for (size_t i = 0; i < sectionCount; i++)
     {
@@ -461,6 +462,10 @@ bool calculateSeverity(uint32_t* severity, uint16_t sectionCount,
         {
             *highestSeverity = sevNonFatalUncorrected;
             break;
+        }
+        else if (severity[i] == sevNonFatalCorrected)
+        {
+            *highestSeverity = sevNonFatalCorrected;
         }
     }
     return rc;
@@ -511,7 +516,8 @@ void dumpHeader(const std::shared_ptr<PtrType>& data, uint16_t sectionCount,
     /*Number of valid sections associated with the record*/
     data->Header.SectionCount = sectionCount;
 
-    /*0 - Non-fatal uncorrected ; 1 - Fatal ; 2 - Corrected*/
+    /*0 - Non-fatal uncorrected ; 1 - Fatal ; 2 - Corrected ;
+        3 - Informational*/
     data->Header.ErrorSeverity = errorSeverity;
 
     /*Bit 0 = 1 -> PlatformID field contains valid info
@@ -673,8 +679,7 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
             memcpy(&data->SectionDescriptor[i].SectionType,
                    &gEfiCoreDebugDumpSectionGuid, sizeof(EFI_GUID));
 
-            /* Informational severity = 3 */
-            data->SectionDescriptor[i].Severity = 3;
+            data->SectionDescriptor[i].Severity = sevInformational;
 
             std::strncpy(data->SectionDescriptor[i].FruString, "CoreDebugDump",
                          nineteen);

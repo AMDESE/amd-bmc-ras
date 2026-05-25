@@ -19,6 +19,7 @@ namespace cper
 
 constexpr uint8_t sevNonFatalUncorrected = 0;
 constexpr uint8_t sevNonFatalCorrected = 2;
+constexpr uint8_t sevInformational = 3;
 
 constexpr uint8_t cperValidPlatformId = 0x1;
 constexpr uint8_t cperValidTimestamp = 0x2;
@@ -228,7 +229,8 @@ bool checkSignatureIdMatch(std::map<std::string, std::string>*,
  *
  *  @details Evaluates the severity levels of different sections and returns the
  * highest severity. The severity order is: Fatal > non-fatal uncorrected >
- * corrected. Logs an error if a fatal severity is found in a runtime CPER.
+ * corrected > informational. Logs an error if a fatal severity is found in a
+ * non-PCIe runtime CPER.
  *
  *  @param[in] severity - Pointer to an array of severity values.
  *  @param[in] sectionCount - The number of sections to evaluate.
