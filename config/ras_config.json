@@ -103,7 +103,7 @@
         {
             "DramCeccErrThresholdCnt": {
                 "Description": "Error threshold count for DRAM ECC correctable errors",
-                "Value": 2
+                "Value": 1
             }
         },
         {
@@ -115,7 +115,7 @@
         {
             "McaThresholdEn": {
                 "Description": "If this field is true, error thresholding for MCA errors will be enabled",
-                "Value": false
+                "Value": true
             }
         },
         {
