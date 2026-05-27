@@ -95,10 +95,6 @@ constexpr size_t blockId25 = 25;
 constexpr uint16_t coreMcaHardwareId = 0xb0;
 constexpr size_t coresPerCcd = 32;
 constexpr size_t maxCoreIndex = 256;
-constexpr uint32_t rootErrStatusOffset = 52;
-constexpr uint32_t fatalErrMsgRcvd = (1 << 6);
-constexpr uint32_t nonfatalErrMsgRcvd = (1 << 5);
-constexpr uint32_t errCorrRcvd = (1 << 0);
 
 void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
 {
@@ -3519,7 +3515,7 @@ void Manager::dumpProcErrorSection(
                     dumpIndex++;
                 }
 
-                if (dataIn.offset == rootErrStatusOffset)
+                if (dataIn.offset == 0)
                 {
                     rootErrStatus = dataOut;
                     continue;
@@ -3585,18 +3581,7 @@ void Manager::dumpProcErrorSection(
         }
         else if (category == 2) // PCIE error
         {
-            if (rootErrStatus & fatalErrMsgRcvd)
-            {
-                Severity[section] = 1; // Fatal
-            }
-            else if (rootErrStatus & nonfatalErrMsgRcvd)
-            {
-                Severity[section] = 0; // Non-fatal uncorrected
-            }
-            else if (rootErrStatus & errCorrRcvd)
-            {
-                Severity[section] = 2; // Corrected
-            }
+            Severity[section] = rootErrStatus & 0xFF;
         }
         n++;
         section++;
