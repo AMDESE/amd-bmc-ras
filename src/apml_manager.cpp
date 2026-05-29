@@ -856,15 +856,19 @@ void Manager::harvestRuntimeErrors(
                                            objectServer, systemBus, node);
         amd::ras::util::cper::updateIndexFile(errCount, node);
 
-        // Per-core CPU error counting for runtime MCA errors
-        if (p0Inst.number_of_inst != 0)
+        // Per-socket CPU error counting for runtime MCA errors.
+        // Sections were packed in socket order, so walk the same layout here.
+        uint16_t socketSectionStart = 0;
+        for (size_t idx = 0; idx < instVec.size(); ++idx)
         {
-            countRuntimeMcaErrors(socIndex[0], 0, p0Inst.number_of_inst);
-        }
-        if (p1Inst.number_of_inst != 0)
-        {
-            uint16_t p1Start = sectionCount - p1Inst.number_of_inst;
-            countRuntimeMcaErrors(socIndex[1], p1Start, sectionCount);
+            if (instVec[idx].number_of_inst != 0)
+            {
+                uint16_t socketSectionEnd =
+                    socketSectionStart + instVec[idx].number_of_inst;
+                countRuntimeMcaErrors(socIndex[idx], socketSectionStart,
+                                      socketSectionEnd);
+                socketSectionStart = socketSectionEnd;
+            }
         }
 
         thresholdCount = configMgr.getThresholdCount("McaErrThresholdEnable",
