@@ -139,7 +139,7 @@
         {
             "PcieAerThresholdEn": {
                 "Description": "If this field is true, error thresholding for PCIE AER errors will be enabled",
-                "Value": false
+                "Value": true
             }
         },
         {
@@ -152,6 +152,48 @@
             "PcieAerErrThresholdCnt": {
                 "Description": "Error threshold count for PCIE AER errors",
                 "Value": 1
+            }
+        },
+        {
+            "PostCompleteMonitorEn": {
+                "Description": "Enable post-complete monitoring for reapplying RAS configuration",
+                "Value": true
+            }
+        },
+        {
+            "PostCompleteMonitorI2CBus": {
+                "Description": "I2C bus used to read the post-complete status register",
+                "Value": 6
+            }
+        },
+        {
+            "PostCompleteMonitorDeviceAddress": {
+                "Description": "CPLD I2C device address for the post-complete status register",
+                "Value": 32
+            }
+        },
+        {
+            "PostCompleteMonitorRegister": {
+                "Description": "CPLD register offset that carries the post-complete bit",
+                "Value": 70
+            }
+        },
+        {
+            "PostCompleteMonitorBit": {
+                "Description": "Bit position of the post-complete signal within the register",
+                "Value": 0
+            }
+        },
+        {
+            "PostCompleteMonitorActiveLow": {
+                "Description": "Whether the monitored bit is active-low",
+                "Value": true
+            }
+        },
+        {
+            "PostCompleteMonitorPollPeriodSec": {
+                "Description": "Polling interval in seconds for the post-complete monitor",
+                "Value": 2
             }
         }
     ]

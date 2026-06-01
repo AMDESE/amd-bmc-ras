@@ -17,6 +17,18 @@ namespace ras
 {
 namespace apml
 {
+struct PostCompleteMonitorConfig
+{
+  bool enabled{false};
+  std::string name;
+  int64_t i2cBus{0};
+  int64_t i2cAddress{0};
+  int64_t registerOffset{0};
+  uint8_t bit{0};
+  bool activeLow{true};
+  int64_t pollPeriodSec{2};
+};
+
 /** @brief Manages RAS (Reliability, Availability, and Serviceability)
  * operations for APML.
  *
@@ -75,10 +87,14 @@ class Manager : public amd::ras::Manager
     bool apmlInitialized;
     bool platformInitialized;
     bool runtimeErrPollingSupported;
+    bool postCompleteStateInitialized;
+    bool postCompleteLastState;
     std::vector<bool> cpuAlertProcessed;
     boost::asio::steady_timer* McaErrorPollingEvent;
     boost::asio::steady_timer* DramCeccErrorPollingEvent;
     boost::asio::steady_timer* PcieAerErrorPollingEvent;
+    boost::asio::steady_timer* PostCompletePollingEvent;
+    PostCompleteMonitorConfig postCompleteMonitorConfig;
     std::mutex harvestMutex;
     std::mutex mcaErrorHarvestMtx;
     std::mutex dramErrorHarvestMtx;
@@ -203,6 +219,18 @@ class Manager : public amd::ras::Manager
      *  @param[in] socNum - Socket number of the processor.
      */
     void clearSbrmiAlertMask(uint8_t socNum);
+
+    /** @brief Load the CPLD post-complete monitor mapping from JSON.
+     */
+    void loadPostCompleteMonitorConfig();
+
+    /** @brief Poll the configured post-complete register and reapply RAS config.
+     */
+    void postCompleteMonitorHandler();
+
+    /** @brief Read the configured post-complete state from CPLD/I2C.
+     */
+    bool readPostCompleteMonitorState(bool* postCompleteState);
 
     /** @brief Monitors the current host power state.
      *
