@@ -8,6 +8,7 @@
 #include <phosphor-logging/lg2.hpp>
 #include <phosphor-logging/log.hpp>
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <regex>
@@ -399,39 +400,38 @@ bool checkSignatureIdMatch(std::map<std::string, std::string>* configSigIdList,
                            const std::shared_ptr<FatalCperRecord>& rcd,
                            size_t cpuCount)
 {
-    bool ret = false;
-    size_t socNum = 0;
-    std::vector<std::array<uint32_t, 8>> tempVar(cpuCount);
-
-    for (socNum = 0; socNum < cpuCount; socNum++)
+    if ((configSigIdList == nullptr) || (rcd == nullptr) ||
+        (rcd->ErrorRecord == nullptr))
     {
-        std::memcpy(tempVar[socNum].data(),
-                    rcd->ErrorRecord[socNum].SignatureID,
-                    sizeof(tempVar[socNum]));
+        return false;
     }
 
-    for (socNum = 0; socNum < cpuCount; socNum++)
+    // Fatal CPER section indices map to physical socket IDs. In single-socket
+    // host2 layouts, valid data may exist at section index 1 while cpuCount is
+    // 1, so scan all available sections to avoid missing the signature.
+    const size_t sectionCount =
+        std::max(cpuCount, static_cast<size_t>(rcd->Header.SectionCount));
+    std::vector<std::array<uint32_t, 8>> signatures(sectionCount);
+
+    for (size_t section = 0; section < sectionCount; section++)
     {
-        bool equal = false;
+        std::memcpy(signatures[section].data(),
+                    rcd->ErrorRecord[section].SignatureID,
+                    sizeof(signatures[section]));
+
         for (const auto& pair : *configSigIdList)
         {
-            bool equal = amd::ras::util::compareBitwiseAnd(
-                tempVar[socNum].data(), pair.second);
-
-            if (equal == true)
+            if (amd::ras::util::compareBitwiseAnd(signatures[section].data(),
+                                                  pair.second))
             {
                 lg2::info(
-                    "Signature ID matched with the config ile signature ID list\n");
-                ret = true;
-                break;
+                    "Signature ID matched with the config file signature ID list");
+                return true;
             }
         }
-        if (equal == true)
-        {
-            break;
-        }
     }
-    return ret;
+
+    return false;
 }
 
 /*The function returns the highest severity out of all Section Severity for CPER
