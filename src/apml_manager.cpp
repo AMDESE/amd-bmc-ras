@@ -680,8 +680,8 @@ void Manager::alertSrcHandler(struct apml_udev_monitor* udev_mon,
     ret = monitor_ras_alert(udev_mon->mon, block, &soc_num, &src);
     if (ret == OOB_SUCCESS)
     {
-        lg2::debug("APML alert received from socket {SOC} with source {SRC}", "SOC",
-                   soc_num, "SRC", src);
+        lg2::debug("APML alert received from socket {SOC} with source {SRC}",
+                   "SOC", soc_num, "SRC", src);
         if (rcd == nullptr)
         {
             rcd = std::make_shared<FatalCperRecord>();
@@ -2051,13 +2051,12 @@ bool Manager::checkIfCPUAlertsProcessed()
 void Manager::mergeAutonomousTraceData(const std::string& fullPath)
 {
     std::string tracePropName = (node == secondNodeId)
-                                ? "AutonomousSecondNodeFilePath"
-                                : "AutonomousFilePath";
+                                    ? "AutonomousSecondNodeFilePath"
+                                    : "AutonomousFilePath";
     lg2::info("Current CPER file created: {FILE}", "FILE", fullPath);
     lg2::info("Attempting to merge autonomous MP trace data from "
               "amd-traces service using property: {PROP} for node {NODE}",
-              "PROP", tracePropName,
-              "NODE", node);
+              "PROP", tracePropName, "NODE", node);
     // Merge autonomous MP trace data from amd-traces service.
     // amd-traces sets tracePropName property to "PENDING" at start,
     // then to the file path on success or "" on error.
@@ -2077,27 +2076,22 @@ void Manager::mergeAutonomousTraceData(const std::string& fullPath)
     // --- Step 1: Pre-check property value ---
     try
     {
-        autonomousFile =
-            amd::ras::util::getProperty<std::string>(
-                traceBus, "com.amd.Traces",
-                "/com/amd/Traces",
-                "com.amd.Traces.Tbai",
-                tracePropName.c_str());
+        autonomousFile = amd::ras::util::getProperty<std::string>(
+            traceBus, "com.amd.Traces", "/com/amd/Traces",
+            "com.amd.Traces.Tbai", tracePropName.c_str());
     }
     catch (const std::exception& e)
     {
         lg2::error("Failed to read {PROP} "
                    "property: {ERR}",
-                   "PROP", tracePropName,
-                   "ERR", e.what());
+                   "PROP", tracePropName, "ERR", e.what());
     }
 
     if (!autonomousFile.empty() && autonomousFile != "PENDING")
     {
         lg2::info("{PROP} already available: "
                   "{FILE}, merging directly",
-                  "PROP", tracePropName,
-                  "FILE", autonomousFile);
+                  "PROP", tracePropName, "FILE", autonomousFile);
         amd::ras::util::cper::mergeFile(autonomousFile, fullPath);
         merged = true;
     }
@@ -2107,8 +2101,7 @@ void Manager::mergeAutonomousTraceData(const std::string& fullPath)
     {
         lg2::info("{PROP} is '{VAL}', "
                   "waiting for signal...",
-                  "PROP", tracePropName,
-                  "VAL", autonomousFile);
+                  "PROP", tracePropName, "VAL", autonomousFile);
 
         constexpr int maxTimeoutSec = 120;
         constexpr int pollIntervalSec = 2;
@@ -2121,11 +2114,10 @@ void Manager::mergeAutonomousTraceData(const std::string& fullPath)
             "interface='org.freedesktop.DBus.Properties',"
             "path='/com/amd/Traces',"
             "arg0='com.amd.Traces.Tbai'",
-            [&autonomousFile, &signalReceived, &tracePropName](
-                sdbusplus::message::message& msg) {
+            [&autonomousFile, &signalReceived,
+             &tracePropName](sdbusplus::message::message& msg) {
                 std::string intfName;
-                std::map<std::string,
-                         std::variant<std::string>> changedProps;
+                std::map<std::string, std::variant<std::string>> changedProps;
                 try
                 {
                     msg.read(intfName, changedProps);
@@ -2134,15 +2126,15 @@ void Manager::mergeAutonomousTraceData(const std::string& fullPath)
                 {
                     lg2::error("Failed to read "
                                "PropertiesChanged signal: "
-                               "{ERR}", "ERR", e.what());
+                               "{ERR}",
+                               "ERR", e.what());
                     return;
                 }
 
                 auto it = changedProps.find(tracePropName);
                 if (it != changedProps.end())
                 {
-                    auto* val = std::get_if<std::string>(
-                        &(it->second));
+                    auto* val = std::get_if<std::string>(&(it->second));
                     if (val && *val != "PENDING")
                     {
                         autonomousFile = *val;
@@ -2155,16 +2147,13 @@ void Manager::mergeAutonomousTraceData(const std::string& fullPath)
         while (!signalReceived && elapsed < maxTimeoutSec)
         {
             traceBus.process_discard();
-            traceBus.wait(
-                static_cast<uint64_t>(pollIntervalSec) *
-                1000000ULL);
+            traceBus.wait(static_cast<uint64_t>(pollIntervalSec) * 1000000ULL);
             elapsed += pollIntervalSec;
             if (!signalReceived)
             {
                 lg2::debug("Waiting for {PROP} "
                            "signal... ({SEC}s / {MAX}s)",
-                            "PROP", tracePropName,
-                           "SEC", elapsed, "MAX",
+                           "PROP", tracePropName, "SEC", elapsed, "MAX",
                            maxTimeoutSec);
             }
         }
@@ -2172,23 +2161,23 @@ void Manager::mergeAutonomousTraceData(const std::string& fullPath)
         if (signalReceived && !autonomousFile.empty())
         {
             lg2::info("Merging autonomous trace file: "
-                      "{FILE}", "FILE", autonomousFile);
-            amd::ras::util::cper::mergeFile(
-                autonomousFile, fullPath);
+                      "{FILE}",
+                      "FILE", autonomousFile);
+            amd::ras::util::cper::mergeFile(autonomousFile, fullPath);
         }
         else if (signalReceived && autonomousFile.empty())
         {
             lg2::warning("amd-traces reported error "
                          "({PROP} is empty), "
-                         "skipping merge","PROP", tracePropName);
+                         "skipping merge",
+                         "PROP", tracePropName);
         }
         else
         {
             lg2::warning("Timed out waiting for "
                          "{PROP} after {SEC}s, "
                          "skipping merge",
-                         "PROP", tracePropName,
-                         "SEC", maxTimeoutSec);
+                         "PROP", tracePropName, "SEC", maxTimeoutSec);
         }
     }
 }
@@ -2384,7 +2373,8 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
         amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount, node);
         if (src & fatalError)
         {
-            std::string currentCperFile = amd::ras::util::cper::findCperFilename(errCount, node);
+            std::string currentCperFile =
+                amd::ras::util::cper::findCperFilename(errCount, node);
             std::string fullPath = RAS_DIR + currentCperFile;
             mergeAutonomousTraceData(fullPath);
         }

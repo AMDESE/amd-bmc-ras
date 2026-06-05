@@ -800,7 +800,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
     }
 
     std::string cperFilePath = RAS_DIR + cperFileName;
-    lg2::info("Creating CPER file: {CPERFILE}", "CPERFILE", cperFilePath.c_str());
+    lg2::info("Creating CPER file: {CPERFILE}", "CPERFILE",
+              cperFilePath.c_str());
 
     file = fopen(cperFilePath.c_str(), "w");
 
@@ -923,8 +924,8 @@ void mergeFile(const std::string& sourceFile, const std::string& destFile)
     constexpr size_t descSz = sizeof(EFI_ERROR_SECTION_DESCRIPTOR);
 
     // Helper: read entire file into byte vector.
-    auto readBinary = [](const std::string& path,
-                         std::vector<uint8_t>& buf) -> bool {
+    auto readBinary =
+        [](const std::string& path, std::vector<uint8_t>& buf) -> bool {
         std::ifstream in(path, std::ios::binary);
         if (!in.is_open())
         {
@@ -955,7 +956,7 @@ void mergeFile(const std::string& sourceFile, const std::string& destFile)
         reinterpret_cast<EFI_COMMON_ERROR_RECORD_HEADER*>(srcBuf.data());
     uint16_t srcSecCount = srcHdr->SectionCount;
     lg2::info("mergeFile: source CPER has {SRC_CNT} sections", "SRC_CNT",
-             srcSecCount);
+              srcSecCount);
 
     if (srcSecCount == 0)
     {
@@ -969,8 +970,8 @@ void mergeFile(const std::string& sourceFile, const std::string& destFile)
         return;
     }
 
-    auto* srcDescs = reinterpret_cast<EFI_ERROR_SECTION_DESCRIPTOR*>(
-        srcBuf.data() + hdrSz);
+    auto* srcDescs =
+        reinterpret_cast<EFI_ERROR_SECTION_DESCRIPTOR*>(srcBuf.data() + hdrSz);
 
     // Collect each source section payload using SectionOffset/SectionLength.
     std::vector<std::vector<uint8_t>> srcPayloads(srcSecCount);
@@ -988,8 +989,7 @@ void mergeFile(const std::string& sourceFile, const std::string& destFile)
                 "IDX", s);
             return;
         }
-        srcPayloads[s].assign(srcBuf.begin() + off,
-                              srcBuf.begin() + off + len);
+        srcPayloads[s].assign(srcBuf.begin() + off, srcBuf.begin() + off + len);
     }
 
     auto* destHdr =
@@ -1000,7 +1000,8 @@ void mergeFile(const std::string& sourceFile, const std::string& destFile)
     lg2::info(
         "mergeFile: dest has {DST_CNT} sections, source has {SRC_CNT} sections, "
         "merging into a total of {NEW_CNT} sections",
-        "DST_CNT", destSecCount, "SRC_CNT", srcSecCount, "NEW_CNT", newSecCount);
+        "DST_CNT", destSecCount, "SRC_CNT", srcSecCount, "NEW_CNT",
+        newSecCount);
     size_t extraDescBytes = static_cast<size_t>(srcSecCount) * descSz;
     size_t extraPayloadBytes = 0;
     for (auto& p : srcPayloads)
@@ -1022,8 +1023,7 @@ void mergeFile(const std::string& sourceFile, const std::string& destFile)
     for (uint16_t d = 0; d < destSecCount; ++d)
     {
         EFI_ERROR_SECTION_DESCRIPTOR desc;
-        std::memcpy(&desc, destBuf.data() + destDescStart + d * descSz,
-                     descSz);
+        std::memcpy(&desc, destBuf.data() + destDescStart + d * descSz, descSz);
         desc.SectionOffset += static_cast<uint32_t>(extraDescBytes);
         std::memcpy(merged.data() + pos, &desc, descSz);
         pos += descSz;
@@ -1035,8 +1035,7 @@ void mergeFile(const std::string& sourceFile, const std::string& destFile)
     for (uint16_t s = 0; s < srcSecCount; ++s)
     {
         EFI_ERROR_SECTION_DESCRIPTOR desc = srcDescs[s];
-        desc.SectionOffset =
-            static_cast<uint32_t>(appendBase + payloadCursor);
+        desc.SectionOffset = static_cast<uint32_t>(appendBase + payloadCursor);
         std::memcpy(merged.data() + pos, &desc, descSz);
         pos += descSz;
         payloadCursor += srcPayloads[s].size();
@@ -1070,9 +1069,8 @@ void mergeFile(const std::string& sourceFile, const std::string& destFile)
         out.write(reinterpret_cast<const char*>(merged.data()),
                   static_cast<std::streamsize>(pos));
         out.close();
-        lg2::info(
-            "mergeFile: merged {SRC_CNT} sections from {SRC} into {DST}",
-            "SRC_CNT", srcSecCount, "SRC", sourceFile, "DST", destFile);
+        lg2::info("mergeFile: merged {SRC_CNT} sections from {SRC} into {DST}",
+                  "SRC_CNT", srcSecCount, "SRC", sourceFile, "DST", destFile);
     }
     else
     {

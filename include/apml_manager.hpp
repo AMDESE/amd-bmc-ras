@@ -281,7 +281,7 @@ class Manager : public amd::ras::Manager
      *
      *  @param[in] fullPath - Full path to the CPER file to merge into.
      */
-     void mergeAutonomousTraceData(const std::string& fullPath);
+    void mergeAutonomousTraceData(const std::string& fullPath);
 
     /** @brief Check the validity of MCA banks.
      *

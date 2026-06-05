@@ -292,10 +292,13 @@ void populateFruStringPspSynd(EFI_ERROR_SECTION_DESCRIPTOR& sectionDesc,
  * The exact merging behavior (e.g., append, overwrite, or custom logic)
  * depends on the implementation.
  *
- * @param[in] sourceFile The path to the source file whose contents are to be merged.
- * @param[inout] destFile The path to the destination file where the contents will be merged.
+ * @param[in] sourceFile The path to the source file whose contents are to be
+ * merged.
+ * @param[inout] destFile The path to the destination file where the contents
+ * will be merged.
  *
- * @throws std::runtime_error if there is an error reading the source file or writing to the destination file.
+ * @throws std::runtime_error if there is an error reading the source file or
+ * writing to the destination file.
  */
 void mergeFile(const std::string& sourceFile, const std::string& destFile);
 
