@@ -12,6 +12,7 @@ extern "C"
 #include "esmi_rmi.h"
 }
 
+#include <algorithm>
 #include <nlohmann/json.hpp>
 #include <phosphor-logging/lg2.hpp>
 #include <phosphor-logging/log.hpp>
@@ -410,8 +411,9 @@ void Manager::platformInitialize()
 
         if (ret == OOB_SUCCESS)
         {
-            if ((platInfo->family == whFamilyId) &&
-                (platInfo->model == whModel))
+            bool modelMatch = std::find(whModels.begin(), whModels.end(),
+                                        platInfo->model) != whModels.end();
+            if ((platInfo->family == whFamilyId) && modelMatch)
             {
                 currentHostStateMonitor();
                 for (size_t i : socIndex)
@@ -619,8 +621,20 @@ void Manager::init()
 
     if (jsonData.contains("Model"))
     {
-        std::string modelStr = jsonData["Model"];
-        whModel = std::stoi(modelStr, nullptr, 16);
+        const auto& modelVal = jsonData["Model"];
+        if (modelVal.is_array())
+        {
+            for (const auto& m : modelVal)
+            {
+                std::string modelStr = m.get<std::string>();
+                whModels.push_back(std::stoi(modelStr, nullptr, 16));
+            }
+        }
+        else
+        {
+            std::string modelStr = modelVal.get<std::string>();
+            whModels.push_back(std::stoi(modelStr, nullptr, 16));
+        }
     }
 
     if (jsonData.contains("FamilyID"))
