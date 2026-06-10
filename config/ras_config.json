@@ -139,7 +139,7 @@
         {
             "PcieAerThresholdEn": {
                 "Description": "If this field is true, error thresholding for PCIE AER errors will be enabled",
-                "Value": false
+                "Value": true
             }
         },
         {
