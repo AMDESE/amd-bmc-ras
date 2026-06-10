@@ -88,8 +88,6 @@ constexpr size_t mcaIpidHiOffset = 0x2C;
 constexpr uint32_t umcHardwareId = 0x96;
 constexpr size_t crashdump = 1;
 constexpr size_t shutdown = 2;
-constexpr size_t breakEvent = 3;
-constexpr uint16_t breakEventBanks = 1;
 constexpr size_t index28 = 28;
 constexpr size_t blockId25 = 25;
 constexpr uint16_t coreMcaHardwareId = 0xb0;
@@ -108,33 +106,6 @@ void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
     }
     lg2::debug("Write to register {REGISTER} is successful", "REGISTER",
                lg2::hex, reg);
-}
-
-oob_status_t readOobRegister(uint8_t info, uint32_t reg, uint8_t* value)
-{
-    oob_status_t ret;
-    uint16_t retryCount = 10;
-
-    while (retryCount > 0)
-    {
-        ret = esmi_oob_read_byte(info, reg, SBRMI, value);
-        if (ret == OOB_SUCCESS)
-        {
-            break;
-        }
-
-        lg2::error("Failed to read register: {REGISTER} Retrying\n", "REGISTER",
-                   lg2::hex, reg);
-        sleep(1);
-        retryCount--;
-    }
-    if (ret != OOB_SUCCESS)
-    {
-        lg2::error("Failed to read register: {REGISTER}\n", "REGISTER",
-                   lg2::hex, reg);
-    }
-
-    return ret;
 }
 
 Manager::Manager(amd::ras::config::Manager& manager,
@@ -1424,59 +1395,6 @@ void Manager::harvestDebugLogDump(
             }
         }
     }
-}
-
-void Manager::harvestBreakEvent(uint8_t socNum)
-{
-    constexpr uint16_t sectionCount = 2; // Standard section count is 2
-    uint32_t errorSeverity = 1;          // Error severity for fatal error is 1
-    uint8_t baseReg = 0x80;
-    int regCount = 8;
-    uint8_t buff;
-    oob_status_t ret;
-
-    if (rcd->SectionDescriptor == nullptr)
-    {
-        rcd->SectionDescriptor = new EFI_ERROR_SECTION_DESCRIPTOR[sectionCount];
-        std::memset(rcd->SectionDescriptor, 0,
-                    sectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR));
-    }
-
-    if (rcd->ErrorRecord == nullptr)
-    {
-        rcd->ErrorRecord = new EFI_AMD_FATAL_ERROR_DATA[sectionCount];
-        std::memset(rcd->ErrorRecord, 0,
-                    sectionCount * sizeof(EFI_AMD_FATAL_ERROR_DATA));
-    }
-
-    amd::ras::util::cper::dumpHeader(rcd, sectionCount, errorSeverity, fatalErr,
-                                     boardId, recordId);
-    amd::ras::util::cper::dumpErrorDescriptor(rcd, sectionCount, fatalErr,
-                                              &errorSeverity, progId);
-    amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
-                                             breakEventBanks);
-    amd::ras::util::cper::dumpContext(rcd, breakEventBanks, 0, socNum, ppin,
-                                      uCode, breakEvent);
-    memcpy(rcd->SectionDescriptor[socNum].FruString, &socNum, sizeof(socNum));
-
-    for (int offset : std::views::iota(0, regCount))
-    {
-        ret = readOobRegister(socNum, baseReg + offset, &buff);
-        if (ret != OOB_SUCCESS)
-        {
-            lg2::error("Socket {SOC}: Failed to read register: {REGISTER}\n",
-                       "SOC", socNum, "REGISTER", lg2::hex, baseReg + offset);
-            rcd->ErrorRecord[socNum].CrashDumpData[0].McaData[offset] = badData;
-            continue;
-        }
-        rcd->ErrorRecord[socNum].CrashDumpData[0].McaData[offset] = buff;
-
-        lg2::debug("Register {REG}: Read Value: {VAL}\n", "REG", lg2::hex,
-                   baseReg + offset, "VAL", lg2::hex, buff);
-    }
-
-    constexpr uint8_t crashDataSize = 32;
-    rcd->ErrorRecord[socNum].RegisterArraySize = crashDataSize;
 }
 
 void Manager::harvestX86ExceptionData(uint8_t socNum)
