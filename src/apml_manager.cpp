@@ -464,6 +464,10 @@ void Manager::platformInitialize()
             lg2::info("Setting PCIe Error threshold");
 
             setPcieErrThreshold();
+
+            lg2::info("Setting fatal harvest delay override");
+
+            setFatalHarvestDelay();
         }
     }
 }
@@ -717,6 +721,9 @@ void Manager::init()
 
                         lg2::info("Setting PCIE Error threshold");
                         setPcieErrThreshold();
+
+                        lg2::info("Setting fatal harvest delay override");
+                        setFatalHarvestDelay();
                     }
                 }
             }
@@ -2339,6 +2346,10 @@ void Manager::runTimeErrorPolling()
     else
     {
         setPcieErrThreshold();
+
+        lg2::info("Setting fatal harvest delay override");
+
+        setFatalHarvestDelay();
     }
 }
 
@@ -2480,6 +2491,58 @@ oob_status_t Manager::setRasErrThreshold(struct run_time_threshold th)
         }
     }
     return ret;
+}
+
+void Manager::setFatalHarvestDelay()
+{
+    amd::ras::config::Manager::AttributeValue fatalDelayEnVal =
+        configMgr.getAttribute("FatalHarvestDelayEn");
+    bool* fatalHarvestDelayEn = std::get_if<bool>(&fatalDelayEnVal);
+
+    if (fatalHarvestDelayEn == nullptr || *fatalHarvestDelayEn == false)
+    {
+        return;
+    }
+
+    amd::ras::config::Manager::AttributeValue fatalDelayMinsVal =
+        configMgr.getAttribute("FatalHarvestDelayMins");
+    int64_t* fatalHarvestDelayMins = std::get_if<int64_t>(&fatalDelayMinsVal);
+
+    if (fatalHarvestDelayMins == nullptr)
+    {
+        return;
+    }
+
+    struct ras_override_delay delayDataIn = {0, 0, 0};
+    bool ackResp = false;
+
+    int64_t mins = *fatalHarvestDelayMins;
+    if (mins >= 5 && mins <= 120)
+    {
+        delayDataIn.delay_val_override = static_cast<uint8_t>(mins);
+    }
+    else
+    {
+        delayDataIn.delay_val_override = 5; // minimum safe fallback
+    }
+
+    oob_status_t ret = override_delay_reset_on_sync_flood(
+        socIndex[0], delayDataIn, &ackResp);
+
+    if (ret != OOB_SUCCESS)
+    {
+        lg2::error(
+            "Failed to set fatal harvest delay override ({MINS} mins): {ERR}",
+            "MINS", static_cast<uint32_t>(delayDataIn.delay_val_override),
+            "ERR", ret);
+    }
+    else
+    {
+        lg2::info(
+            "Fatal harvest delay override set to {MINS} mins. "
+            "CPU will wait before resetting after syncflood.",
+            "MINS", static_cast<uint32_t>(delayDataIn.delay_val_override));
+    }
 }
 
 oob_status_t Manager::setPcieErrThreshold()
