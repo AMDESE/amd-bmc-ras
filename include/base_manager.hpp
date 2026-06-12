@@ -160,6 +160,15 @@ class Manager
      */
     void processMcaBankSignatures(uint8_t socNum, uint16_t numBanks);
 
+    /** @brief Harvest break-event data from OOB registers.
+     *
+     *  @details Builds a fatal CPER break-event section by reading
+     *  SBRMI OOB registers `0x80-0x87` for the specified socket.
+     *
+     *  @param[in] socNum - Socket number.
+     */
+    void harvestBreakEvent(uint8_t socNum);
+
     /** @brief Clean up the fatal CPER record.
      *
      *  @details Frees the SectionDescriptor and ErrorRecord arrays

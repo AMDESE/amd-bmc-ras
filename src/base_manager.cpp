@@ -3,7 +3,15 @@
 #include "utils/cper.hpp"
 #include "utils/util.hpp"
 
+extern "C"
+{
+#include "apml.h"
+#include "esmi_cpuid_msr.h"
+#include "linux/amd-apml.h"
+}
+
 #include <systemd/sd-journal.h>
+#include <unistd.h>
 
 #include <boost/asio/io_context.hpp>
 #include <nlohmann/json.hpp>
@@ -13,6 +21,9 @@
 #include <fstream>
 
 constexpr size_t base16 = 16;
+constexpr uint32_t badData = 0xBAADDA7A;
+constexpr size_t breakEventContext = 3;
+constexpr uint16_t breakEventBanks = 1;
 
 namespace amd
 {
@@ -385,6 +396,62 @@ void Manager::processMcaBankSignatures(uint8_t socNum, uint16_t numBanks)
                 mcaPspSynd2Lo, mcaPspSynd2Hi);
         }
     }
+}
+
+void Manager::harvestBreakEvent(uint8_t socNum)
+{
+    constexpr uint16_t sectionCount = 2;
+    constexpr uint8_t baseReg = 0x80;
+    constexpr size_t regCount = 8;
+
+    if (rcd == nullptr)
+    {
+        rcd = std::make_shared<FatalCperRecord>();
+    }
+
+    initFatalCperRecord(sectionCount);
+
+    amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
+                                             breakEventBanks);
+    amd::ras::util::cper::dumpContext(rcd, breakEventBanks, 0, socNum, ppin,
+                                      uCode, breakEventContext);
+    std::memcpy(rcd->SectionDescriptor[socNum].FruString, &socNum,
+                sizeof(socNum));
+
+    for (size_t offset = 0; offset < regCount; ++offset)
+    {
+        uint8_t regValue = 0;
+        const uint32_t reg = static_cast<uint32_t>(baseReg + offset);
+        oob_status_t ret = esmi_oob_read_byte(socNum, reg, SBRMI, &regValue);
+
+        if (ret != OOB_SUCCESS)
+        {
+            uint16_t retryCount = 10;
+            while (retryCount > 0)
+            {
+                ret = esmi_oob_read_byte(socNum, reg, SBRMI, &regValue);
+                if (ret == OOB_SUCCESS)
+                {
+                    break;
+                }
+                retryCount--;
+                sleep(1);
+            }
+        }
+
+        if (ret != OOB_SUCCESS)
+        {
+            lg2::error("Socket {SOC}: Failed to read register: {REGISTER}",
+                       "SOC", socNum, "REGISTER", lg2::hex, reg);
+            rcd->ErrorRecord[socNum].CrashDumpData[0].McaData[offset] = badData;
+            continue;
+        }
+
+        rcd->ErrorRecord[socNum].CrashDumpData[0].McaData[offset] = regValue;
+    }
+
+    // Keep break-event records aligned with existing APML/PLDM CPER format.
+    rcd->ErrorRecord[socNum].RegisterArraySize = 32;
 }
 
 } // namespace ras

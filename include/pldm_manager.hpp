@@ -3,9 +3,21 @@
 #include "base_manager.hpp"
 
 #include <boost/asio/deadline_timer.hpp>
+#include <boost/asio/posix/stream_descriptor.hpp>
+#include <gpiod.hpp>
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/object_server.hpp>
 #include <sdbusplus/bus/match.hpp>
+
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+extern "C"
+{
+#include "apml_alertl_uevent.h"
+}
 
 namespace amd
 {
@@ -98,6 +110,14 @@ class Manager : public amd::ras::Manager
     // D-Bus match rule for PLDM message poll events
     std::unique_ptr<sdbusplus::bus::match_t> pldmEventMatch;
 
+    // Alert reception mode for sysMgmtCtrlErr (UEVENT or GPIO)
+    std::string alertHandleMode;
+    std::vector<std::string> socketNames;
+    std::vector<gpiod::line> gpioLines;
+    std::vector<boost::asio::posix::stream_descriptor> gpioEventDescriptors;
+    std::vector<apml_udev_monitor> udevMonitors;
+    std::vector<std::unique_ptr<boost::asio::deadline_timer>> udevPollTimers;
+
     /** @brief Called when the host power state changes.
      *
      *  @details Performs PLDM-specific actions on host state transitions,
@@ -125,6 +145,29 @@ class Manager : public amd::ras::Manager
      *  @param[in] msg - The D-Bus message containing the PLDM event.
      */
     void handlePldmRasEvent(sdbusplus::message_t& msg);
+
+    /** @brief Read GPIO/UEVENT alert config for sysMgmtCtrlErr reception. */
+    void configureSysMgmtCtrlErrAlertHandling();
+
+    /** @brief Register GPIO/UEVENT handlers for sysMgmtCtrlErr reception. */
+    void registerSysMgmtCtrlErrAlertHandler();
+
+    /** @brief Poll UEVENT source for sysMgmtCtrlErr alerts. */
+    void pollSysMgmtCtrlErrUevent(size_t socketIdx);
+
+    /** @brief Configure one GPIO line watcher for sysMgmtCtrlErr alerts. */
+    void requestSysMgmtCtrlErrGPIOEvents(
+        const std::string& name, const std::function<void()>& handler,
+        gpiod::line& gpioLine,
+        boost::asio::posix::stream_descriptor& gpioEventDescriptor);
+
+    /** @brief Handle GPIO edge events for sysMgmtCtrlErr alerts. */
+    void handleSysMgmtCtrlErrGPIOEvent(
+        boost::asio::posix::stream_descriptor& alertEvent,
+        const gpiod::line& alertLine, size_t socketIdx);
+
+    /** @brief Clear SBRMI alert mask bits needed for alert delivery. */
+    void clearSbrmiAlertMask(uint8_t socNum);
 
     /** @brief Reads event data from a file descriptor.
      *
@@ -161,6 +204,16 @@ class Manager : public amd::ras::Manager
         const std::vector<uint32_t>& dataTransferHandles,
         const std::vector<uint32_t>& eventDataSizes, uint8_t socNum,
         size_t contextType);
+
+    /** @brief Handles PLDM sysMgmtCtrlErr (control fabric) errors.
+     *
+     *  @details Generates a fatal CPER record for control fabric errors,
+     *  updates error counters, exports the record, and applies the configured
+     *  recovery action.
+     *
+     *  @param[in] socNum - Socket number derived from terminus info.
+     */
+    void handleSysMgmtCtrlError(uint8_t socNum);
 
     /** @brief Extracts socket number from PLDM terminus name.
      *
