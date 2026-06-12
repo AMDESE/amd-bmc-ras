@@ -10,6 +10,7 @@ extern "C"
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/posix/stream_descriptor.hpp>
 #include <gpiod.hpp>
+#include <sdbusplus/asio/connection.hpp>
 
 namespace amd
 {
@@ -100,6 +101,7 @@ class Manager : public amd::ras::Manager
     std::mutex dramErrorHarvestMtx;
     std::mutex pcieErrorHarvestMtx;
     std::vector<gpiod::line> gpioLines;
+    std::shared_ptr<sdbusplus::asio::connection> conn;
 
     /**
      * @brief Requests GPIO events for hardware alert handling.
@@ -231,6 +233,14 @@ class Manager : public amd::ras::Manager
     /** @brief Read the configured post-complete state from CPLD/I2C.
      */
     bool readPostCompleteMonitorState(bool* postCompleteState);
+
+    /** @brief Proactively set the fatal harvest delay override in the CPU.
+     *
+     *  @details Arms the CPU's DelayResetOnSyncflood counter with the configured
+     *  value so the system waits before resetting after a fatal error, giving the
+     *  BMC time to collect MCA data
+     */
+    void setFatalHarvestDelay();
 
     /** @brief Monitors the current host power state.
      *

@@ -179,7 +179,8 @@ Manager::Manager(amd::ras::config::Manager& manager,
     McaErrorPollingEvent(nullptr), DramCeccErrorPollingEvent(nullptr),
     PcieAerErrorPollingEvent(nullptr), PostCompletePollingEvent(nullptr),
     mcaErrorHarvestMtx(),
-    dramErrorHarvestMtx(), pcieErrorHarvestMtx()
+    dramErrorHarvestMtx(), pcieErrorHarvestMtx(),
+    conn(std::make_shared<sdbusplus::asio::connection>(io))
 {}
 
 void Manager::loadPostCompleteMonitorConfig()
@@ -323,10 +324,8 @@ void Manager::postCompleteMonitorHandler()
 
 void Manager::currentHostStateMonitor()
 {
-    static auto bus = sdbusplus::bus::new_default();
-
     static auto match = sdbusplus::bus::match_t(
-        bus,
+        *conn,
         "type='signal',member='PropertiesChanged', "
         "interface='org.freedesktop.DBus.Properties', "
         "arg0='xyz.openbmc_project.State.Host'",
@@ -652,10 +651,8 @@ void Manager::init()
         postCompleteMonitorHandler();
     }
 
-    static auto bus = sdbusplus::bus::new_default();
-
     static auto match = sdbusplus::bus::match_t(
-        bus,
+        *conn,
         "type='signal',member='PropertiesChanged', "
         "interface='org.freedesktop.DBus.Properties', "
         "arg0='xyz.openbmc_project.State.Watchdog'",
