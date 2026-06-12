@@ -9,6 +9,8 @@ extern "C"
 {
 #include "esmi_cpuid_msr.h"
 #include "esmi_mailbox.h"
+#include "esmi_rmi.h"
+#include "linux/amd-apml.h"
 }
 
 #include <unistd.h>
@@ -19,6 +21,7 @@ extern "C"
 
 #include <cerrno>
 #include <cstring>
+#include <fstream>
 
 namespace amd
 {
@@ -28,6 +31,9 @@ namespace pldm
 {
 
 constexpr uint32_t badData = 0xBAADDA7A;
+constexpr uint8_t sysMgmtCtrlErr = 0x4;
+constexpr uint8_t cfError = 0x6;
+constexpr uint8_t sbrmiControlRegister = 0x1;
 
 Manager::Manager(amd::ras::config::Manager& manager,
                  sdbusplus::asio::object_server& objectServer,
@@ -77,6 +83,11 @@ void Manager::platformInitialize()
         {
             currentHostStateMonitor();
 
+            for (size_t i : socIndex)
+            {
+                clearSbrmiAlertMask(static_cast<uint8_t>(i));
+            }
+
             // TODO: Add support for runtime error polling for PLDM when the API
             // is available.
             runtimeErrPollingSupported = true;
@@ -94,6 +105,12 @@ void Manager::platformInitialize()
     else
     {
         pldmInitialized = true;
+
+        for (size_t i : socIndex)
+        {
+            clearSbrmiAlertMask(static_cast<uint8_t>(i));
+        }
+
         if (runtimeErrPollingSupported == true)
         {
             lg2::info("Setting MCA and DRAM OOB Config");
@@ -105,6 +122,48 @@ void Manager::platformInitialize()
             // PLDM when the API is available.
         }
     }
+}
+
+void Manager::clearSbrmiAlertMask(uint8_t socNum)
+{
+    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
+    uint8_t buffer = 0;
+    size_t retryCount = 10;
+
+    while (retryCount > 0)
+    {
+        ret = esmi_oob_read_byte(socNum, sbrmiControlRegister, SBRMI, &buffer);
+        if (ret == OOB_SUCCESS)
+        {
+            break;
+        }
+
+        lg2::error("Failed to read register: {REGISTER} Retrying", "REGISTER",
+                   lg2::hex, sbrmiControlRegister);
+        sleep(1);
+        retryCount--;
+    }
+
+    if (ret != OOB_SUCCESS)
+    {
+        lg2::error("Failed to read register: {REGISTER}", "REGISTER", lg2::hex,
+                   sbrmiControlRegister);
+        return;
+    }
+
+    // Match APML path: clear alert mask bits required for RAS alert delivery.
+    buffer = buffer & 0xBE;
+
+    ret = esmi_oob_write_byte(socNum, sbrmiControlRegister, SBRMI, buffer);
+    if (ret != OOB_SUCCESS)
+    {
+        lg2::error("Failed to write register: {REGISTER}", "REGISTER", lg2::hex,
+                   sbrmiControlRegister);
+        return;
+    }
+
+    lg2::debug("Write to register {REGISTER} is successful", "REGISTER",
+               lg2::hex, sbrmiControlRegister);
 }
 
 void Manager::init()
@@ -121,6 +180,7 @@ void Manager::init()
 void Manager::configure()
 {
     lg2::info("PLDM MANAGER CONFIGURE");
+    configureSysMgmtCtrlErrAlertHandling();
 }
 
 void Manager::registerEventHandler()
@@ -139,6 +199,254 @@ void Manager::registerEventHandler()
         [this](sdbusplus::message_t& msg) { handlePldmRasEvent(msg); });
 
     lg2::info("Registered PLDM RAS event signal monitor");
+
+    registerSysMgmtCtrlErrAlertHandler();
+}
+
+void Manager::configureSysMgmtCtrlErrAlertHandling()
+{
+    const std::string primaryPath =
+        "/var/lib/amd-bmc-ras/amd_ras_gpio_config" + node + ".json";
+    const std::string fallbackPath =
+        "/usr/share/amd-bmc-ras/amd_ras_gpio_config" + node + ".json";
+
+    std::ifstream jsonFile(primaryPath);
+    std::string cfgPath = primaryPath;
+
+    if (!jsonFile.is_open())
+    {
+        jsonFile.open(fallbackPath);
+        cfgPath = fallbackPath;
+    }
+
+    if (!jsonFile.is_open())
+    {
+        throw sdbusplus::xyz::openbmc_project::Common::File::Error::Open();
+    }
+
+    if (jsonFile.peek() == std::ifstream::traits_type::eof())
+    {
+        jsonFile.close();
+        lg2::error("GPIO config file is empty: {FILE}", "FILE", cfgPath);
+        throw std::runtime_error("GPIO config file is empty");
+    }
+
+    nlohmann::json config;
+    jsonFile >> config;
+    jsonFile.close();
+
+    alertHandleMode.clear();
+    socketNames.clear();
+
+    if (config.contains("Alert_Config") && config["Alert_Config"].is_array())
+    {
+        for (const auto& entry : config["Alert_Config"])
+        {
+            if (entry.contains("AlertHandle"))
+            {
+                const auto& alertCfg = entry["AlertHandle"];
+                if (alertCfg.contains("Value"))
+                {
+                    alertHandleMode = alertCfg["Value"].get<std::string>();
+                }
+            }
+
+            if (alertHandleMode == "GPIO" &&
+                entry.contains("GPIO_ALERT_LINES") &&
+                entry["GPIO_ALERT_LINES"].is_array())
+            {
+                socketNames =
+                    entry["GPIO_ALERT_LINES"].get<std::vector<std::string>>();
+            }
+        }
+    }
+
+    if (alertHandleMode != "UEVENT" && alertHandleMode != "GPIO")
+    {
+        throw std::runtime_error("Invalid mode of Alert handling");
+    }
+
+    if (alertHandleMode == "GPIO" && socketNames.size() < cpuCount)
+    {
+        throw std::runtime_error(
+            "Insufficient GPIO_ALERT_LINES entries in gpio_config.json");
+    }
+
+    lg2::info("PLDM sysMgmtCtrlErr alert mode: {MODE}", "MODE",
+              alertHandleMode);
+}
+
+void Manager::registerSysMgmtCtrlErrAlertHandler()
+{
+    if (alertHandleMode == "UEVENT")
+    {
+        udevMonitors.resize(cpuCount);
+        udevPollTimers.resize(cpuCount);
+
+        for (size_t i = 0; i < cpuCount; ++i)
+        {
+            apml_register_udev_monitor(&udevMonitors[i]);
+
+            if (!udevMonitors[i].udev || !udevMonitors[i].mon)
+            {
+                lg2::error(
+                    "Failed to initialize udev monitor for socket idx {IDX}",
+                    "IDX", i);
+                apml_unregister_udev_monitor(&udevMonitors[i]);
+                continue;
+            }
+
+            lg2::info(
+                "Registered UEVENT monitor for PLDM sysMgmtCtrlErr on socket idx {IDX}",
+                "IDX", i);
+            pollSysMgmtCtrlErrUevent(i);
+        }
+        return;
+    }
+
+    gpioLines.resize(cpuCount);
+    gpioEventDescriptors.reserve(cpuCount);
+
+    for (size_t i = 0; i < cpuCount; ++i)
+    {
+        gpioEventDescriptors.emplace_back(io);
+
+        requestSysMgmtCtrlErrGPIOEvents(
+            socketNames[i],
+            std::bind(&ras::pldm::Manager::handleSysMgmtCtrlErrGPIOEvent, this,
+                      std::ref(gpioEventDescriptors[i]), std::ref(gpioLines[i]),
+                      i),
+            gpioLines[i], gpioEventDescriptors[i]);
+    }
+}
+
+void Manager::pollSysMgmtCtrlErrUevent(size_t socketIdx)
+{
+    if (socketIdx >= udevMonitors.size() || socketIdx >= socIndex.size())
+    {
+        return;
+    }
+
+    uint8_t socNum = static_cast<uint8_t>(socIndex[socketIdx]);
+    uint32_t src = 0;
+    const bool block = false;
+    const oob_status_t ret =
+        monitor_ras_alert(udevMonitors[socketIdx].mon, block, &socNum, &src);
+
+    if (ret == OOB_SUCCESS)
+    {
+        lg2::info("PLDM UEVENT alert: soc={SOC}, src=0x{SRC}", "SOC", socNum,
+                  "SRC", lg2::hex, src);
+
+        if ((socNum == static_cast<uint8_t>(socIndex[socketIdx])) &&
+            (src & cfError) && (src & sysMgmtCtrlErr))
+        {
+            handleSysMgmtCtrlError(socNum);
+        }
+    }
+    else if (ret == OOB_FILE_ERROR || ret == OOB_INTERRUPTED)
+    {
+        lg2::error("PLDM UEVENT monitor error for socket idx {IDX}: {RET}",
+                   "IDX", socketIdx, "RET", ret);
+    }
+
+    udevPollTimers[socketIdx] = std::make_unique<boost::asio::deadline_timer>(
+        io, boost::posix_time::seconds(1));
+    udevPollTimers[socketIdx]->async_wait(
+        [this, socketIdx](const boost::system::error_code& ec) {
+            if (ec)
+            {
+                lg2::error("PLDM UEVENT polling timer error: {MSG}", "MSG",
+                           ec.message().c_str());
+                return;
+            }
+            pollSysMgmtCtrlErrUevent(socketIdx);
+        });
+}
+
+void Manager::requestSysMgmtCtrlErrGPIOEvents(
+    const std::string& name, const std::function<void()>& handler,
+    gpiod::line& gpioLine,
+    boost::asio::posix::stream_descriptor& gpioEventDescriptor)
+{
+    try
+    {
+        gpioLine = gpiod::find_line(name);
+        if (!gpioLine)
+        {
+            throw std::runtime_error("Failed to find GPIO line: " + name);
+        }
+
+        gpioLine.request({"RAS", gpiod::line_request::EVENT_BOTH_EDGES, 0});
+
+        const int gpioFd = gpioLine.event_get_fd();
+        if (gpioFd < 0)
+        {
+            throw std::runtime_error("Failed to get GPIO line fd: " + name);
+        }
+
+        gpioEventDescriptor.assign(gpioFd);
+        gpioEventDescriptor.async_wait(
+            boost::asio::posix::stream_descriptor::wait_read,
+            [handler](const boost::system::error_code& ec) {
+                if (ec)
+                {
+                    throw std::runtime_error(
+                        "GPIO wait error: " + ec.message());
+                }
+                handler();
+            });
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to register GPIO alert {LINE}: {ERROR}", "LINE",
+                   name, "ERROR", e.what());
+    }
+}
+
+void Manager::handleSysMgmtCtrlErrGPIOEvent(
+    boost::asio::posix::stream_descriptor& alertEvent,
+    const gpiod::line& alertLine, size_t socketIdx)
+{
+    const gpiod::line_event gpioLineEvent = alertLine.event_read();
+
+    if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
+    {
+        if (socketIdx < socIndex.size())
+        {
+            const uint8_t socNum = static_cast<uint8_t>(socIndex[socketIdx]);
+            uint8_t rasStatus = 0;
+
+            if (read_sbrmi_ras_status(socNum, &rasStatus) == OOB_SUCCESS)
+            {
+                lg2::info("PLDM GPIO alert: soc={SOC}, rasStatus=0x{STATUS}",
+                          "SOC", socNum, "STATUS", lg2::hex, rasStatus);
+
+                if ((rasStatus & cfError) && (rasStatus & sysMgmtCtrlErr))
+                {
+                    handleSysMgmtCtrlError(socNum);
+                }
+            }
+            else
+            {
+                lg2::error("Failed to read RAS status for socket {SOC}", "SOC",
+                           socNum);
+            }
+        }
+    }
+
+    alertEvent.async_wait(
+        boost::asio::posix::stream_descriptor::wait_read,
+        [this, alertLine, socketIdx, alertEventPtr = &alertEvent](
+            const boost::system::error_code& ec) mutable {
+            if (ec)
+            {
+                lg2::error("PLDM GPIO alert handler error: {ERROR}", "ERROR",
+                           ec.message().c_str());
+                return;
+            }
+            handleSysMgmtCtrlErrGPIOEvent(*alertEventPtr, alertLine, socketIdx);
+        });
 }
 
 void Manager::handlePldmRasEvent(sdbusplus::message_t& msg)
@@ -306,6 +614,47 @@ void Manager::handleFatalOrShutdownError(const std::vector<uint8_t>& eventData,
     std::string* systemRecovery = std::get_if<std::string>(&SystemRecoveryVal);
 
     amd::ras::util::rasRecoveryAction(node, rasStatusByte, systemRecovery,
+                                      resetSignal);
+
+    cleanupFatalCperRecord();
+}
+
+void Manager::handleSysMgmtCtrlError(uint8_t socNum)
+{
+    std::unique_lock lock(harvestMutex);
+
+    std::string rasErrMsg = "Fatal error detected in the control fabric. "
+                            "BMC may trigger a reset based on policy set. ";
+
+    sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
+                    "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
+                    "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+
+    if (rcd == nullptr)
+    {
+        rcd = std::make_shared<FatalCperRecord>();
+    }
+
+    harvestBreakEvent(socNum);
+
+    configMgr.incrementNoncorrectableOtherError(socNum);
+    configMgr.updateErrorCountDbus();
+    configMgr.saveErrorCounts();
+
+    amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount, node);
+    amd::ras::util::cper::exportToDBus(errCount, rcd->Header.TimeStamp,
+                                       objectServer, systemBus, node);
+    amd::ras::util::cper::updateIndexFile(errCount, node);
+
+    amd::ras::config::Manager::AttributeValue resetSignalVal =
+        configMgr.getAttribute("ResetSignalType");
+    std::string* resetSignal = std::get_if<std::string>(&resetSignalVal);
+
+    amd::ras::config::Manager::AttributeValue systemRecoveryVal =
+        configMgr.getAttribute("SystemRecoveryMode");
+    std::string* systemRecovery = std::get_if<std::string>(&systemRecoveryVal);
+
+    amd::ras::util::rasRecoveryAction(node, sysMgmtCtrlErr, systemRecovery,
                                       resetSignal);
 
     cleanupFatalCperRecord();

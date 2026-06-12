@@ -800,8 +800,6 @@ void createFile(const std::shared_ptr<PtrType>& data,
     }
 
     std::string cperFilePath = RAS_DIR + cperFileName;
-    lg2::info("Creating CPER file: {CPERFILE}", "CPERFILE",
-              cperFilePath.c_str());
 
     file = fopen(cperFilePath.c_str(), "w");
 
