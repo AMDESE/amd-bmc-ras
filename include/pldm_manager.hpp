@@ -35,6 +35,7 @@ constexpr uint16_t eventIdNonMcaCoreShutdown = 0x4C40;
 constexpr uint16_t eventIdMcaCoreShutdown = 0x4C41;
 
 /** @brief DataTransferHandle opcode in upper byte */
+constexpr uint8_t mcaDebugLogId = 32;
 constexpr uint8_t opcodeDbgLogDump = 0x5C;
 constexpr uint8_t opcodeDbgLogValidityCheck = 0x5B;
 constexpr uint8_t opcodeDbgLogDumpAlt = 0x62;
@@ -178,7 +179,7 @@ class Manager : public amd::ras::Manager
      *  @param[out] eventData - Buffer populated with the read data.
      *  @return true on success, false on read failure.
      */
-    bool readEventDataFromFd(int fd, uint16_t eventDataSize,
+    bool readEventDataFromFd(int fd, uint32_t eventDataSize,
                              std::vector<uint8_t>& eventData);
 
     /** @brief Handles fatal error or MCA core shutdown events via PLDM.
@@ -191,10 +192,18 @@ class Manager : public amd::ras::Manager
      *  @param[in] eventData - Raw event data from PMFW containing
      *                         MCA banks and debug log dump data.
      *  @param[in] socNum - Socket number derived from terminus info.
+     *  @param[in] dataTransferHandles - Array of data transfer handles,
+     *                                   each encoding opcode, DBG_LOG_ID,
+     *                                   and instance index.
+     *  @param[in] eventDataSizes - Array of data sizes (bytes) for each
+     *                              corresponding handle in eventData.
      *  @param[in] contextType - Error context (crashdump or shutdown).
      */
-    void handleFatalOrShutdownError(const std::vector<uint8_t>& eventData,
-                                    uint8_t socNum, size_t contextType);
+    void handleFatalOrShutdownError(
+        const std::vector<uint8_t>& eventData,
+        const std::vector<uint32_t>& dataTransferHandles,
+        const std::vector<uint32_t>& eventDataSizes, uint8_t socNum,
+        size_t contextType);
 
     /** @brief Handles PLDM sysMgmtCtrlErr (control fabric) errors.
      *
@@ -221,10 +230,16 @@ class Manager : public amd::ras::Manager
      *
      *  @param[in] eventData - Raw event data payload.
      *  @param[in] socNum - Socket number.
+     *  @param[in] dataTransferHandles - Array of data transfer handles
+     *                                   identifying each data segment.
+     *  @param[in] eventDataSizes - Array of data sizes (bytes) per handle.
      *  @param[in] contextType - Context type (crashdump or shutdown).
      */
-    void harvestMcaDataBanksOverPldm(const std::vector<uint8_t>& eventData,
-                                     uint8_t socNum, size_t contextType);
+    void harvestMcaDataBanksOverPldm(
+        const std::vector<uint8_t>& eventData,
+        const std::vector<uint32_t>& dataTransferHandles,
+        const std::vector<uint32_t>& eventDataSizes, uint8_t socNum,
+        size_t contextType);
 };
 
 } // namespace pldm

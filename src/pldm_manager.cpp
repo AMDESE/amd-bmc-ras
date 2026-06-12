@@ -457,14 +457,14 @@ void Manager::handlePldmRasEvent(sdbusplus::message_t& msg)
     uint8_t formatVersion = 0;
     uint8_t eventClass = 0;
     uint16_t eventId = 0;
-    uint32_t dataTransferHandle = 0;
-    uint16_t eventDataSize = 0;
+    std::vector<uint32_t> dataTransferHandles;
+    std::vector<uint32_t> eventDataSizes;
     sdbusplus::message::unix_fd eventDataFd;
 
     try
     {
         msg.read(epochTimestamp, terminusId, terminusName, formatVersion,
-                 eventClass, eventId, dataTransferHandle, eventDataSize,
+                 eventClass, eventId, dataTransferHandles, eventDataSizes,
                  eventDataFd);
     }
     catch (const std::exception& e)
@@ -476,15 +476,36 @@ void Manager::handlePldmRasEvent(sdbusplus::message_t& msg)
 
     lg2::info(
         "PLDM RAS event received: terminus={TERMINUS}, eventId=0x{EVENTID}, "
-        "dataTransferHandle=0x{HANDLE}, eventDataSize={SIZE}",
-        "TERMINUS", terminusName, "EVENTID", lg2::hex, eventId, "HANDLE",
-        lg2::hex, dataTransferHandle, "SIZE", eventDataSize);
+        "numHandles={NHANDLES}",
+        "TERMINUS", terminusName, "EVENTID", lg2::hex, eventId, "NHANDLES",
+        dataTransferHandles.size());
+
+    for (size_t i = 0; i < dataTransferHandles.size(); i++)
+    {
+        uint8_t opcode = (dataTransferHandles[i] >> 24) & 0xFF;
+        uint8_t dbgLogId = (dataTransferHandles[i] >> 16) & 0xFF;
+        uint16_t instance =
+            static_cast<uint16_t>(dataTransferHandles[i] & 0xFFFF);
+        uint32_t segSize = (i < eventDataSizes.size()) ? eventDataSizes[i] : 0;
+        lg2::info(
+            "  handle[{IDX}]: opcode=0x{OP} dbgLogId={ID} instance={INST} dataSize={SIZE}",
+            "IDX", i, "OP", lg2::hex, opcode, "ID", dbgLogId, "INST", instance,
+            "SIZE", segSize);
+    }
 
     // Read error data from the file descriptor
     std::vector<uint8_t> eventData;
-    if (eventDataSize > 0)
+
+    // Sum all segment sizes to get total bytes in the fd
+    uint32_t totalDataSize = 0;
+    for (auto sz : eventDataSizes)
     {
-        if (!readEventDataFromFd(eventDataFd, eventDataSize, eventData))
+        totalDataSize += sz;
+    }
+
+    if (totalDataSize > 0)
+    {
+        if (!readEventDataFromFd(eventDataFd, totalDataSize, eventData))
         {
             return;
         }
@@ -497,7 +518,8 @@ void Manager::handlePldmRasEvent(sdbusplus::message_t& msg)
         case pldm::eventIdFatalError:
             lg2::error("PLDM RAS Event: Fatal error/SYNCFLOOD on {TERMINUS}",
                        "TERMINUS", terminusName);
-            handleFatalOrShutdownError(eventData, socNum, crashdump);
+            handleFatalOrShutdownError(eventData, dataTransferHandles,
+                                       eventDataSizes, socNum, crashdump);
             break;
 
         case pldm::eventIdFchError:
@@ -539,7 +561,8 @@ void Manager::handlePldmRasEvent(sdbusplus::message_t& msg)
             lg2::error(
                 "PLDM RAS Event: MCA initiated core shutdown on {TERMINUS}",
                 "TERMINUS", terminusName);
-            handleFatalOrShutdownError(eventData, socNum, shutdown);
+            handleFatalOrShutdownError(eventData, dataTransferHandles,
+                                       eventDataSizes, socNum, shutdown);
             break;
 
         default:
@@ -565,8 +588,11 @@ uint8_t Manager::getSocketFromTerminus(const std::string& terminusName)
     return 0;
 }
 
-void Manager::handleFatalOrShutdownError(const std::vector<uint8_t>& eventData,
-                                         uint8_t socNum, size_t contextType)
+void Manager::handleFatalOrShutdownError(
+    const std::vector<uint8_t>& eventData,
+    const std::vector<uint32_t>& dataTransferHandles,
+    const std::vector<uint32_t>& eventDataSizes, uint8_t socNum,
+    size_t contextType)
 {
     std::unique_lock lock(harvestMutex);
 
@@ -596,7 +622,8 @@ void Manager::handleFatalOrShutdownError(const std::vector<uint8_t>& eventData,
     configMgr.updateErrorCountDbus();
     configMgr.saveErrorCounts();
 
-    harvestMcaDataBanksOverPldm(eventData, socNum, contextType);
+    harvestMcaDataBanksOverPldm(eventData, dataTransferHandles, eventDataSizes,
+                                socNum, contextType);
 
     amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount, node);
 
@@ -660,8 +687,11 @@ void Manager::handleSysMgmtCtrlError(uint8_t socNum)
     cleanupFatalCperRecord();
 }
 
-void Manager::harvestMcaDataBanksOverPldm(const std::vector<uint8_t>& eventData,
-                                          uint8_t socNum, size_t contextType)
+void Manager::harvestMcaDataBanksOverPldm(
+    const std::vector<uint8_t>& eventData,
+    const std::vector<uint32_t>& dataTransferHandles,
+    const std::vector<uint32_t>& eventDataSizes, uint8_t socNum,
+    size_t contextType)
 {
     constexpr uint16_t sectionCount = 2;
 
@@ -672,43 +702,76 @@ void Manager::harvestMcaDataBanksOverPldm(const std::vector<uint8_t>& eventData,
 
     initFatalCperRecord(sectionCount);
 
-    uint16_t numMcaBanks = eventData.size() / mcaDataBankLen;
-    uint16_t wordsPerMcaBank =
-        ((eventData.size() % 4) ? 1 : 0) + (eventData.size() >> 2);
-    if (numMcaBanks == 0)
+    // ---------------------------------------------------------------
+    // Step 1: Build per-handle byte offsets into the flat eventData
+    //         buffer.  Handles arrive in order; their data is
+    //         concatenated in the same order in the fd.
+    // ---------------------------------------------------------------
+    std::vector<size_t> handleDataOffsets(dataTransferHandles.size(), 0);
     {
-        lg2::info(
-            "No valid mca banks found. Harvesting additional debug log ID dumps");
+        size_t offset = 0;
+        for (size_t i = 0; i < dataTransferHandles.size(); i++)
+        {
+            handleDataOffsets[i] = offset;
+            if (i < eventDataSizes.size())
+            {
+                offset += eventDataSizes[i];
+            }
+        }
     }
 
-    // Clamp to valid range
+    // ---------------------------------------------------------------
+    // Step 2: Locate the MCA handle (opcode=0x5C, DBG_LOG_ID=32) and
+    //         determine how many MCA banks the firmware sent.
+    //         dataTransferHandle layout: [31:24]=opcode [23:16]=DBG_LOG_ID
+    //                                    [15:0]=instance
+    // ---------------------------------------------------------------
+    uint16_t numMcaBanks = 0;
+    uint32_t mcaSegSize = 0;
+    size_t mcaDataOffset = 0;
+
+    for (size_t i = 0; i < dataTransferHandles.size(); i++)
+    {
+        uint8_t opcode = (dataTransferHandles[i] >> 24) & 0xFF;
+        uint8_t dbgLogId = (dataTransferHandles[i] >> 16) & 0xFF;
+        if (opcode == opcodeDbgLogDump && dbgLogId == mcaDebugLogId)
+        {
+            mcaSegSize = (i < eventDataSizes.size()) ? eventDataSizes[i] : 0;
+            mcaDataOffset = handleDataOffsets[i];
+            numMcaBanks = static_cast<uint16_t>(mcaSegSize / mcaDataBankLen);
+            break;
+        }
+    }
+
+    if (numMcaBanks == 0)
+    {
+        lg2::info("No valid MCA banks found in PLDM event data. "
+                  "Harvesting additional debug log ID dumps only.");
+    }
     if (numMcaBanks > 32)
     {
-        lg2::warning(
-            "Invalid MCA bank count {COUNT} from PLDM data, clamping to 32",
-            "COUNT", numMcaBanks);
+        lg2::warning("Invalid MCA bank count {COUNT} from PLDM data, "
+                     "clamping to 32",
+                     "COUNT", numMcaBanks);
         numMcaBanks = 32;
     }
 
     lg2::info("Number of Valid MCA bank: {NUMBANKS}", "NUMBANKS", numMcaBanks);
-    lg2::info("Number of 32 Bit Words per MCA bank: {WORDS_PER_BANK}",
-              "WORDS_PER_BANK", wordsPerMcaBank);
 
-    // Populate processor error info
+    // Populate processor error section and context
     amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
                                              numMcaBanks);
-    amd::ras::util::cper::dumpContext(rcd, numMcaBanks, wordsPerMcaBank, socNum,
+    amd::ras::util::cper::dumpContext(rcd, numMcaBanks, mcaDataBankLen, socNum,
                                       ppin, uCode, contextType);
 
-    uint16_t maxOffset32 = mcaDataBankLen / 4;
-
+    // ---------------------------------------------------------------
+    // Step 3: Copy MCA bank data into CrashDumpData.
+    // ---------------------------------------------------------------
+    constexpr uint16_t maxOffset32 = mcaDataBankLen / 4;
     for (uint16_t n = 0; n < numMcaBanks; n++)
     {
-        // In PLDM mode, all MCA data is available in eventData.
-        // Copy the entire bank at once instead of reading 4 bytes
-        // per transaction as done in APML mode via read_ras_df_err_dump().
-        size_t bankStart = static_cast<size_t>(n) * mcaDataBankLen;
-
+        size_t bankStart =
+            mcaDataOffset + static_cast<size_t>(n) * mcaDataBankLen;
         if (bankStart + mcaDataBankLen <= eventData.size())
         {
             std::memcpy(rcd->ErrorRecord[socNum].CrashDumpData[n].McaData,
@@ -716,7 +779,6 @@ void Manager::harvestMcaDataBanksOverPldm(const std::vector<uint8_t>& eventData,
         }
         else
         {
-            // Partial or missing bank data - fill with bad data pattern
             size_t available = (bankStart < eventData.size())
                                    ? (eventData.size() - bankStart)
                                    : 0;
@@ -725,10 +787,120 @@ void Manager::harvestMcaDataBanksOverPldm(const std::vector<uint8_t>& eventData,
                 std::memcpy(rcd->ErrorRecord[socNum].CrashDumpData[n].McaData,
                             &eventData[bankStart], available);
             }
-            // Fill remaining words with bad data
-            for (uint32_t w = available / 4; w < maxOffset32; w++)
+            for (uint32_t w = static_cast<uint32_t>(available / 4);
+                 w < maxOffset32; w++)
             {
                 rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[w] = badData;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Step 4: Harvest additional debug log ID dumps from all non-MCA
+    //         handles.  The firmware sends one handle per (DBG_LOG_ID,
+    //         instance) pair.  We reconstruct the APML-compatible
+    //         DebugLogIdData layout:
+    //           header word: (err_log_len_bytes << 16) |
+    //                        (num_instances << 8)      | blkId
+    //           followed by the raw 32-bit data words for every instance.
+    //
+    //         DBG_LOG_IDs to harvest are those present in the firmware
+    //         signal; the expected set is read from platform.json at
+    //         startup into the blockId vector.
+    // ---------------------------------------------------------------
+    uint16_t debugLogIdOffset = 0;
+
+    // Collect unique non-MCA DBG_LOG_IDs in signal arrival order.
+    std::vector<uint8_t> orderedBlkIds;
+    for (size_t i = 0; i < dataTransferHandles.size(); i++)
+    {
+        uint8_t opcode = (dataTransferHandles[i] >> 24) & 0xFF;
+        uint8_t dbgLogId = (dataTransferHandles[i] >> 16) & 0xFF;
+        if (opcode != opcodeDbgLogDump || dbgLogId == mcaDebugLogId)
+        {
+            continue;
+        }
+        if (std::find(orderedBlkIds.begin(), orderedBlkIds.end(), dbgLogId) ==
+            orderedBlkIds.end())
+        {
+            orderedBlkIds.push_back(dbgLogId);
+        }
+    }
+
+    for (uint8_t blkId : orderedBlkIds)
+    {
+        // Collect all handle indices for this blkId (= all instances).
+        std::vector<size_t> instanceHandleIdxs;
+        for (size_t i = 0; i < dataTransferHandles.size(); i++)
+        {
+            uint8_t opcode = (dataTransferHandles[i] >> 24) & 0xFF;
+            uint8_t dbgLogId = (dataTransferHandles[i] >> 16) & 0xFF;
+            if (opcode == opcodeDbgLogDump && dbgLogId == blkId)
+            {
+                instanceHandleIdxs.push_back(i);
+            }
+        }
+
+        uint32_t numInstances =
+            static_cast<uint32_t>(instanceHandleIdxs.size());
+        size_t firstIdx = instanceHandleIdxs[0];
+        uint32_t errLogLen =
+            (firstIdx < eventDataSizes.size()) ? eventDataSizes[firstIdx] : 0;
+
+        if (debugLogIdOffset >= debugDumpDataLen)
+        {
+            lg2::warning("DebugLogIdData buffer full, skipping blkId {ID}",
+                         "ID", blkId);
+            break;
+        }
+
+        // Write APML-compatible header word.
+        uint32_t header = (errLogLen << 16) | (numInstances << 8) |
+                          static_cast<uint32_t>(blkId);
+        rcd->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] = header;
+
+        lg2::info("Socket {SOC}: Debug Log ID : {ID} read successful, "
+                  "Block instance : {INST} , Err log length : {LEN}",
+                  "SOC", socNum, "ID", blkId, "INST", numInstances, "LEN",
+                  errLogLen);
+
+        // Write raw data words for each instance.
+        for (size_t handleIdx : instanceHandleIdxs)
+        {
+            if (debugLogIdOffset >= debugDumpDataLen)
+            {
+                lg2::warning("DebugLogIdData buffer full mid-instance for "
+                             "blkId {ID}",
+                             "ID", blkId);
+                break;
+            }
+
+            size_t segOffset = handleDataOffsets[handleIdx];
+            uint32_t segSize = (handleIdx < eventDataSizes.size())
+                                   ? eventDataSizes[handleIdx]
+                                   : 0;
+            uint32_t numWords = (segSize + 3) / 4;
+
+            for (uint32_t w = 0; w < numWords; w++)
+            {
+                if (debugLogIdOffset >= debugDumpDataLen)
+                {
+                    break;
+                }
+                uint32_t word = badData;
+                size_t byteOff = segOffset + static_cast<size_t>(w) * 4;
+                if (byteOff + 4 <= eventData.size())
+                {
+                    std::memcpy(&word, &eventData[byteOff], 4);
+                }
+                else if (byteOff < eventData.size())
+                {
+                    word = 0;
+                    std::memcpy(&word, &eventData[byteOff],
+                                eventData.size() - byteOff);
+                }
+                rcd->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
+                    word;
             }
         }
     }
@@ -736,13 +908,13 @@ void Manager::harvestMcaDataBanksOverPldm(const std::vector<uint8_t>& eventData,
     processMcaBankSignatures(socNum, numMcaBanks);
 }
 
-bool Manager::readEventDataFromFd(int fd, uint16_t eventDataSize,
+bool Manager::readEventDataFromFd(int fd, uint32_t eventDataSize,
                                   std::vector<uint8_t>& eventData)
 {
     eventData.resize(eventDataSize);
     ssize_t totalBytesRead = 0;
 
-    while (totalBytesRead < eventDataSize)
+    while (totalBytesRead < static_cast<ssize_t>(eventDataSize))
     {
         ssize_t bytesRead = read(fd, eventData.data() + totalBytesRead,
                                  eventDataSize - totalBytesRead);
