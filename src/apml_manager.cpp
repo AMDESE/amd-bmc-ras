@@ -697,6 +697,10 @@ void Manager::init()
                 if (currentTimerUse ==
                     "xyz.openbmc_project.State.Watchdog.TimerUse.BIOSFRB2")
                 {
+                    if (watchdogTimerCounter >= 2)
+                    {
+                        watchdogTimerCounter = 0;
+                    }
                     watchdogTimerCounter++;
 
                     /*Watchdog Timer Enable property will be changed twice after
