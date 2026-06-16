@@ -69,6 +69,19 @@
             }
         },
         {
+            "FatalHarvestDelayEn": {
+                "Description": "If true, BMC proactively overrides the CPU DelayResetOnSyncflood timer during initialization so the system waits before resetting after a fatal error, giving time to collect MCA data. Requires BIOS Delay Reset After Syncflood to be enabled (any non-zero value).",
+                "Value": true
+            }
+        },
+        {
+            "FatalHarvestDelayMins": {
+                "Description": "Delay value (5-120 mins) sent to the CPU during RAS initialization to override the BIOS-configured Delay Reset After Syncflood value.",
+                "Value": 5,
+                "MaxBoundLimit": 120
+            }
+        },
+        {
             "DramCeccPollingEn": {
                 "Description": "If this field is true, Dynamic Random Access Memory Error Correction Code (DRAM ECC) correctable errors will be polled",
                 "Value": false
