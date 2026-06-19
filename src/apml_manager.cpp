@@ -16,6 +16,8 @@ extern "C"
 #include <phosphor-logging/lg2.hpp>
 #include <phosphor-logging/log.hpp>
 
+#include <unistd.h>
+
 #include <stdexcept>
 
 namespace amd
@@ -111,18 +113,129 @@ Manager::Manager(amd::ras::config::Manager& manager,
     amd::ras::Manager(manager, node), progId(1), recordId(1),
     watchdogTimerCounter(0), io(io), apmlInitialized(false),
     platformInitialized(false), runtimeErrPollingSupported(false),
+    postCompleteLineHigh(false),
     McaErrorPollingEvent(nullptr), DramCeccErrorPollingEvent(nullptr),
-    PcieAerErrorPollingEvent(nullptr), mcaErrorHarvestMtx(),
-    dramErrorHarvestMtx(), pcieErrorHarvestMtx()
+    PcieAerErrorPollingEvent(nullptr),
+    postCompleteEventDescriptor(nullptr),
+    mcaErrorHarvestMtx(),
+    dramErrorHarvestMtx(), pcieErrorHarvestMtx(),
+    conn(std::make_shared<sdbusplus::asio::connection>(io))
 {}
+
+void Manager::setupPostCompleteMonitor()
+{
+    try
+    {
+        auto enVal = configMgr.getAttribute("PostCompleteGpioEn");
+        bool* en = std::get_if<bool>(&enVal);
+        if (en == nullptr || *en == false)
+        {
+            return;
+        }
+
+        auto lineNameVal = configMgr.getAttribute("PostCompleteGpioLine");
+        std::string* lineName = std::get_if<std::string>(&lineNameVal);
+        if (lineName == nullptr || lineName->empty())
+        {
+            lg2::error("PostCompleteGpioLine config is missing or empty");
+            return;
+        }
+
+        postCompleteGpioLine = gpiod::find_line(*lineName);
+        if (!postCompleteGpioLine)
+        {
+            lg2::error("Failed to find POST complete GPIO line: {LINE}",
+                       "LINE", *lineName);
+            return;
+        }
+
+        postCompleteGpioLine.request(
+            {"RAS-POST-COMPLETE", gpiod::line_request::EVENT_BOTH_EDGES, 0});
+
+        /* Seed the flag from current line level to handle BMC-boots-while-host-off:
+             HIGH (host off/resetting) → postCompleteLineHigh=true
+                                       → first falling edge after host boots is valid
+             LOW  (host already up)    → postCompleteLineHigh=false
+                                       → init() already applied config, wait for reboot */
+        postCompleteLineHigh = (postCompleteGpioLine.get_value() == 1);
+
+        lg2::info(
+            "POST complete GPIO monitor armed on line {LINE}, "
+            "initial state={VAL}",
+            "LINE", *lineName,
+            "VAL", postCompleteLineHigh ? "HIGH(host-off)" : "LOW(host-up)");
+
+        if (postCompleteEventDescriptor != nullptr)
+        {
+            delete postCompleteEventDescriptor;
+        }
+        postCompleteEventDescriptor =
+            new boost::asio::posix::stream_descriptor(io);
+        postCompleteEventDescriptor->assign(
+            postCompleteGpioLine.event_get_fd());
+
+        postCompleteEventDescriptor->async_wait(
+            boost::asio::posix::stream_descriptor::wait_read,
+            [this](const boost::system::error_code ec) {
+                if (ec)
+                {
+                    lg2::error("POST complete GPIO wait error: {ERR}",
+                               "ERR", ec.message());
+                    return;
+                }
+                postCompleteEventHandler(*postCompleteEventDescriptor,
+                                         postCompleteGpioLine);
+            });
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to setup POST complete GPIO monitor: {ERR}",
+                   "ERR", e.what());
+    }
+}
+
+void Manager::postCompleteEventHandler(
+    boost::asio::posix::stream_descriptor& eventDesc,
+    const gpiod::line& line)
+{
+    gpiod::line_event gpioEvent = line.event_read();
+
+    if (gpioEvent.event_type == gpiod::line_event::RISING_EDGE)
+    {
+        postCompleteLineHigh = true;
+        lg2::debug(
+            "POST complete GPIO: rising edge — reboot/reset in progress");
+    }
+    else if (gpioEvent.event_type == gpiod::line_event::FALLING_EDGE)
+    {
+        if (postCompleteLineHigh)
+        {
+            lg2::info(
+                "POST complete GPIO: BIOS POST done after reboot/reset. "
+                "Reapplying RAS config.");
+            postCompleteLineHigh = false;
+            watchdogTimerCounter = 0;
+            platformInitialize();
+        }
+    }
+
+    eventDesc.async_wait(
+        boost::asio::posix::stream_descriptor::wait_read,
+        [this, &eventDesc, &line](const boost::system::error_code ec) {
+            if (ec)
+            {
+                lg2::error("POST complete GPIO handler error: {ERR}",
+                           "ERR", ec.message());
+                return;
+            }
+            postCompleteEventHandler(eventDesc, line);
+        });
+}
 
 void Manager::currentHostStateMonitor()
 {
-    sdbusplus::bus_t bus = sdbusplus::bus::new_default();
-    boost::system::error_code ec;
-
     static auto match = sdbusplus::bus::match_t(
-        bus,
+        *conn,
         "type='signal',member='PropertiesChanged', "
         "interface='org.freedesktop.DBus.Properties', "
         "arg0='xyz.openbmc_project.State.Host'",
@@ -252,6 +365,18 @@ void Manager::platformInitialize()
             lg2::info("Setting MCA and DRAM Error threshold");
 
             setMcaErrThreshold();
+
+            lg2::info("Setting PCIe OOB Config");
+
+            setPcieOobConfig();
+
+            lg2::info("Setting PCIe Error threshold");
+
+            setPcieErrThreshold();
+
+            lg2::info("Setting fatal harvest delay override");
+
+            setFatalHarvestDelay();
         }
     }
 }
@@ -429,11 +554,10 @@ void Manager::init()
 
     platformInitialize();
 
-    sdbusplus::bus_t bus = sdbusplus::bus::new_default();
-    boost::system::error_code ec;
+    setupPostCompleteMonitor();
 
     static auto match = sdbusplus::bus::match_t(
-        bus,
+        *conn,
         "type='signal',member='PropertiesChanged', "
         "interface='org.freedesktop.DBus.Properties', "
         "arg0='xyz.openbmc_project.State.Watchdog'",
@@ -478,19 +602,33 @@ void Manager::init()
                 if (currentTimerUse ==
                     "xyz.openbmc_project.State.Watchdog.TimerUse.BIOSFRB2")
                 {
+                    if (watchdogTimerCounter >= 2)
+                    {
+                        watchdogTimerCounter = 0;
+                    }
                     watchdogTimerCounter++;
 
                     /*Watchdog Timer Enable property will be changed twice after
-                      BIOS post complete. Platform initialization should be
-                      performed only during the second property change*/
+                      BIOS post complete.*/
                     if (watchdogTimerCounter == 2)
                     {
+                        lg2::info(
+                            "BIOS post complete. Setting MCA and DRAM OOB config");
+                        setMcaOobConfig();
+
+                        lg2::info(
+                            "BIOS post complete. Setting MCA and DRAM error threshold");
+                        setMcaErrThreshold();
+
                         lg2::info(
                             "BIOS post complete. Setting PCIE OOb config");
                         setPcieOobConfig();
 
                         lg2::info("Setting PCIE Error threshold");
                         setPcieErrThreshold();
+
+                        lg2::info("Setting fatal harvest delay override");
+                        setFatalHarvestDelay();
                     }
                 }
             }
@@ -1578,7 +1716,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
         {
             std::string err_msg =
                 "The APML_ALERT_L is asserted due to MCE error";
-
             amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", err_msg);
 
             uint8_t buffer;
@@ -1624,7 +1761,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     {
         lg2::debug("Read RAS status register. Value: {BUF}", "BUF", lg2::hex,
                    buf);
-
         // check RAS Status Register
         if (buf & 0xFF)
         {
@@ -1642,7 +1778,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                     std::string rasErrMsg =
                         "Fatal error detected in the control fabric. "
                         "BMC may trigger a reset based on policy set. ";
-
                     amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", rasErrMsg);
 
                     harvestBreakEvent(socNum);
@@ -1654,7 +1789,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         "System hang while resetting in syncflood."
                         "Suggested next step is to do an additional manual "
                         "immediate reset";
-
                     amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", rasErrMsg);
 
                     fchHangError = true;
@@ -1696,7 +1830,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                 {
                     std::string rasErrMsg =
                         "Non MCA Shutdown error detected in the system";
-
                     amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", rasErrMsg);
 
                     nonMcaShutdownError = true;
@@ -1709,7 +1842,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
                         std::string mcaErrOverflowMsg =
                             "MCA runtime error counter overflow occured";
-
                         amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", mcaErrOverflowMsg);
 
                         runtimeError = true;
@@ -1720,7 +1852,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
                         std::string dramErrOverlowMsg =
                             "DRAM CECC runtime error counter overflow occured";
-
                         amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", dramErrOverlowMsg);
 
                         runtimeError = true;
@@ -1731,7 +1862,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
                         std::string pcieErrOverlowMsg =
                             "PCIE runtime error counter overflow occured";
-
                         amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", pcieErrOverlowMsg);
 
                         runtimeError = true;
@@ -1745,7 +1875,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             // 0x4c is a SB-RMI register acting as write to clear
             // check PPR to determine whether potential bug in PPR or in
             // implementation of SMU?
-
             writeOobRegister(socNum, 0x4C, buf);
 
             if (fchHangError == true || runtimeError == true ||
@@ -1915,10 +2044,11 @@ oob_status_t Manager::setRasOobConfig(struct oob_config_d_in oob_config)
         amd::ras::config::Manager::AttributeValue apmlRetry =
             configMgr.getAttribute("ApmlRetries");
         int64_t* retryCount = std::get_if<int64_t>(&apmlRetry);
+        int64_t retryLimit = *retryCount;
 
-        while (*retryCount > 0)
+        while (retryLimit > 0)
         {
-            --(*retryCount);
+            --retryLimit;
             ret = set_bmc_ras_oob_config(socIndex[i], oob_config);
 
             if (ret == OOB_SUCCESS || ret == OOB_MAILBOX_CMD_UNKNOWN)
@@ -1965,6 +2095,8 @@ oob_status_t Manager::getOobRegisters(struct oob_config_d_in* oob_config)
             (dataOut >> MCA_ERR_REPORT_EN & 1);
         oob_config->dram_cecc_oob_ec_mode =
             (dataOut >> DRAM_CECC_OOB_EC_MODE & TRIBBLE_BITS);
+        oob_config->dram_cecc_leak_rate =
+            (dataOut >> DRAM_CECC_LEAK_RATE) & 0x1F;
         oob_config->pcie_err_reporting_en = (dataOut >> PCIE_ERR_REPORT_EN & 1);
         oob_config->mca_oob_misc0_ec_enable = (dataOut & 1);
     }
@@ -2119,6 +2251,10 @@ void Manager::runTimeErrorPolling()
     else
     {
         setPcieErrThreshold();
+
+        lg2::info("Setting fatal harvest delay override");
+
+        setFatalHarvestDelay();
     }
 }
 
@@ -2139,6 +2275,8 @@ oob_status_t Manager::getRasOobConfig(struct oob_config_d_in* oob_config)
             (dataOut >> PCIE_ERR_REPORT_EN & 1);
         oob_config->dram_cecc_oob_ec_mode =
             (dataOut >> DRAM_CECC_OOB_EC_MODE & TRIBBLE_BITS);
+        oob_config->dram_cecc_leak_rate =
+            (dataOut >> DRAM_CECC_LEAK_RATE) & 0x1F;
         oob_config->pcie_err_reporting_en = (dataOut >> PCIE_ERR_REPORT_EN & 1);
         oob_config->mca_oob_misc0_ec_enable = (dataOut & 1);
     }
@@ -2185,6 +2323,24 @@ oob_status_t Manager::setMcaOobConfig()
         oob_config.dram_cecc_leak_rate =
             static_cast<uint8_t>(*dramCeccLeakRate);
     }
+    else
+    {
+        amd::ras::config::Manager::AttributeValue dramCeccOobEcModeVal =
+            configMgr.getAttribute("DramCeccOobEcMode");
+        int64_t* dramCeccOobEcMode =
+            std::get_if<int64_t>(&dramCeccOobEcModeVal);
+
+        amd::ras::config::Manager::AttributeValue dramCeccLeakRateVal =
+            configMgr.getAttribute("DramCeccLeakRate");
+        int64_t* dramCeccLeakRate =
+            std::get_if<int64_t>(&dramCeccLeakRateVal);
+
+        oob_config.dram_cecc_oob_ec_mode =
+            static_cast<uint8_t>(*dramCeccOobEcMode);
+        oob_config.dram_cecc_leak_rate =
+            static_cast<uint8_t>(*dramCeccLeakRate);
+        oob_config.mca_oob_misc0_ec_enable = 1;
+    }
 
     ret = setRasOobConfig(oob_config);
 
@@ -2208,17 +2364,7 @@ oob_status_t Manager::setPcieOobRegisters()
 
 oob_status_t Manager::setPcieOobConfig()
 {
-    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
-
-    amd::ras::config::Manager::AttributeValue PcieAerPolling =
-        configMgr.getAttribute("PcieAerPollingEn");
-    bool* PcieAerPollingEn = std::get_if<bool>(&PcieAerPolling);
-
-    if (*PcieAerPollingEn == true)
-    {
-        ret = setPcieOobRegisters();
-    }
-    return ret;
+    return setPcieOobRegisters();
 }
 
 oob_status_t Manager::setRasErrThreshold(struct run_time_threshold th)
@@ -2230,10 +2376,11 @@ oob_status_t Manager::setRasErrThreshold(struct run_time_threshold th)
         amd::ras::config::Manager::AttributeValue apmlRetry =
             configMgr.getAttribute("ApmlRetries");
         int64_t* retryCount = std::get_if<int64_t>(&apmlRetry);
+        int64_t retryLimit = *retryCount;
 
-        while (*retryCount > 0)
+        while (retryLimit > 0)
         {
-            --(*retryCount);
+            --retryLimit;
             ret = set_bmc_ras_err_threshold(socIndex[i], th);
 
             if (ret != OOB_SUCCESS)
@@ -2249,6 +2396,58 @@ oob_status_t Manager::setRasErrThreshold(struct run_time_threshold th)
         }
     }
     return ret;
+}
+
+void Manager::setFatalHarvestDelay()
+{
+    amd::ras::config::Manager::AttributeValue fatalDelayEnVal =
+        configMgr.getAttribute("FatalHarvestDelayEn");
+    bool* fatalHarvestDelayEn = std::get_if<bool>(&fatalDelayEnVal);
+
+    if (fatalHarvestDelayEn == nullptr || *fatalHarvestDelayEn == false)
+    {
+        return;
+    }
+
+    amd::ras::config::Manager::AttributeValue fatalDelayMinsVal =
+        configMgr.getAttribute("FatalHarvestDelayMins");
+    int64_t* fatalHarvestDelayMins = std::get_if<int64_t>(&fatalDelayMinsVal);
+
+    if (fatalHarvestDelayMins == nullptr)
+    {
+        return;
+    }
+
+    struct ras_override_delay delayDataIn = {0, 0, 0};
+    bool ackResp = false;
+
+    int64_t mins = *fatalHarvestDelayMins;
+    if (mins >= 5 && mins <= 120)
+    {
+        delayDataIn.delay_val_override = static_cast<uint8_t>(mins);
+    }
+    else
+    {
+        delayDataIn.delay_val_override = 5; // minimum safe fallback
+    }
+
+    oob_status_t ret = override_delay_reset_on_sync_flood(
+        socIndex[0], delayDataIn, &ackResp);
+
+    if (ret != OOB_SUCCESS)
+    {
+        lg2::error(
+            "Failed to set fatal harvest delay override ({MINS} mins): {ERR}",
+            "MINS", static_cast<uint32_t>(delayDataIn.delay_val_override),
+            "ERR", ret);
+    }
+    else
+    {
+        lg2::info(
+            "Fatal harvest delay override set to {MINS} mins. "
+            "CPU will wait before resetting after syncflood.",
+            "MINS", static_cast<uint32_t>(delayDataIn.delay_val_override));
+    }
 }
 
 oob_status_t Manager::setPcieErrThreshold()

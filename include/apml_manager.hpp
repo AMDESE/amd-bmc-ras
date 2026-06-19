@@ -10,6 +10,7 @@ extern "C"
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/posix/stream_descriptor.hpp>
 #include <gpiod.hpp>
+#include <sdbusplus/asio/connection.hpp>
 
 namespace amd
 {
@@ -17,6 +18,7 @@ namespace ras
 {
 namespace apml
 {
+
 /** @brief Manages RAS (Reliability, Availability, and Serviceability)
  * operations for APML.
  *
@@ -75,15 +77,19 @@ class Manager : public amd::ras::Manager
     bool apmlInitialized;
     bool platformInitialized;
     bool runtimeErrPollingSupported;
+    bool postCompleteLineHigh;
     std::vector<bool> cpuAlertProcessed;
     boost::asio::steady_timer* McaErrorPollingEvent;
     boost::asio::steady_timer* DramCeccErrorPollingEvent;
     boost::asio::steady_timer* PcieAerErrorPollingEvent;
+    gpiod::line postCompleteGpioLine;
+    boost::asio::posix::stream_descriptor* postCompleteEventDescriptor;
     std::mutex harvestMutex;
     std::mutex mcaErrorHarvestMtx;
     std::mutex dramErrorHarvestMtx;
     std::mutex pcieErrorHarvestMtx;
     std::vector<gpiod::line> gpioLines;
+    std::shared_ptr<sdbusplus::asio::connection> conn;
 
     /**
      * @brief Requests GPIO events for hardware alert handling.
@@ -203,6 +209,21 @@ class Manager : public amd::ras::Manager
      *  @param[in] socNum - Socket number of the processor.
      */
     void clearSbrmiAlertMask(uint8_t socNum);
+
+    /** @brief Set up GPIO-based POST complete monitor to reapply RAS config on reboot.
+     */
+    void setupPostCompleteMonitor();
+
+    /** @brief Handle POST complete GPIO edge events.
+     */
+    void postCompleteEventHandler(boost::asio::posix::stream_descriptor&,
+                                  const gpiod::line&);
+
+    /** @brief Proactively set the fatal harvest delay override in the CPU.
+     *
+     *  @details Called during initialization and on every RAS config reapply.
+     */
+    void setFatalHarvestDelay();
 
     /** @brief Monitors the current host power state.
      *
