@@ -474,6 +474,11 @@ void Manager::init()
             bool* currentTimerEnable =
                 std::get_if<bool>(&(properties.begin()->second));
 
+            if (currentTimerEnable == nullptr)
+            {
+                return;
+            }
+
             if (*currentTimerEnable == false)
             {
                 sdbusplus::bus_t bus = sdbusplus::bus::new_default();
@@ -482,7 +487,7 @@ void Manager::init()
                         bus, "xyz.openbmc_project.Watchdog",
                         "/xyz/openbmc_project/watchdog/host0",
                         "xyz.openbmc_project.State.Watchdog",
-                        "currentTimerUse");
+                        "CurrentTimerUse");
 
                 if (currentTimerUse ==
                     "xyz.openbmc_project.State.Watchdog.TimerUse.BIOSFRB2")
