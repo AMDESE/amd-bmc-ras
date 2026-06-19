@@ -487,35 +487,24 @@ void Manager::init()
                 if (currentTimerUse ==
                     "xyz.openbmc_project.State.Watchdog.TimerUse.BIOSFRB2")
                 {
-                    if (watchdogTimerCounter >= 2)
-                    {
-                        watchdogTimerCounter = 0;
-                    }
                     watchdogTimerCounter++;
 
-                    /*Watchdog Timer Enable property will be changed twice after
-                      BIOS post complete. Platform initialization should be
-                      performed only during the second property change*/
-                    if (watchdogTimerCounter == 2)
-                    {
-                        lg2::info(
-                            "BIOS post complete. Setting MCA and DRAM OOB config");
-                        setMcaOobConfig();
+                    lg2::info(
+                        "BIOS post complete. Setting MCA and DRAM OOB config");
+                    setMcaOobConfig();
 
-                        lg2::info(
-                            "BIOS post complete. Setting MCA and DRAM error threshold");
-                        setMcaErrThreshold();
+                    lg2::info(
+                        "BIOS post complete. Setting MCA and DRAM error threshold");
+                    setMcaErrThreshold();
 
-                        lg2::info(
-                            "BIOS post complete. Setting PCIE OOb config");
-                        setPcieOobConfig();
+                    lg2::info("BIOS post complete. Setting PCIE OOb config");
+                    setPcieOobConfig();
 
-                        lg2::info("Setting PCIE Error threshold");
-                        setPcieErrThreshold();
+                    lg2::info("Setting PCIE Error threshold");
+                    setPcieErrThreshold();
 
-                        lg2::info("Setting fatal harvest delay override");
-                        setFatalHarvestDelay();
-                    }
+                    lg2::info("Setting fatal harvest delay override");
+                    setFatalHarvestDelay();
                 }
             }
         });
