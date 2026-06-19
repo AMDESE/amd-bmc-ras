@@ -2116,7 +2116,9 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
         return true;
     }
 
-    lg2::error("The UEVENT alert signaled is due to a RAS fatal error");
+    lg2::error(
+        "The UEVENT alert signaled for RAS error SOC: {SOC}. Source: {SRC}",
+        "SOC", socNum, "SRC", lg2::hex, src);
 
     if (src & cfError)
     {
@@ -2495,7 +2497,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
         // check RAS Status Register
         if (buf & 0xFF)
         {
-            lg2::error("The alert signaled is due to a RAS fatal error");
+            lg2::error(
+                "The GPIO alert signaled is due to a RAS error. SOC: {SOC}, RAS Status Register value: {BUF}",
+                "SOC", socNum, "BUF", lg2::hex, buf);
 
             if (buf & cfError)
             {
