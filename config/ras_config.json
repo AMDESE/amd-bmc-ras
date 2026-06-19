@@ -168,45 +168,15 @@
             }
         },
         {
-            "PostCompleteMonitorEn": {
-                "Description": "Enable post-complete monitoring for reapplying RAS configuration",
+            "PostCompleteGpioEn": {
+                "Description": "Enable POST complete GPIO monitoring to reapply RAS config after reboot or reset",
                 "Value": true
             }
         },
         {
-            "PostCompleteMonitorI2CBus": {
-                "Description": "I2C bus used to read the post-complete status register",
-                "Value": 6
-            }
-        },
-        {
-            "PostCompleteMonitorDeviceAddress": {
-                "Description": "CPLD I2C device address for the post-complete status register",
-                "Value": 32
-            }
-        },
-        {
-            "PostCompleteMonitorRegister": {
-                "Description": "CPLD register offset that carries the post-complete bit",
-                "Value": 70
-            }
-        },
-        {
-            "PostCompleteMonitorBit": {
-                "Description": "Bit position of the post-complete signal within the register",
-                "Value": 0
-            }
-        },
-        {
-            "PostCompleteMonitorActiveLow": {
-                "Description": "Whether the monitored bit is active-low",
-                "Value": true
-            }
-        },
-        {
-            "PostCompleteMonitorPollPeriodSec": {
-                "Description": "Polling interval in seconds for the post-complete monitor",
-                "Value": 2
+            "PostCompleteGpioLine": {
+                "Description": "GPIO line name for BIOS POST complete signal (active-low _N suffix). Run gpiofind to confirm the name on your platform.",
+                "Value": "FM_BIOS_POST_CMPLT_R_N"
             }
         }
     ]

@@ -18,17 +18,6 @@ namespace ras
 {
 namespace apml
 {
-struct PostCompleteMonitorConfig
-{
-  bool enabled{false};
-  std::string name;
-  int64_t i2cBus{0};
-  int64_t i2cAddress{0};
-  int64_t registerOffset{0};
-  uint8_t bit{0};
-  bool activeLow{true};
-  int64_t pollPeriodSec{2};
-};
 
 /** @brief Manages RAS (Reliability, Availability, and Serviceability)
  * operations for APML.
@@ -88,14 +77,13 @@ class Manager : public amd::ras::Manager
     bool apmlInitialized;
     bool platformInitialized;
     bool runtimeErrPollingSupported;
-    bool postCompleteStateInitialized;
-    bool postCompleteLastState;
+    bool postCompleteLineHigh;
     std::vector<bool> cpuAlertProcessed;
     boost::asio::steady_timer* McaErrorPollingEvent;
     boost::asio::steady_timer* DramCeccErrorPollingEvent;
     boost::asio::steady_timer* PcieAerErrorPollingEvent;
-    boost::asio::steady_timer* PostCompletePollingEvent;
-    PostCompleteMonitorConfig postCompleteMonitorConfig;
+    gpiod::line postCompleteGpioLine;
+    boost::asio::posix::stream_descriptor* postCompleteEventDescriptor;
     std::mutex harvestMutex;
     std::mutex mcaErrorHarvestMtx;
     std::mutex dramErrorHarvestMtx;
@@ -222,23 +210,18 @@ class Manager : public amd::ras::Manager
      */
     void clearSbrmiAlertMask(uint8_t socNum);
 
-    /** @brief Load the CPLD post-complete monitor mapping from JSON.
+    /** @brief Set up GPIO-based POST complete monitor to reapply RAS config on reboot.
      */
-    void loadPostCompleteMonitorConfig();
+    void setupPostCompleteMonitor();
 
-    /** @brief Poll the configured post-complete register and reapply RAS config.
+    /** @brief Handle POST complete GPIO edge events.
      */
-    void postCompleteMonitorHandler();
-
-    /** @brief Read the configured post-complete state from CPLD/I2C.
-     */
-    bool readPostCompleteMonitorState(bool* postCompleteState);
+    void postCompleteEventHandler(boost::asio::posix::stream_descriptor&,
+                                  const gpiod::line&);
 
     /** @brief Proactively set the fatal harvest delay override in the CPU.
      *
-     *  @details Arms the CPU's DelayResetOnSyncflood counter with the configured
-     *  value so the system waits before resetting after a fatal error, giving the
-     *  BMC time to collect MCA data
+     *  @details Called during initialization and on every RAS config reapply.
      */
     void setFatalHarvestDelay();
 

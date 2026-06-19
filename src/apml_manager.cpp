@@ -16,9 +16,6 @@ extern "C"
 #include <phosphor-logging/lg2.hpp>
 #include <phosphor-logging/log.hpp>
 
-#include <fcntl.h>
-#include <linux/i2c-dev.h>
-#include <sys/ioctl.h>
 #include <unistd.h>
 
 #include <stdexcept>
@@ -29,65 +26,6 @@ namespace ras
 {
 namespace apml
 {
-namespace
-{
-bool readCpldRegister(const PostCompleteMonitorConfig& cfg, uint8_t* value)
-{
-    if (value == nullptr)
-    {
-        return false;
-    }
-
-    const std::string devPath = "/dev/i2c-" + std::to_string(cfg.i2cBus);
-    int fd = open(devPath.c_str(), O_RDWR);
-    if (fd < 0)
-    {
-        lg2::error("Failed to open I2C device {DEV}: {ERR}", "DEV",
-                   devPath, "ERR", strerror(errno));
-        return false;
-    }
-
-    const auto closeFd = [&fd]() {
-        if (fd >= 0)
-        {
-            close(fd);
-            fd = -1;
-        }
-    };
-
-    if (ioctl(fd, I2C_SLAVE, static_cast<int>(cfg.i2cAddress)) < 0)
-    {
-        lg2::error("Failed to select I2C address {ADDR} on {DEV}: {ERR}",
-                   "ADDR", lg2::hex, static_cast<uint32_t>(cfg.i2cAddress),
-                   "DEV", devPath, "ERR", strerror(errno));
-        closeFd();
-        return false;
-    }
-
-    uint8_t reg = static_cast<uint8_t>(cfg.registerOffset);
-    if (write(fd, &reg, 1) != 1)
-    {
-        lg2::error("Failed to write CPLD register offset {REG} on {DEV}: {ERR}",
-                   "REG", lg2::hex, static_cast<uint32_t>(reg), "DEV",
-                   devPath, "ERR", strerror(errno));
-        closeFd();
-        return false;
-    }
-
-    if (read(fd, value, 1) != 1)
-    {
-        lg2::error("Failed to read CPLD register {REG} on {DEV}: {ERR}",
-                   "REG", lg2::hex, static_cast<uint32_t>(reg), "DEV",
-                   devPath, "ERR", strerror(errno));
-        closeFd();
-        return false;
-    }
-
-    closeFd();
-    return true;
-}
-} // namespace
-
 constexpr size_t sbrmiControlRegister = 0x1;
 constexpr size_t sysMgmtCtrlErr = 0x4;
 constexpr size_t shutdownError = 0x40;
@@ -175,150 +113,122 @@ Manager::Manager(amd::ras::config::Manager& manager,
     amd::ras::Manager(manager, node), progId(1), recordId(1),
     watchdogTimerCounter(0), io(io), apmlInitialized(false),
     platformInitialized(false), runtimeErrPollingSupported(false),
-    postCompleteStateInitialized(false), postCompleteLastState(false),
+    postCompleteLineHigh(false),
     McaErrorPollingEvent(nullptr), DramCeccErrorPollingEvent(nullptr),
-    PcieAerErrorPollingEvent(nullptr), PostCompletePollingEvent(nullptr),
+    PcieAerErrorPollingEvent(nullptr),
+    postCompleteEventDescriptor(nullptr),
     mcaErrorHarvestMtx(),
     dramErrorHarvestMtx(), pcieErrorHarvestMtx(),
     conn(std::make_shared<sdbusplus::asio::connection>(io))
 {}
 
-void Manager::loadPostCompleteMonitorConfig()
+void Manager::setupPostCompleteMonitor()
 {
-    postCompleteMonitorConfig = {};
-
     try
     {
-        auto monitorEnVal = configMgr.getAttribute("PostCompleteMonitorEn");
-        auto* monitorEn = std::get_if<bool>(&monitorEnVal);
-        if (monitorEn == nullptr || *monitorEn == false)
+        auto enVal = configMgr.getAttribute("PostCompleteGpioEn");
+        bool* en = std::get_if<bool>(&enVal);
+        if (en == nullptr || *en == false)
         {
             return;
         }
 
-        postCompleteMonitorConfig.enabled = true;
-
-        auto i2cBusVal = configMgr.getAttribute("PostCompleteMonitorI2CBus");
-        auto* i2cBus = std::get_if<int64_t>(&i2cBusVal);
-        auto deviceAddrVal =
-            configMgr.getAttribute("PostCompleteMonitorDeviceAddress");
-        auto* deviceAddr = std::get_if<int64_t>(&deviceAddrVal);
-        auto regVal = configMgr.getAttribute("PostCompleteMonitorRegister");
-        auto* reg = std::get_if<int64_t>(&regVal);
-        auto bitVal = configMgr.getAttribute("PostCompleteMonitorBit");
-        auto* bit = std::get_if<int64_t>(&bitVal);
-        auto activeLowVal =
-            configMgr.getAttribute("PostCompleteMonitorActiveLow");
-        auto* activeLow = std::get_if<bool>(&activeLowVal);
-        auto pollPeriodVal =
-            configMgr.getAttribute("PostCompleteMonitorPollPeriodSec");
-        auto* pollPeriod = std::get_if<int64_t>(&pollPeriodVal);
-
-        if (i2cBus == nullptr || deviceAddr == nullptr || reg == nullptr ||
-            bit == nullptr || activeLow == nullptr || pollPeriod == nullptr)
+        auto lineNameVal = configMgr.getAttribute("PostCompleteGpioLine");
+        std::string* lineName = std::get_if<std::string>(&lineNameVal);
+        if (lineName == nullptr || lineName->empty())
         {
-            lg2::error("Post-complete monitor config contains invalid values");
-            postCompleteMonitorConfig.enabled = false;
+            lg2::error("PostCompleteGpioLine config is missing or empty");
             return;
         }
 
-        postCompleteMonitorConfig.name = "ras_config";
-        postCompleteMonitorConfig.i2cBus = *i2cBus;
-        postCompleteMonitorConfig.i2cAddress = *deviceAddr;
-        postCompleteMonitorConfig.registerOffset = *reg;
-        postCompleteMonitorConfig.bit = static_cast<uint8_t>(*bit);
-        postCompleteMonitorConfig.activeLow = *activeLow;
-        postCompleteMonitorConfig.pollPeriodSec = *pollPeriod;
+        postCompleteGpioLine = gpiod::find_line(*lineName);
+        if (!postCompleteGpioLine)
+        {
+            lg2::error("Failed to find POST complete GPIO line: {LINE}",
+                       "LINE", *lineName);
+            return;
+        }
+
+        postCompleteGpioLine.request(
+            {"RAS-POST-COMPLETE", gpiod::line_request::EVENT_BOTH_EDGES, 0});
+
+        /* Seed the flag from current line level to handle BMC-boots-while-host-off:
+             HIGH (host off/resetting) → postCompleteLineHigh=true
+                                       → first falling edge after host boots is valid
+             LOW  (host already up)    → postCompleteLineHigh=false
+                                       → init() already applied config, wait for reboot */
+        postCompleteLineHigh = (postCompleteGpioLine.get_value() == 1);
 
         lg2::info(
-            "Loaded post-complete monitor config: bus={BUS} addr=0x{ADDR} reg=0x{REG} bit={BIT} activeLow={LOW}",
-            "BUS", static_cast<uint32_t>(postCompleteMonitorConfig.i2cBus),
-            "ADDR", lg2::hex,
-            static_cast<uint32_t>(postCompleteMonitorConfig.i2cAddress),
-            "REG", lg2::hex,
-            static_cast<uint32_t>(postCompleteMonitorConfig.registerOffset),
-            "BIT", static_cast<uint32_t>(postCompleteMonitorConfig.bit),
-            "LOW", postCompleteMonitorConfig.activeLow);
+            "POST complete GPIO monitor armed on line {LINE}, "
+            "initial state={VAL}",
+            "LINE", *lineName,
+            "VAL", postCompleteLineHigh ? "HIGH(host-off)" : "LOW(host-up)");
+
+        if (postCompleteEventDescriptor != nullptr)
+        {
+            delete postCompleteEventDescriptor;
+        }
+        postCompleteEventDescriptor =
+            new boost::asio::posix::stream_descriptor(io);
+        postCompleteEventDescriptor->assign(
+            postCompleteGpioLine.event_get_fd());
+
+        postCompleteEventDescriptor->async_wait(
+            boost::asio::posix::stream_descriptor::wait_read,
+            [this](const boost::system::error_code ec) {
+                if (ec)
+                {
+                    lg2::error("POST complete GPIO wait error: {ERR}",
+                               "ERR", ec.message());
+                    return;
+                }
+                postCompleteEventHandler(*postCompleteEventDescriptor,
+                                         postCompleteGpioLine);
+            });
     }
     catch (const std::exception& e)
     {
-        lg2::error("Failed to load post-complete monitor config: {ERR}",
+        lg2::error("Failed to setup POST complete GPIO monitor: {ERR}",
                    "ERR", e.what());
-        postCompleteMonitorConfig.enabled = false;
     }
 }
 
-bool Manager::readPostCompleteMonitorState(bool* postCompleteState)
+void Manager::postCompleteEventHandler(
+    boost::asio::posix::stream_descriptor& eventDesc,
+    const gpiod::line& line)
 {
-    if (postCompleteState == nullptr || !postCompleteMonitorConfig.enabled)
+    gpiod::line_event gpioEvent = line.event_read();
+
+    if (gpioEvent.event_type == gpiod::line_event::RISING_EDGE)
     {
-        return false;
+        postCompleteLineHigh = true;
+        lg2::debug(
+            "POST complete GPIO: rising edge — reboot/reset in progress");
+    }
+    else if (gpioEvent.event_type == gpiod::line_event::FALLING_EDGE)
+    {
+        if (postCompleteLineHigh)
+        {
+            lg2::info(
+                "POST complete GPIO: BIOS POST done after reboot/reset. "
+                "Reapplying RAS config.");
+            postCompleteLineHigh = false;
+            watchdogTimerCounter = 0;
+            platformInitialize();
+        }
     }
 
-    uint8_t rawValue = 0;
-    if (!readCpldRegister(postCompleteMonitorConfig, &rawValue))
-    {
-        return false;
-    }
-
-    bool bitSet = ((rawValue >> postCompleteMonitorConfig.bit) & 0x1) != 0;
-    *postCompleteState = postCompleteMonitorConfig.activeLow ? !bitSet : bitSet;
-
-    lg2::debug("Post-complete monitor {MAP}: raw=0x{RAW} logicalComplete={STATE}",
-               "MAP", postCompleteMonitorConfig.name,
-               "RAW", lg2::hex, static_cast<uint32_t>(rawValue),
-               "STATE", *postCompleteState);
-
-    return true;
-}
-
-void Manager::postCompleteMonitorHandler()
-{
-    if (PostCompletePollingEvent != nullptr)
-    {
-        delete PostCompletePollingEvent;
-    }
-
-    if (!postCompleteMonitorConfig.enabled)
-    {
-        return;
-    }
-
-    PostCompletePollingEvent = new boost::asio::steady_timer(
-        io, std::chrono::seconds(postCompleteMonitorConfig.pollPeriodSec));
-
-    PostCompletePollingEvent->async_wait(
-        [this](const boost::system::error_code ec) {
+    eventDesc.async_wait(
+        boost::asio::posix::stream_descriptor::wait_read,
+        [this, &eventDesc, &line](const boost::system::error_code ec) {
             if (ec)
             {
+                lg2::error("POST complete GPIO handler error: {ERR}",
+                           "ERR", ec.message());
                 return;
             }
-
-            bool postCompleteState = false;
-            if (readPostCompleteMonitorState(&postCompleteState))
-            {
-                if (postCompleteStateInitialized == false)
-                {
-                    postCompleteLastState = postCompleteState;
-                    postCompleteStateInitialized = true;
-                }
-                else if (postCompleteState == true &&
-                         postCompleteLastState == false)
-                {
-                    lg2::info(
-                        "Post-complete detected for mapping {MAP}. Reapplying RAS config.",
-                        "MAP", postCompleteMonitorConfig.name);
-                    watchdogTimerCounter = 0;
-                    platformInitialize();
-                    postCompleteLastState = postCompleteState;
-                }
-                else
-                {
-                    postCompleteLastState = postCompleteState;
-                }
-            }
-
-            postCompleteMonitorHandler();
+            postCompleteEventHandler(eventDesc, line);
         });
 }
 
@@ -642,14 +552,9 @@ void Manager::init()
 
     file.close();
 
-    loadPostCompleteMonitorConfig();
-
     platformInitialize();
 
-    if (postCompleteMonitorConfig.enabled)
-    {
-        postCompleteMonitorHandler();
-    }
+    setupPostCompleteMonitor();
 
     static auto match = sdbusplus::bus::match_t(
         *conn,
@@ -704,8 +609,7 @@ void Manager::init()
                     watchdogTimerCounter++;
 
                     /*Watchdog Timer Enable property will be changed twice after
-                      BIOS post complete. Platform initialization should be
-                      performed only during the second property change*/
+                      BIOS post complete.*/
                     if (watchdogTimerCounter == 2)
                     {
                         lg2::info(
