@@ -465,7 +465,7 @@ void Manager::init()
                 lg2::error("Empty PropertiesChanged signal received");
                 return;
             }
-.
+
             auto enabledIt = properties.find("Enabled");
             if (enabledIt == properties.end())
             {
