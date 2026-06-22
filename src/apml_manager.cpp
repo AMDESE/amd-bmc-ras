@@ -448,7 +448,8 @@ void Manager::init()
         "arg0='xyz.openbmc_project.State.Watchdog'",
         [this](sdbusplus::message_t& message) {
             std::string intfName;
-            std::map<std::string, std::variant<bool>> properties;
+            std::map<std::string, std::variant<bool, std::string, uint64_t>>
+                properties;
 
             try
             {
@@ -464,15 +465,15 @@ void Manager::init()
                 lg2::error("Empty PropertiesChanged signal received");
                 return;
             }
-
-            // We only want to check for currentHostState
-            if (properties.begin()->first != "Enabled")
+.
+            auto enabledIt = properties.find("Enabled");
+            if (enabledIt == properties.end())
             {
                 return;
             }
 
             bool* currentTimerEnable =
-                std::get_if<bool>(&(properties.begin()->second));
+                std::get_if<bool>(&(enabledIt->second));
 
             if (currentTimerEnable == nullptr)
             {
