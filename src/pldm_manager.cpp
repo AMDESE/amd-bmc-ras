@@ -20,6 +20,7 @@ extern "C"
 #include <phosphor-logging/log.hpp>
 
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 
@@ -34,6 +35,82 @@ constexpr uint32_t badData = 0xBAADDA7A;
 constexpr uint8_t sysMgmtCtrlErr = 0x4;
 constexpr uint8_t cfError = 0x6;
 constexpr uint8_t sbrmiControlRegister = 0x1;
+constexpr size_t mcaStatusLoOffset = 8;
+constexpr size_t mcaStatusHiOffset = 12;
+
+// ---------------------------------------------------------------------------
+// File-scope helpers shared by the MCA, DRAM, and PCIe harvest paths.
+// ---------------------------------------------------------------------------
+
+/** Build a flat byte-offset map: offsets[i] = byte start of handle i's
+ *  payload inside the concatenated eventData buffer. */
+static std::vector<size_t>
+    buildHandleDataOffsets(const std::vector<uint32_t>& dataTransferHandles,
+                           const std::vector<uint32_t>& eventDataSizes)
+{
+    std::vector<size_t> offsets(dataTransferHandles.size(), 0);
+    size_t offset = 0;
+    for (size_t i = 0; i < dataTransferHandles.size(); i++)
+    {
+        offsets[i] = offset;
+        if (i < eventDataSizes.size())
+        {
+            offset += eventDataSizes[i];
+        }
+    }
+    return offsets;
+}
+
+static bool isDebugLogDumpOpcode(uint8_t opcode)
+{
+    return opcode == opcodeDbgLogDump || opcode == opcodeDbgLogDumpAlt;
+}
+
+constexpr uint8_t overflowCategoryMca = 0x00;
+constexpr uint8_t overflowCategoryDramCecc = 0x01;
+constexpr uint8_t overflowCategoryPcie = 0x02;
+constexpr uint16_t overflowInstanceZero = 0x0000;
+
+/** Return {dataOffset, segSize} for the runtime-overflow payload matching
+ *  opcode=0x62, category=[23:16], and preferred instance/index=0x0000.
+ *  If instance 0 is absent for the category, fall back to the first
+ *  matching opcode/category entry. Returns {0, 0} when not found. */
+static std::pair<size_t, uint32_t> findSegmentForOverflowCategory(
+    uint8_t category, const std::vector<uint32_t>& dataTransferHandles,
+    const std::vector<uint32_t>& eventDataSizes,
+    const std::vector<size_t>& handleDataOffsets)
+{
+    std::pair<size_t, uint32_t> fallback{0, 0};
+
+    for (size_t i = 0; i < dataTransferHandles.size(); i++)
+    {
+        uint8_t opcode =
+            static_cast<uint8_t>((dataTransferHandles[i] >> 24) & 0xFF);
+        uint8_t handleCategory =
+            static_cast<uint8_t>((dataTransferHandles[i] >> 16) & 0xFF);
+        uint16_t instance =
+            static_cast<uint16_t>(dataTransferHandles[i] & 0xFFFF);
+
+        if (opcode != opcodeDbgLogDumpAlt || handleCategory != category)
+        {
+            continue;
+        }
+
+        uint32_t segSize = (i < eventDataSizes.size()) ? eventDataSizes[i] : 0;
+
+        if (instance == overflowInstanceZero)
+        {
+            return {handleDataOffsets[i], segSize};
+        }
+
+        if (fallback.second == 0)
+        {
+            fallback = {handleDataOffsets[i], segSize};
+        }
+    }
+
+    return fallback;
+}
 
 Manager::Manager(amd::ras::config::Manager& manager,
                  sdbusplus::asio::object_server& objectServer,
@@ -532,12 +609,24 @@ void Manager::handlePldmRasEvent(sdbusplus::message_t& msg)
             lg2::error(
                 "PLDM RAS Event: MCA error counter overflow on {TERMINUS}",
                 "TERMINUS", terminusName);
+            handleMcaOverflowError(eventData, dataTransferHandles,
+                                   eventDataSizes, socNum);
             break;
 
         case pldm::eventIdDramCeccOverflow:
             lg2::error(
                 "PLDM RAS Event: DRAM CECC error counter overflow on {TERMINUS}",
                 "TERMINUS", terminusName);
+            handleDramCeccOverflowError(eventData, dataTransferHandles,
+                                        eventDataSizes, socNum);
+            break;
+
+        case pldm::eventIdPcieErrOverflow:
+            lg2::error(
+                "PLDM RAS Event: PCIE error counter overflow on {TERMINUS}",
+                "TERMINUS", terminusName);
+            handlePcieErrOverflowError(eventData, dataTransferHandles,
+                                       eventDataSizes, socNum);
             break;
 
         case pldm::eventIdNonMcaCoreShutdown:
@@ -721,7 +810,7 @@ void Manager::harvestMcaDataBanksOverPldm(
     }
 
     // ---------------------------------------------------------------
-    // Step 2: Locate the MCA handle (opcode=0x5C, DBG_LOG_ID=32) and
+    // Step 2: Locate the MCA handle (opcode=0x5C/0x62, DBG_LOG_ID=32) and
     //         determine how many MCA banks the firmware sent.
     //         dataTransferHandle layout: [31:24]=opcode [23:16]=DBG_LOG_ID
     //                                    [15:0]=instance
@@ -734,7 +823,7 @@ void Manager::harvestMcaDataBanksOverPldm(
     {
         uint8_t opcode = (dataTransferHandles[i] >> 24) & 0xFF;
         uint8_t dbgLogId = (dataTransferHandles[i] >> 16) & 0xFF;
-        if (opcode == opcodeDbgLogDump && dbgLogId == mcaDebugLogId)
+        if (isDebugLogDumpOpcode(opcode) && dbgLogId == mcaDebugLogId)
         {
             mcaSegSize = (i < eventDataSizes.size()) ? eventDataSizes[i] : 0;
             mcaDataOffset = handleDataOffsets[i];
@@ -816,7 +905,7 @@ void Manager::harvestMcaDataBanksOverPldm(
     {
         uint8_t opcode = (dataTransferHandles[i] >> 24) & 0xFF;
         uint8_t dbgLogId = (dataTransferHandles[i] >> 16) & 0xFF;
-        if (opcode != opcodeDbgLogDump || dbgLogId == mcaDebugLogId)
+        if (!isDebugLogDumpOpcode(opcode) || dbgLogId == mcaDebugLogId)
         {
             continue;
         }
@@ -835,7 +924,7 @@ void Manager::harvestMcaDataBanksOverPldm(
         {
             uint8_t opcode = (dataTransferHandles[i] >> 24) & 0xFF;
             uint8_t dbgLogId = (dataTransferHandles[i] >> 16) & 0xFF;
-            if (opcode == opcodeDbgLogDump && dbgLogId == blkId)
+            if (isDebugLogDumpOpcode(opcode) && dbgLogId == blkId)
             {
                 instanceHandleIdxs.push_back(i);
             }
@@ -939,6 +1028,353 @@ bool Manager::readEventDataFromFd(int fd, uint32_t eventDataSize,
     lg2::info("Read {BYTES} bytes of event data from fd", "BYTES",
               totalBytesRead);
     return true;
+}
+
+void Manager::handleRuntimeOverflowError(
+    const char* journalMessage, const char* overflowType,
+    const char* thresholdEnableAttr, const char* thresholdCountAttr,
+    OverflowHarvestHandler harvestHandler,
+    const std::vector<uint8_t>& eventData,
+    const std::vector<uint32_t>& dataTransferHandles,
+    const std::vector<uint32_t>& eventDataSizes, uint8_t socNum)
+{
+    sd_journal_send("MESSAGE=%s", journalMessage, "PRIORITY=%i", LOG_ERR,
+                    "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
+                    "REDFISH_MESSAGE_ARGS=%s", journalMessage, NULL);
+
+    if (!(this->*harvestHandler)(eventData, dataTransferHandles, eventDataSizes,
+                                 socNum))
+    {
+        lg2::info(
+            "PLDM {TYPE} overflow received without runtime payload on socket {SOC}",
+            "TYPE", overflowType, "SOC", socNum);
+    }
+
+    uint64_t thresholdCount =
+        configMgr.getThresholdCount(thresholdEnableAttr, thresholdCountAttr);
+    configMgr.incrementCorrectableOtherError(socNum, thresholdCount);
+    configMgr.updateErrorCountDbus();
+    configMgr.saveErrorCounts();
+}
+
+void Manager::handleMcaOverflowError(
+    const std::vector<uint8_t>& eventData,
+    const std::vector<uint32_t>& dataTransferHandles,
+    const std::vector<uint32_t>& eventDataSizes, uint8_t socNum)
+{
+    handleRuntimeOverflowError(
+        "MCA runtime error counter overflow occured", "MCA",
+        "McaErrThresholdEnable", "McaErrThresholdCount",
+        &Manager::harvestMcaRuntimeOverflowOverPldm, eventData,
+        dataTransferHandles, eventDataSizes, socNum);
+}
+
+bool Manager::harvestMcaRuntimeOverflowOverPldm(
+    const std::vector<uint8_t>& eventData,
+    const std::vector<uint32_t>& dataTransferHandles,
+    const std::vector<uint32_t>& eventDataSizes, uint8_t socNum)
+{
+    std::unique_lock lock(harvestMutex);
+
+    auto handleDataOffsets =
+        buildHandleDataOffsets(dataTransferHandles, eventDataSizes);
+    auto [mcaDataOffset, mcaSegSize] =
+        findSegmentForOverflowCategory(overflowCategoryMca, dataTransferHandles,
+                                       eventDataSizes, handleDataOffsets);
+
+    uint16_t sectionCount = static_cast<uint16_t>(mcaSegSize / mcaDataBankLen);
+    if (sectionCount == 0)
+    {
+        lg2::info("No runtime MCA sections found for socket {SOC}", "SOC",
+                  socNum);
+        return false;
+    }
+
+    if (sectionCount > 32)
+    {
+        lg2::warning(
+            "Invalid runtime MCA section count {COUNT}, clamping to 32",
+            "COUNT", sectionCount);
+        sectionCount = 32;
+    }
+
+    return harvestRuntimeOverflowSections(mcaPtr, eventData, mcaDataOffset,
+                                          sectionCount, socNum, runtimeMcaErr);
+}
+
+bool Manager::harvestRuntimeOverflowSections(
+    std::shared_ptr<McaRuntimeCperRecord>& ptr,
+    const std::vector<uint8_t>& eventData, size_t dataOffset,
+    uint16_t sectionCount, uint8_t socNum, std::string_view errType)
+{
+    if (ptr == nullptr)
+    {
+        ptr = std::make_shared<McaRuntimeCperRecord>();
+    }
+
+    ptr->SectionDescriptor = new EFI_ERROR_SECTION_DESCRIPTOR[sectionCount];
+    std::memset(ptr->SectionDescriptor, 0,
+                sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount);
+
+    ptr->McaErrorInfo = new RUNTIME_ERROR_INFO[sectionCount];
+    std::memset(ptr->McaErrorInfo, 0,
+                sizeof(RUNTIME_ERROR_INFO) * sectionCount);
+
+    std::vector<uint32_t> severity(sectionCount, 2);
+    std::vector<uint64_t> checkInfo(sectionCount, 0);
+
+    for (uint16_t i = 0; i < sectionCount; i++)
+    {
+        size_t bankStart = dataOffset + static_cast<size_t>(i) * mcaDataBankLen;
+        size_t available = 0;
+        if (bankStart < eventData.size())
+        {
+            available = std::min(static_cast<size_t>(mcaDataBankLen),
+                                 eventData.size() - bankStart);
+            std::memcpy(ptr->McaErrorInfo[i].DumpData, &eventData[bankStart],
+                        available);
+        }
+
+        if (available < mcaDataBankLen)
+        {
+            const size_t startWord = available / sizeof(uint32_t);
+            for (size_t w = startWord; w < length32; w++)
+            {
+                ptr->McaErrorInfo[i].DumpData[w] = badData;
+            }
+        }
+
+        uint64_t mcaStatusRegister =
+            (static_cast<uint64_t>(
+                 ptr->McaErrorInfo[i].DumpData[mcaStatusHiOffset / 4])
+             << 32) |
+            static_cast<uint64_t>(
+                ptr->McaErrorInfo[i].DumpData[mcaStatusLoOffset / 4]);
+
+        checkInfo[i] = 0;
+        checkInfo[i] |= ((mcaStatusRegister >> 57) & 1ULL) << 19;
+        checkInfo[i] |= ((mcaStatusRegister >> 61) & 1ULL) << 20;
+        checkInfo[i] |= ((mcaStatusRegister >> 62) & 1ULL) << 23;
+        checkInfo[i] |= (5ULL << 16);
+
+        if (((mcaStatusRegister & (1ULL << 61)) == 0) &&
+            ((mcaStatusRegister & (1ULL << 44)) == 0))
+        {
+            severity[i] = 2; // Non-fatal corrected
+        }
+        else if ((((mcaStatusRegister & (1ULL << 61)) == 0) &&
+                  ((mcaStatusRegister & (1ULL << 44)) != 0)) ||
+                 (((mcaStatusRegister & (1ULL << 61)) != 0) &&
+                  ((mcaStatusRegister & (1ULL << 57)) == 0)))
+        {
+            severity[i] = 0; // Non-fatal uncorrected
+        }
+
+        std::snprintf(ptr->SectionDescriptor[i].FruString,
+                      sizeof(ptr->SectionDescriptor[i].FruString), "P%u",
+                      socNum);
+    }
+
+    amd::ras::util::cper::dumpProcErrorInfoSection(
+        ptr, sectionCount, checkInfo.data(), 0, static_cast<uint8_t>(cpuCount),
+        cpuId);
+
+    uint32_t highestSeverity = amd::ras::util::cper::sevInformational;
+    amd::ras::util::cper::calculateSeverity(severity.data(), sectionCount,
+                                            &highestSeverity, errType);
+
+    amd::ras::util::cper::dumpHeader(ptr, sectionCount, highestSeverity,
+                                     errType, boardId, recordId);
+
+    amd::ras::util::cper::dumpErrorDescriptor(ptr, sectionCount, errType,
+                                              severity.data(), progId);
+
+    amd::ras::util::cper::createFile(ptr, errType, sectionCount, errCount,
+                                     node);
+    amd::ras::util::cper::exportToDBus(errCount, ptr->Header.TimeStamp,
+                                       objectServer, systemBus, node);
+    amd::ras::util::cper::updateIndexFile(errCount, node);
+
+    delete[] ptr->SectionDescriptor;
+    ptr->SectionDescriptor = nullptr;
+    delete[] ptr->McaErrorInfo;
+    ptr->McaErrorInfo = nullptr;
+    ptr = nullptr;
+
+    return true;
+}
+
+bool Manager::harvestRuntimeOverflowSections(
+    std::shared_ptr<PcieRuntimeCperRecord>& ptr,
+    const std::vector<uint8_t>& eventData, size_t dataOffset,
+    uint16_t sectionCount, uint8_t socNum, std::string_view errType)
+{
+    constexpr uint32_t pcieDataBankLen =
+        static_cast<uint32_t>(length91 * sizeof(uint32_t));
+
+    if (ptr == nullptr)
+    {
+        ptr = std::make_shared<PcieRuntimeCperRecord>();
+    }
+
+    ptr->SectionDescriptor = new EFI_ERROR_SECTION_DESCRIPTOR[sectionCount];
+    std::memset(ptr->SectionDescriptor, 0,
+                sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount);
+
+    ptr->PcieErrorData = new EFI_AMD_PCIE_ERROR_DATA[sectionCount];
+    std::memset(ptr->PcieErrorData, 0,
+                sizeof(EFI_AMD_PCIE_ERROR_DATA) * sectionCount);
+
+    std::vector<uint32_t> severity(sectionCount, 2);
+
+    for (uint16_t i = 0; i < sectionCount; i++)
+    {
+        size_t sectionStart =
+            dataOffset + static_cast<size_t>(i) * pcieDataBankLen;
+        size_t available = 0;
+        if (sectionStart < eventData.size())
+        {
+            available = std::min(static_cast<size_t>(pcieDataBankLen),
+                                 eventData.size() - sectionStart);
+            std::memcpy(ptr->PcieErrorData[i].PcieData,
+                        &eventData[sectionStart], available);
+        }
+
+        if (available < pcieDataBankLen)
+        {
+            const size_t startWord = available / sizeof(uint32_t);
+            for (size_t w = startWord; w < length91; w++)
+            {
+                ptr->PcieErrorData[i].PcieData[w] = badData;
+            }
+        }
+
+        // PCIe severity derived from root error status (first DWORD),
+        // mirroring APML dumpProcErrorSection behavior for category==2.
+        uint32_t rootErrStatus = ptr->PcieErrorData[i].PcieData[0];
+        severity[i] = rootErrStatus & 0xFF;
+
+        std::snprintf(ptr->SectionDescriptor[i].FruString,
+                      sizeof(ptr->SectionDescriptor[i].FruString), "P%u",
+                      socNum);
+    }
+
+    uint32_t highestSeverity = amd::ras::util::cper::sevInformational;
+    amd::ras::util::cper::calculateSeverity(severity.data(), sectionCount,
+                                            &highestSeverity, errType);
+
+    amd::ras::util::cper::dumpHeader(ptr, sectionCount, highestSeverity,
+                                     errType, boardId, recordId);
+
+    amd::ras::util::cper::dumpErrorDescriptor(ptr, sectionCount, errType,
+                                              severity.data(), progId);
+
+    amd::ras::util::cper::createFile(ptr, errType, sectionCount, errCount,
+                                     node);
+    amd::ras::util::cper::exportToDBus(errCount, ptr->Header.TimeStamp,
+                                       objectServer, systemBus, node);
+    amd::ras::util::cper::updateIndexFile(errCount, node);
+
+    delete[] ptr->SectionDescriptor;
+    ptr->SectionDescriptor = nullptr;
+    delete[] ptr->PcieErrorData;
+    ptr->PcieErrorData = nullptr;
+    ptr = nullptr;
+
+    return true;
+}
+
+void Manager::handleDramCeccOverflowError(
+    const std::vector<uint8_t>& eventData,
+    const std::vector<uint32_t>& dataTransferHandles,
+    const std::vector<uint32_t>& eventDataSizes, uint8_t socNum)
+{
+    handleRuntimeOverflowError(
+        "DRAM CECC runtime error counter overflow occured", "DRAM CECC",
+        "DramCeccErrThresholdEnable", "DramCeccErrThresholdCount",
+        &Manager::harvestDramCeccRuntimeOverflowOverPldm, eventData,
+        dataTransferHandles, eventDataSizes, socNum);
+}
+
+bool Manager::harvestDramCeccRuntimeOverflowOverPldm(
+    const std::vector<uint8_t>& eventData,
+    const std::vector<uint32_t>& dataTransferHandles,
+    const std::vector<uint32_t>& eventDataSizes, uint8_t socNum)
+{
+    std::unique_lock lock(harvestMutex);
+
+    auto handleDataOffsets =
+        buildHandleDataOffsets(dataTransferHandles, eventDataSizes);
+    auto [dramDataOffset, dramSegSize] = findSegmentForOverflowCategory(
+        overflowCategoryDramCecc, dataTransferHandles, eventDataSizes,
+        handleDataOffsets);
+
+    uint16_t sectionCount = static_cast<uint16_t>(dramSegSize / mcaDataBankLen);
+    if (sectionCount == 0)
+    {
+        lg2::info("No runtime DRAM CECC sections found for socket {SOC}", "SOC",
+                  socNum);
+        return false;
+    }
+
+    if (sectionCount > 32)
+    {
+        lg2::warning(
+            "Invalid runtime DRAM CECC section count {COUNT}, clamping to 32",
+            "COUNT", sectionCount);
+        sectionCount = 32;
+    }
+
+    return harvestRuntimeOverflowSections(dramPtr, eventData, dramDataOffset,
+                                          sectionCount, socNum, runtimeDramErr);
+}
+
+void Manager::handlePcieErrOverflowError(
+    const std::vector<uint8_t>& eventData,
+    const std::vector<uint32_t>& dataTransferHandles,
+    const std::vector<uint32_t>& eventDataSizes, uint8_t socNum)
+{
+    handleRuntimeOverflowError(
+        "PCIE runtime error counter overflow occured", "PCIe",
+        "PcieErrThresholdEnable", "PcieErrThresholdCount",
+        &Manager::harvestPcieRuntimeOverflowOverPldm, eventData,
+        dataTransferHandles, eventDataSizes, socNum);
+}
+
+bool Manager::harvestPcieRuntimeOverflowOverPldm(
+    const std::vector<uint8_t>& eventData,
+    const std::vector<uint32_t>& dataTransferHandles,
+    const std::vector<uint32_t>& eventDataSizes, uint8_t socNum)
+{
+    std::unique_lock lock(harvestMutex);
+
+    auto handleDataOffsets =
+        buildHandleDataOffsets(dataTransferHandles, eventDataSizes);
+    auto [pcieDataOffset, pcieSegSize] = findSegmentForOverflowCategory(
+        overflowCategoryPcie, dataTransferHandles, eventDataSizes,
+        handleDataOffsets);
+
+    constexpr uint32_t pcieDataBankLen =
+        static_cast<uint32_t>(length91 * sizeof(uint32_t));
+    uint16_t sectionCount =
+        static_cast<uint16_t>(pcieSegSize / pcieDataBankLen);
+    if (sectionCount == 0)
+    {
+        lg2::info("No runtime PCIe sections found for socket {SOC}", "SOC",
+                  socNum);
+        return false;
+    }
+
+    if (sectionCount > 32)
+    {
+        lg2::warning(
+            "Invalid runtime PCIe section count {COUNT}, clamping to 32",
+            "COUNT", sectionCount);
+        sectionCount = 32;
+    }
+
+    return harvestRuntimeOverflowSections(pciePtr, eventData, pcieDataOffset,
+                                          sectionCount, socNum, runtimePcieErr);
 }
 
 } // namespace pldm
