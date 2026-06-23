@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 extern "C"
@@ -33,6 +34,7 @@ constexpr uint16_t eventIdMcaOverflow = 0x4C08;
 constexpr uint16_t eventIdDramCeccOverflow = 0x4C10;
 constexpr uint16_t eventIdNonMcaCoreShutdown = 0x4C40;
 constexpr uint16_t eventIdMcaCoreShutdown = 0x4C41;
+constexpr uint16_t eventIdPcieErrOverflow = 0x4C20;
 
 /** @brief DataTransferHandle opcode in upper byte */
 constexpr uint8_t mcaDebugLogId = 32;
@@ -145,6 +147,142 @@ class Manager : public amd::ras::Manager
      *  @param[in] msg - The D-Bus message containing the PLDM event.
      */
     void handlePldmRasEvent(sdbusplus::message_t& msg);
+
+    using OverflowHarvestHandler = bool (Manager::*)(
+        const std::vector<uint8_t>& eventData,
+        const std::vector<uint32_t>& dataTransferHandles,
+        const std::vector<uint32_t>& eventDataSizes, uint8_t socNum);
+
+    /** @brief Common handling path for runtime overflow PLDM events.
+     *
+     *  @details Emits the Redfish journal entry, attempts event-specific
+     *  runtime payload harvesting, and updates correctable error counters.
+     */
+    void handleRuntimeOverflowError(
+        const char* journalMessage, const char* overflowType,
+        const char* thresholdEnableAttr, const char* thresholdCountAttr,
+        OverflowHarvestHandler harvestHandler,
+        const std::vector<uint8_t>& eventData,
+        const std::vector<uint32_t>& dataTransferHandles,
+        const std::vector<uint32_t>& eventDataSizes, uint8_t socNum);
+
+    /** @brief Handles PLDM MCA runtime overflow events.
+     *
+     *  @details Logs overflow, harvests MCA runtime data from PLDM payload into
+     *  runtime CPER, and updates correctable error counters.
+     *
+     *  @param[in] eventData - Raw event data from PMFW.
+     *  @param[in] dataTransferHandles - Handle metadata for event payload.
+     *  @param[in] eventDataSizes - Per-handle payload sizes.
+     *  @param[in] socNum - Socket number derived from terminus info.
+     */
+    void handleMcaOverflowError(
+        const std::vector<uint8_t>& eventData,
+        const std::vector<uint32_t>& dataTransferHandles,
+        const std::vector<uint32_t>& eventDataSizes, uint8_t socNum);
+
+    /** @brief Harvest MCA runtime CPER sections from PLDM overflow payload.
+     *
+     *  @details Extracts MCA bank payload for overflow events and builds a
+     *  runtime MCA CPER record that mirrors APML runtime overflow behavior.
+     *
+     *  @return true if a runtime CPER record was generated, otherwise false.
+     */
+    bool harvestMcaRuntimeOverflowOverPldm(
+        const std::vector<uint8_t>& eventData,
+        const std::vector<uint32_t>& dataTransferHandles,
+        const std::vector<uint32_t>& eventDataSizes, uint8_t socNum);
+
+    /** @brief Common per-bank copy, severity classification, and CPER
+     *  emission logic for runtime overflow section harvesting.
+     *
+     *  @param[in,out] ptr        - Shared CPER record; allocated if null,
+     *                              reset to null after file creation.
+     *  @param[in]     eventData  - Flat event payload buffer.
+     *  @param[in]     dataOffset - Byte offset into eventData for this type.
+     *  @param[in]     sectionCount - Number of banks/sections to process.
+     *  @param[in]     socNum     - Socket number.
+     *  @param[in]     errType    - CPER error type tag for runtime overflow
+     *                             records.
+     *  @return true (a CPER record was created and exported).
+     */
+    bool harvestRuntimeOverflowSections(
+        std::shared_ptr<McaRuntimeCperRecord>& ptr,
+        const std::vector<uint8_t>& eventData, size_t dataOffset,
+        uint16_t sectionCount, uint8_t socNum, std::string_view errType);
+
+    /** @brief Common per-section copy and CPER emission logic for PCIe
+     *  runtime overflow section harvesting.
+     *
+     *  @param[in,out] ptr        - Shared PCIe CPER record; allocated if
+     *                              null, reset to null after file creation.
+     *  @param[in]     eventData  - Flat event payload buffer.
+     *  @param[in]     dataOffset - Byte offset into eventData for PCIe data.
+     *  @param[in]     sectionCount - Number of PCIe sections to process.
+     *  @param[in]     socNum     - Socket number.
+     *  @param[in]     errType    - CPER error type tag for runtime overflow
+     *                             records.
+     *  @return true (a CPER record was created and exported).
+     */
+    bool harvestRuntimeOverflowSections(
+        std::shared_ptr<PcieRuntimeCperRecord>& ptr,
+        const std::vector<uint8_t>& eventData, size_t dataOffset,
+        uint16_t sectionCount, uint8_t socNum, std::string_view errType);
+
+    /** @brief Handles PLDM DRAM CECC runtime overflow events.
+     *
+     *  @details Logs overflow, harvests DRAM CECC runtime data from PLDM
+     *  payload into runtime CPER, and updates correctable error counters.
+     *
+     *  @param[in] eventData - Raw event data from PMFW.
+     *  @param[in] dataTransferHandles - Handle metadata for event payload.
+     *  @param[in] eventDataSizes - Per-handle payload sizes.
+     *  @param[in] socNum - Socket number derived from terminus info.
+     */
+    void handleDramCeccOverflowError(
+        const std::vector<uint8_t>& eventData,
+        const std::vector<uint32_t>& dataTransferHandles,
+        const std::vector<uint32_t>& eventDataSizes, uint8_t socNum);
+
+    /** @brief Harvest DRAM CECC runtime CPER sections from PLDM overflow
+     *  payload.
+     *
+     *  @details Extracts DRAM CECC bank payload for overflow events and builds
+     *  a runtime DRAM CPER record that mirrors APML runtime overflow behavior.
+     *
+     *  @return true if a runtime CPER record was generated, otherwise false.
+     */
+    bool harvestDramCeccRuntimeOverflowOverPldm(
+        const std::vector<uint8_t>& eventData,
+        const std::vector<uint32_t>& dataTransferHandles,
+        const std::vector<uint32_t>& eventDataSizes, uint8_t socNum);
+
+    /** @brief Handles PLDM PCIe runtime overflow events.
+     *
+     *  @details Logs overflow, harvests PCIe runtime data from PLDM payload
+     *  into runtime CPER, and updates correctable error counters.
+     *
+     *  @param[in] eventData - Raw event data from PMFW.
+     *  @param[in] dataTransferHandles - Handle metadata for event payload.
+     *  @param[in] eventDataSizes - Per-handle payload sizes.
+     *  @param[in] socNum - Socket number derived from terminus info.
+     */
+    void handlePcieErrOverflowError(
+        const std::vector<uint8_t>& eventData,
+        const std::vector<uint32_t>& dataTransferHandles,
+        const std::vector<uint32_t>& eventDataSizes, uint8_t socNum);
+
+    /** @brief Harvest PCIe runtime CPER sections from PLDM overflow payload.
+     *
+     *  @details Extracts PCIe error data payload for overflow events and builds
+     *  a runtime PCIe CPER record that mirrors APML runtime overflow behavior.
+     *
+     *  @return true if a runtime CPER record was generated, otherwise false.
+     */
+    bool harvestPcieRuntimeOverflowOverPldm(
+        const std::vector<uint8_t>& eventData,
+        const std::vector<uint32_t>& dataTransferHandles,
+        const std::vector<uint32_t>& eventDataSizes, uint8_t socNum);
 
     /** @brief Read GPIO/UEVENT alert config for sysMgmtCtrlErr reception. */
     void configureSysMgmtCtrlErrAlertHandling();
