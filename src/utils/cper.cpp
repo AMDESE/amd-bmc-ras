@@ -325,12 +325,14 @@ void dumpProcessorError(const std::shared_ptr<FatalCperRecord>& fatalPtr,
               bits 8-13: Number of Processor Context Info structures present
               bits 14-63: RSVD*/
             fatalPtr->ErrorRecord[i].ProcError.ValidFields = tripleBit;
-            fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[0] = cpuId[i].eax;
-            fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[doubleBit] =
-                cpuId[i].ebx;
-            fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[quadBit] =
-                cpuId[i].ecx;
-            fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[hexBit] = cpuId[i].edx;
+            memcpy(&fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[0],
+                   &cpuId[i].eax, sizeof(uint32_t));
+            memcpy(&fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[doubleBit * 4],
+                   &cpuId[i].ebx, sizeof(uint32_t));
+            memcpy(&fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[quadBit * 4],
+                   &cpuId[i].ecx, sizeof(uint32_t));
+            memcpy(&fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[hexBit * 4],
+                   &cpuId[i].edx, sizeof(uint32_t));
             fatalPtr->ErrorRecord[i].ProcError.ApicId =
                 ((cpuId[i].ebx >> 24) & maxByte);
 
@@ -354,13 +356,14 @@ void dumpProcErrorInfoSection(
 
         for (size_t rec = 0; rec < cpuCount; rec++)
         {
-            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[0] = cpuId[rec].eax;
-            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[doubleBit] =
-                cpuId[rec].ebx;
-            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[quadBit] =
-                cpuId[rec].ecx;
-            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[hexBit] =
-                cpuId[rec].edx;
+            memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[0],
+                   &cpuId[rec].eax, sizeof(uint32_t));
+            memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[doubleBit * 4],
+                   &cpuId[rec].ebx, sizeof(uint32_t));
+            memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[quadBit * 4],
+                   &cpuId[rec].ecx, sizeof(uint32_t));
+            memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[hexBit * 4],
+                   &cpuId[rec].edx, sizeof(uint32_t));
             procPtr->McaErrorInfo[i].ProcError.ApicId =
                 ((cpuId[rec].ebx >> 24) & maxByte);
         }
