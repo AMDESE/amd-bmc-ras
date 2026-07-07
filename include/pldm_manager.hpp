@@ -106,8 +106,8 @@ class Manager : public amd::ras::Manager
     bool pldmInitialized;
     // Indicates whether the platform-specific setup is complete
     bool platformInitialized;
-    // Indicates whether runtime error polling is supported for PLDM
-    bool runtimeErrPollingSupported;
+    // Indicates whether runtime errors are supported for PLDM
+    bool runtimeErrSupported;
 
     // D-Bus match rule for PLDM message poll events
     std::unique_ptr<sdbusplus::bus::match_t> pldmEventMatch;
@@ -306,6 +306,77 @@ class Manager : public amd::ras::Manager
 
     /** @brief Clear SBRMI alert mask bits needed for alert delivery. */
     void clearSbrmiAlertMask(uint8_t socNum);
+
+    /** @brief Set the RAS OOB configuration for a processor over PLDM.
+     *
+     *  @details Writes the 4-byte OOB configuration to the PLDM
+     *  NumericEffecter EffecterValue property for the given processor.
+     *  The byte layout is:
+     *  [core_mca_err_reporting_en, dram_cecc_oob_ec_mode,
+     *   pcie_err_reporting_en, mca_oob_misc0_ec_enable].
+     *
+     *  @param[in] socNum - Processor/socket number.
+     *  @param[in] oobConfig - 4-byte OOB configuration payload.
+     *  @return true on success, false on failure.
+     */
+    bool setRasOobConfigOverPldm(uint8_t socNum,
+                                 const std::vector<uint8_t>& oobConfig);
+
+    /** @brief Get the RAS OOB configuration for a processor over PLDM.
+     *
+     *  @details Reads the PLDM NumericEffecter PresentValue property for
+     *  the given processor and returns the current 4-byte OOB configuration.
+     *
+     *  @param[in] socNum - Processor/socket number.
+     *  @param[out] oobConfig - Populated with the current OOB configuration.
+     *  @return true on success, false on failure.
+     */
+    bool getRasOobConfigOverPldm(uint8_t socNum,
+                                 std::vector<uint8_t>& oobConfig);
+
+    /** @brief Set the RAS error threshold for a processor over PLDM.
+     *
+     *  @details Writes the 4-byte error threshold to the PLDM
+     *  NumericEffecter EffecterValue property for the given processor.
+     *  The byte layout is:
+     *  [err_type, count_lo, count_hi, max_intrupt_rate].
+     *
+     *  @param[in] socNum - Processor/socket number.
+     *  @param[in] threshold - 4-byte error threshold payload.
+     *  @return true on success, false on failure.
+     */
+    bool setRasErrThresholdOverPldm(uint8_t socNum,
+                                    const std::vector<uint8_t>& threshold);
+
+    /** @brief Build and program one error threshold over PLDM.
+     *
+     *  @details Constructs the 4-byte error threshold payload for the given
+     *  error type and count and writes it to the PLDM error threshold
+     *  effecter for the processor. The OOB configuration must be programmed
+     *  separately (see configureErrThresholdsOverPldm).
+     *
+     *  @param[in] socNum - Processor/socket number.
+     *  @param[in] errType - Error type code (0=MCA, 1=DRAM CECC, 2=PCIe,
+     *                       3=MCA UMC).
+     *  @param[in] errCount - Error count threshold (16-bit).
+     */
+    void writeErrThresholdOverPldm(uint8_t socNum, uint8_t errType,
+                                   uint64_t errCount);
+
+    /** @brief Configure OOB error thresholds over PLDM.
+     *
+     *  @details Reads the MCA, MCA UMC, DRAM CECC and PCIe AER threshold
+     *  enable flags and counts from the RAS configuration. For every active
+     *  processor it programs a single combined OOB configuration (the union
+     *  of the bits required by every enabled threshold type) with one write,
+     *  then programs each enabled error threshold. Runtime error polling is
+     *  not supported in PLDM mode, so only thresholding is configured.
+     *
+     *  Programming the OOB configuration in a single write avoids clobbering
+     *  bits from previously enabled threshold types, since each write to the
+     *  effecter replaces the whole value.
+     */
+    void configureErrThresholdsOverPldm();
 
     /** @brief Reads event data from a file descriptor.
      *
