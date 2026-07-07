@@ -66,7 +66,7 @@ class Manager : public amd::ras::Manager
 
   private:
     size_t whFamilyId;
-    size_t whModel;
+    std::vector<size_t> whModels;
     uint8_t progId;
     size_t contextType;
     uint64_t recordId;
