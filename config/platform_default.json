@@ -1,6 +1,6 @@
 {
   "CpuCount": 1,
-  "Model": "0x50",
+  "Model": ["0x50", "0x51"],
   "FamilyID": "0x1A",
   "DebugLogID": [
     1,
