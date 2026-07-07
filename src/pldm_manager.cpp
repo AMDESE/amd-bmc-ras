@@ -39,6 +39,45 @@ constexpr size_t mcaStatusLoOffset = 8;
 constexpr size_t mcaStatusHiOffset = 12;
 
 // ---------------------------------------------------------------------------
+// PLDM NumericEffecter D-Bus objects used to program the RAS OOB
+// configuration and error thresholds. These effecters are hosted by the
+// pldmd service (xyz.openbmc_project.PLDM). The values are exchanged as byte
+// arrays (D-Bus "ay") through the EffecterValue (set) and PresentValue (get)
+// properties.
+// ---------------------------------------------------------------------------
+constexpr const char* pldmService = "xyz.openbmc_project.PLDM";
+constexpr const char* numericEffecterIface =
+    "xyz.openbmc_project.Control.NumericEffecter";
+constexpr const char* effecterValueProperty = "EffecterValue";
+constexpr const char* presentValueProperty = "PresentValue";
+constexpr const char* controlsPathPrefix =
+    "/xyz/openbmc_project/controls/Processor";
+constexpr const char* oobConfigPathSuffix = "_BMCRasSetOOBConfig";
+constexpr const char* errThresholdPathSuffix = "_BMCRasSetErrThreshold";
+
+// OOB configuration byte layout (4 bytes).
+constexpr size_t oobConfigSize = 4;
+constexpr size_t coreMcaErrReportingEnByte = 0;
+constexpr size_t dramCeccOobEcModeByte = 1;
+constexpr size_t pcieErrReportingEnByte = 2;
+constexpr size_t mcaOobMisc0EcEnableByte = 3;
+
+// Error threshold byte layout (4 bytes).
+constexpr size_t errThresholdSize = 4;
+constexpr size_t errTypeByte = 0;
+constexpr size_t errCountLoByte = 1;
+constexpr size_t errCountHiByte = 2;
+constexpr size_t maxIntruptRateByte = 3;
+
+// Error type codes carried in the threshold payload.
+constexpr uint8_t errTypeMca = 0;
+constexpr uint8_t errTypeDramCecc = 1;
+constexpr uint8_t errTypePcie = 2;
+constexpr uint8_t errTypeMcaUmc = 3;
+
+constexpr uint8_t defaultMaxIntruptRate = 1;
+
+// ---------------------------------------------------------------------------
 // File-scope helpers shared by the MCA, DRAM, and PCIe harvest paths.
 // ---------------------------------------------------------------------------
 
@@ -118,7 +157,7 @@ Manager::Manager(amd::ras::config::Manager& manager,
                  boost::asio::io_context& io, std::string& node) :
     amd::ras::Manager(manager, node), objectServer(objectServer),
     systemBus(systemBus), io(io), pldmInitialized(false),
-    platformInitialized(false), runtimeErrPollingSupported(false)
+    platformInitialized(false), runtimeErrSupported(false)
 {}
 
 void Manager::onHostStateChanged(bool hostOff)
@@ -165,9 +204,11 @@ void Manager::platformInitialize()
                 clearSbrmiAlertMask(static_cast<uint8_t>(i));
             }
 
-            // TODO: Add support for runtime error polling for PLDM when the API
-            // is available.
-            runtimeErrPollingSupported = true;
+            // Runtime error polling (McaPollingEn, DramCeccPollingEn,
+            // PcieAerPollingEn) is not supported in PLDM mode. The OOB error
+            // thresholds are configured through the base-class configure()
+            // flow (see configure()).
+            runtimeErrSupported = true;
         }
         else
         {
@@ -188,15 +229,13 @@ void Manager::platformInitialize()
             clearSbrmiAlertMask(static_cast<uint8_t>(i));
         }
 
-        if (runtimeErrPollingSupported == true)
+        if (runtimeErrSupported == true)
         {
-            lg2::info("Setting MCA and DRAM OOB Config");
-            // TODO: Add support for setting MCA and DRAM OOB config for PLDM
-            // when the API is available.
-
-            lg2::info("Setting MCA and DRAM Error threshold");
-            // TODO: Add support for setting MCA and DRAM error threshold for
-            // PLDM when the API is available.
+            // Runtime error polling is not supported in PLDM mode; re-apply
+            // the OOB error thresholds after the host state transition.
+            lg2::info("Setting MCA, DRAM CECC and PCIe error thresholds over "
+                      "PLDM");
+            configureErrThresholdsOverPldm();
         }
     }
 }
@@ -243,6 +282,242 @@ void Manager::clearSbrmiAlertMask(uint8_t socNum)
                lg2::hex, sbrmiControlRegister);
 }
 
+bool Manager::setRasOobConfigOverPldm(uint8_t socNum,
+                                      const std::vector<uint8_t>& oobConfig)
+{
+    const std::string path = std::string(controlsPathPrefix) +
+                             std::to_string(socNum) + oobConfigPathSuffix;
+
+    try
+    {
+        auto method = systemBus->new_method_call(
+            pldmService, path.c_str(), "org.freedesktop.DBus.Properties",
+            "Set");
+        method.append(numericEffecterIface, effecterValueProperty,
+                      std::variant<std::vector<uint8_t>>(oobConfig));
+        systemBus->call(method);
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to set RAS OOB config over PLDM for processor "
+                   "P{PROCESSOR}: {ERROR}",
+                   "PROCESSOR", socNum, "ERROR", e.what());
+        return false;
+    }
+
+    lg2::info("BMC RAS OOB configuration set successfully for processor "
+              "P{PROCESSOR}",
+              "PROCESSOR", socNum);
+    return true;
+}
+
+bool Manager::getRasOobConfigOverPldm(uint8_t socNum,
+                                      std::vector<uint8_t>& oobConfig)
+{
+    const std::string path = std::string(controlsPathPrefix) +
+                             std::to_string(socNum) + oobConfigPathSuffix;
+
+    try
+    {
+        auto method = systemBus->new_method_call(
+            pldmService, path.c_str(), "org.freedesktop.DBus.Properties",
+            "Get");
+        method.append(numericEffecterIface, presentValueProperty);
+
+        auto reply = systemBus->call(method);
+        std::variant<std::vector<uint8_t>> value;
+        reply.read(value);
+        oobConfig = std::get<std::vector<uint8_t>>(value);
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to get RAS OOB config over PLDM for processor "
+                   "P{PROCESSOR}: {ERROR}",
+                   "PROCESSOR", socNum, "ERROR", e.what());
+        return false;
+    }
+
+    return true;
+}
+
+bool Manager::setRasErrThresholdOverPldm(uint8_t socNum,
+                                         const std::vector<uint8_t>& threshold)
+{
+    const std::string path = std::string(controlsPathPrefix) +
+                             std::to_string(socNum) + errThresholdPathSuffix;
+
+    try
+    {
+        auto method = systemBus->new_method_call(
+            pldmService, path.c_str(), "org.freedesktop.DBus.Properties",
+            "Set");
+        method.append(numericEffecterIface, effecterValueProperty,
+                      std::variant<std::vector<uint8_t>>(threshold));
+        systemBus->call(method);
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to set RAS error threshold over PLDM for processor "
+                   "P{PROCESSOR}: {ERROR}",
+                   "PROCESSOR", socNum, "ERROR", e.what());
+        return false;
+    }
+
+    lg2::info("BMC RAS error threshold set successfully for processor "
+              "P{PROCESSOR}",
+              "PROCESSOR", socNum);
+    return true;
+}
+
+void Manager::writeErrThresholdOverPldm(uint8_t socNum, uint8_t errType,
+                                        uint64_t errCount)
+{
+    std::vector<uint8_t> threshold(errThresholdSize, 0);
+    threshold[errTypeByte] = errType;
+    threshold[errCountLoByte] = static_cast<uint8_t>(errCount & 0xFF);
+    threshold[errCountHiByte] = static_cast<uint8_t>((errCount >> 8) & 0xFF);
+    threshold[maxIntruptRateByte] = defaultMaxIntruptRate;
+
+    setRasErrThresholdOverPldm(socNum, threshold);
+}
+
+void Manager::configureErrThresholdsOverPldm()
+{
+    amd::ras::config::Manager::AttributeValue mcaThreshold =
+        configMgr.getAttribute("McaThresholdEn");
+    bool* mcaThresholdEn = std::get_if<bool>(&mcaThreshold);
+
+    amd::ras::config::Manager::AttributeValue dramCeccThreshold =
+        configMgr.getAttribute("DramCeccThresholdEn");
+    bool* dramCeccThresholdEn = std::get_if<bool>(&dramCeccThreshold);
+
+    amd::ras::config::Manager::AttributeValue pcieAerThreshold =
+        configMgr.getAttribute("PcieAerThresholdEn");
+    bool* pcieAerThresholdEn = std::get_if<bool>(&pcieAerThreshold);
+
+    const bool mcaEnabled = (mcaThresholdEn != nullptr) && (*mcaThresholdEn);
+    const bool dramEnabled =
+        (dramCeccThresholdEn != nullptr) && (*dramCeccThresholdEn);
+    const bool pcieEnabled =
+        (pcieAerThresholdEn != nullptr) && (*pcieAerThresholdEn);
+
+    if (!mcaEnabled && !dramEnabled && !pcieEnabled)
+    {
+        lg2::info("No RAS error thresholds enabled; skipping PLDM OOB "
+                  "threshold configuration");
+        return;
+    }
+
+    // Build the combined OOB configuration (union of the bits required by
+    // every enabled threshold type). Each write to the OOB effecter replaces
+    // the whole value, so all bits must be programmed in a single write to
+    // avoid clobbering previously enabled threshold types.
+    std::vector<uint8_t> oobConfig(oobConfigSize, 0);
+
+    if (mcaEnabled)
+    {
+        oobConfig[coreMcaErrReportingEnByte] = 1;
+        oobConfig[mcaOobMisc0EcEnableByte] = 1;
+    }
+    if (dramEnabled)
+    {
+        oobConfig[dramCeccOobEcModeByte] = 1;
+        oobConfig[mcaOobMisc0EcEnableByte] = 1;
+    }
+    if (pcieEnabled)
+    {
+        oobConfig[pcieErrReportingEnByte] = 1;
+        oobConfig[coreMcaErrReportingEnByte] = 1;
+    }
+
+    for (size_t i : socIndex)
+    {
+        uint8_t socNum = static_cast<uint8_t>(i);
+
+        lg2::info("Setting RAS OOB configuration over PLDM for processor "
+                  "P{PROCESSOR}",
+                  "PROCESSOR", socNum);
+
+        if (!setRasOobConfigOverPldm(socNum, oobConfig))
+        {
+            lg2::error("Skipping error threshold programming for processor "
+                       "P{PROCESSOR}: OOB config set failed",
+                       "PROCESSOR", socNum);
+            continue;
+        }
+
+        if (mcaEnabled)
+        {
+            amd::ras::config::Manager::AttributeValue mcaErrThresholdCount =
+                configMgr.getAttribute("McaErrThresholdCnt");
+            int64_t* mcaErrThresholdCnt =
+                std::get_if<int64_t>(&mcaErrThresholdCount);
+
+            if (mcaErrThresholdCnt != nullptr)
+            {
+                lg2::info("Setting MCA error threshold over PLDM for processor "
+                          "P{PROCESSOR}",
+                          "PROCESSOR", socNum);
+                writeErrThresholdOverPldm(
+                    socNum, errTypeMca,
+                    static_cast<uint64_t>(*mcaErrThresholdCnt));
+            }
+
+            amd::ras::config::Manager::AttributeValue mcaUmcErrThresholdCount =
+                configMgr.getAttribute("McaUmcErrThresholdCnt");
+            int64_t* mcaUmcErrThresholdCnt =
+                std::get_if<int64_t>(&mcaUmcErrThresholdCount);
+
+            if (mcaUmcErrThresholdCnt != nullptr)
+            {
+                lg2::info("Setting MCA UMC error threshold over PLDM for "
+                          "processor P{PROCESSOR}",
+                          "PROCESSOR", socNum);
+                writeErrThresholdOverPldm(
+                    socNum, errTypeMcaUmc,
+                    static_cast<uint64_t>(*mcaUmcErrThresholdCnt));
+            }
+        }
+
+        if (dramEnabled)
+        {
+            amd::ras::config::Manager::AttributeValue
+                dramCeccErrThresholdCount =
+                    configMgr.getAttribute("DramCeccErrThresholdCnt");
+            int64_t* dramCeccErrThresholdCnt =
+                std::get_if<int64_t>(&dramCeccErrThresholdCount);
+
+            if (dramCeccErrThresholdCnt != nullptr)
+            {
+                lg2::info("Setting DRAM CECC error threshold over PLDM for "
+                          "processor P{PROCESSOR}",
+                          "PROCESSOR", socNum);
+                writeErrThresholdOverPldm(
+                    socNum, errTypeDramCecc,
+                    static_cast<uint64_t>(*dramCeccErrThresholdCnt));
+            }
+        }
+
+        if (pcieEnabled)
+        {
+            amd::ras::config::Manager::AttributeValue pcieAerErrThresholdCount =
+                configMgr.getAttribute("PcieAerErrThresholdCnt");
+            int64_t* pcieAerErrThresholdCnt =
+                std::get_if<int64_t>(&pcieAerErrThresholdCount);
+
+            if (pcieAerErrThresholdCnt != nullptr)
+            {
+                lg2::info("Setting PCIe AER error threshold over PLDM for "
+                          "processor P{PROCESSOR}",
+                          "PROCESSOR", socNum);
+                writeErrThresholdOverPldm(
+                    socNum, errTypePcie,
+                    static_cast<uint64_t>(*pcieAerErrThresholdCnt));
+            }
+        }
+    }
+}
+
 void Manager::init()
 {
     lg2::info("PLDM MANAGER INIT");
@@ -258,6 +533,15 @@ void Manager::configure()
 {
     lg2::info("PLDM MANAGER CONFIGURE");
     configureSysMgmtCtrlErrAlertHandling();
+
+    // Configuring the error thresholds is a common step across transports and
+    // is driven through the base-class configure() virtual. Runtime error
+    // polling is not supported in PLDM mode, so only the OOB error thresholds
+    // are programmed here.
+    if (runtimeErrSupported == true)
+    {
+        configureErrThresholdsOverPldm();
+    }
 }
 
 void Manager::registerEventHandler()
