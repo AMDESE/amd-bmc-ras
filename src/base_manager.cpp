@@ -415,8 +415,13 @@ void Manager::harvestBreakEvent(uint8_t socNum)
                                              breakEventBanks);
     amd::ras::util::cper::dumpContext(rcd, breakEventBanks, 0, socNum, ppin,
                                       uCode, breakEventContext);
-    std::memcpy(rcd->SectionDescriptor[socNum].FruString, &socNum,
-                sizeof(socNum));
+
+    for (uint16_t section = 0; section < sectionCount; ++section)
+    {
+        std::memset(rcd->SectionDescriptor[section].FruString, 0, 20);
+        std::strncpy(rcd->SectionDescriptor[section].FruString, "SmnError", 19);
+        rcd->SectionDescriptor[section].FruString[19] = '\0';
+    }
 
     for (size_t offset = 0; offset < regCount; ++offset)
     {
