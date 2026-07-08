@@ -35,7 +35,6 @@ constexpr std::string_view inventoryService =
     "xyz.openbmc_project.Inventory.Item.Cpu_info";
 constexpr std::string_view inventoryInterface =
     "xyz.openbmc_project.Inventory.Item.Cpu";
-constexpr int inventoryHarvestDelaySec = 5;
 
 void Manager::getCpuSocketInfo()
 {
@@ -124,8 +123,6 @@ void Manager::getCpuSocketInfo()
     if (*uCodeVersionFlag == true || *harvestPpinFlag == true)
     {
         sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
-
-        sleep(inventoryHarvestDelaySec);
 
         for (size_t i = 0; i < cpuCount; i++)
         {
