@@ -35,6 +35,7 @@ constexpr std::string_view inventoryService =
     "xyz.openbmc_project.Inventory.Item.Cpu_info";
 constexpr std::string_view inventoryInterface =
     "xyz.openbmc_project.Inventory.Item.Cpu";
+constexpr int inventoryHarvestDelaySec = 5;
 
 void Manager::getCpuSocketInfo()
 {
@@ -102,7 +103,7 @@ void Manager::getCpuSocketInfo()
     std::memset(uCode.get(), 0, cpuCount * sizeof(uint32_t));
 
     ppin = std::make_unique<uint64_t[]>(cpuCount);
-    std::memset(uCode.get(), 0, cpuCount * sizeof(uint64_t));
+    std::memset(ppin.get(), 0, cpuCount * sizeof(uint64_t));
 
     inventoryPath = std::make_unique<std::string[]>(cpuCount);
 
@@ -116,48 +117,57 @@ void Manager::getCpuSocketInfo()
         configMgr.getAttribute("HarvestMicrocode");
     bool* uCodeVersionFlag = std::get_if<bool>(&uCodeVersion);
 
-    if (*uCodeVersionFlag == true)
-    {
-        sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
-
-        for (size_t i = 0; i < cpuCount; i++)
-        {
-            std::string microCode = amd::ras::util::getProperty<std::string>(
-                bus, inventoryService.data(), inventoryPath[i].c_str(),
-                inventoryInterface.data(), "Microcode");
-
-            if (microCode.empty())
-            {
-                lg2::error("Failed to read ucode revision");
-            }
-            else
-            {
-                uCode[i] = std::stoul(microCode, nullptr, base16);
-            }
-        }
-    }
-
     amd::ras::config::Manager::AttributeValue harvestPpin =
         configMgr.getAttribute("HarvestPPIN");
     bool* harvestPpinFlag = std::get_if<bool>(&harvestPpin);
 
-    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
-
-    if (*harvestPpinFlag == true)
+    if (*uCodeVersionFlag == true || *harvestPpinFlag == true)
     {
+        sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+
+        sleep(inventoryHarvestDelaySec);
+
         for (size_t i = 0; i < cpuCount; i++)
         {
-            std::string ppinStr = amd::ras::util::getProperty<std::string>(
-                bus, inventoryService.data(), inventoryPath[i].c_str(),
-                inventoryInterface.data(), "Id");
+            if (*uCodeVersionFlag == true)
+            {
+                uint32_t microCode = amd::ras::util::getProperty<uint32_t>(
+                    bus, inventoryService.data(), inventoryPath[i].c_str(),
+                    inventoryInterface.data(), "Microcode");
 
-            if (ppinStr.empty())
-            {
-                lg2::error("Failed to read ppin");
+                if (microCode == 0)
+                {
+                    lg2::error(
+                        "Failed to read ucode revision for socket {SOC} from {PATH}",
+                        "SOC", socIndex[i], "PATH", inventoryPath[i]);
+                }
+                else
+                {
+                    uCode[i] = microCode;
+                    lg2::info(
+                        "Read ucode revision for socket {SOC}: {UCODE}",
+                        "SOC", socIndex[i], "UCODE", lg2::hex, microCode);
+                }
             }
-            else
+
+            if (*harvestPpinFlag == true)
             {
-                ppin[i] = std::stoul(ppinStr, nullptr, base16);
+                uint64_t ppinVal = amd::ras::util::getProperty<uint64_t>(
+                    bus, inventoryService.data(), inventoryPath[i].c_str(),
+                    inventoryInterface.data(), "Id");
+
+                if (ppinVal == 0)
+                {
+                    lg2::error(
+                        "Failed to read ppin for socket {SOC} from {PATH}",
+                        "SOC", socIndex[i], "PATH", inventoryPath[i]);
+                }
+                else
+                {
+                    ppin[i] = ppinVal;
+                    lg2::info("Read ppin for socket {SOC}: {PPIN}", "SOC",
+                              socIndex[i], "PPIN", lg2::hex, ppinVal);
+                }
             }
         }
     }
