@@ -294,7 +294,6 @@ ReturnType getProperty(sdbusplus::bus::bus& bus, const char* service,
     {
         lg2::info("GetProperty call failed");
     }
-
     return std::get<ReturnType>(value);
 }
 
