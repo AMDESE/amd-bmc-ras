@@ -128,42 +128,40 @@ void Manager::getCpuSocketInfo()
         {
             if (*uCodeVersionFlag == true)
             {
-                uint32_t microCode = amd::ras::util::getProperty<uint32_t>(
-                    bus, inventoryService.data(), inventoryPath[i].c_str(),
-                    inventoryInterface.data(), "Microcode");
+                try
+                {
+                    uint32_t microCode =
+                        amd::ras::util::getProperty<uint32_t>(
+                            bus, inventoryService.data(),
+                            inventoryPath[i].c_str(),
+                            inventoryInterface.data(), "Microcode");
 
-                if (microCode == 0)
-                {
-                    lg2::error(
-                        "Failed to read ucode revision for socket {SOC} from {PATH}",
-                        "SOC", socIndex[i], "PATH", inventoryPath[i]);
-                }
-                else
-                {
                     uCode[i] = microCode;
-                    lg2::info(
-                        "Read ucode revision for socket {SOC}: {UCODE}",
-                        "SOC", socIndex[i], "UCODE", lg2::hex, microCode);
+                    lg2::info("Microcode = {VAL}", "VAL", lg2::hex, microCode);
+                }
+                catch (const std::exception& e)
+                {
+                    lg2::error("Failed to get Microcode property: {ERR}",
+                               "ERR", e.what());
                 }
             }
 
             if (*harvestPpinFlag == true)
             {
-                uint64_t ppinVal = amd::ras::util::getProperty<uint64_t>(
-                    bus, inventoryService.data(), inventoryPath[i].c_str(),
-                    inventoryInterface.data(), "Id");
+                try
+                {
+                    uint64_t ppinVal = amd::ras::util::getProperty<uint64_t>(
+                        bus, inventoryService.data(),
+                        inventoryPath[i].c_str(),
+                        inventoryInterface.data(), "Id");
 
-                if (ppinVal == 0)
-                {
-                    lg2::error(
-                        "Failed to read ppin for socket {SOC} from {PATH}",
-                        "SOC", socIndex[i], "PATH", inventoryPath[i]);
-                }
-                else
-                {
                     ppin[i] = ppinVal;
-                    lg2::info("Read ppin for socket {SOC}: {PPIN}", "SOC",
-                              socIndex[i], "PPIN", lg2::hex, ppinVal);
+                    lg2::info("PPIN = {VAL}", "VAL", lg2::hex, ppinVal);
+                }
+                catch (const std::exception& e)
+                {
+                    lg2::error("Failed to get PPIN property: {ERR}", "ERR",
+                               e.what());
                 }
             }
         }
