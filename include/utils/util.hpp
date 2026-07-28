@@ -58,22 +58,24 @@ bool compareBitwiseAnd(const uint32_t*, const std::string& hexString);
  * @details This function handles various host state transitions as specified by
  * the command string.
  *
+ * @param node The host state instance suffix ("0" in normal mode, "1"/"2" in
+ * 2*1P mode) used to select xyz.openbmc_project.State.Host{node}.
  * @param command The command string specifying the desired host state
  * transition.
  */
-void requestHostTransition(std::string);
+void requestHostTransition(const std::string& node, std::string);
 
 /** @brief Triggers RSMRST signal.
  *
  * @details This function triggers a reset of the RSMRST (Resume Reset) signal.
  */
-void triggerRsmrstReset();
+void triggerRsmrstReset(const std::string& node);
 
 /** @brief Initiates a system reset.
  *
  * @details This function triggers system reset using D-Bus calls.
  */
-void triggerSysReset();
+void triggerSysReset(const std::string& node);
 
 /** @brief Triggers a cold reset.
  *
@@ -81,7 +83,7 @@ void triggerSysReset();
  *
  * @param Type of the cold reset signal to be executed.
  */
-void triggerColdReset(const std::string*);
+void triggerColdReset(const std::string& node, const std::string*);
 
 /** @brief Initiates a warm reset.
  *

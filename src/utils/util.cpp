@@ -129,12 +129,15 @@ bool compareBitwiseAnd(const uint32_t* Var, const std::string& hexString)
 constexpr size_t sysMgmtCtrlErr = 0x4;
 constexpr size_t socket0 = 0;
 
-void requestHostTransition(std::string command)
+void requestHostTransition(const std::string& node, std::string command)
 {
     boost::system::error_code ec;
     boost::asio::io_context io;
     auto conn = std::make_shared<sdbusplus::asio::connection>(io);
 
+    std::string hostService = "xyz.openbmc_project.State.Host" + node;
+    std::string hostPath = "/xyz/openbmc_project/state/host" + node;
+
     conn->async_method_call(
         [](boost::system::error_code ec) {
             if (ec)
@@ -142,18 +145,22 @@ void requestHostTransition(std::string command)
                 lg2::error("Failed to trigger cold reset of the system\n");
             }
         },
-        "xyz.openbmc_project.State.Host", "/xyz/openbmc_project/state/host0",
-        "org.freedesktop.DBus.Properties", "Set",
+        hostService, hostPath, "org.freedesktop.DBus.Properties", "Set",
         "xyz.openbmc_project.State.Host", "RequestedHostTransition",
         std::variant<std::string>{command});
 }
 
-void triggerRsmrstReset()
+void triggerRsmrstReset(const std::string& node)
 {
     boost::system::error_code ec;
     boost::asio::io_context io_conn;
     auto conn = std::make_shared<sdbusplus::asio::connection>(io_conn);
 
+    std::string hostService = "xyz.openbmc_project.State.Host" + node;
+    std::string hostPath = "/xyz/openbmc_project/state/host" + node;
+    std::string socResetPath =
+        "/xyz/openbmc_project/control/host" + node + "/SOCReset";
+
     conn->async_method_call(
         [](boost::system::error_code ec) {
             if (ec)
@@ -161,43 +168,41 @@ void triggerRsmrstReset()
                 lg2::error("Failed to trigger cold reset of the system\n");
             }
         },
-        "xyz.openbmc_project.State.Host",
-        "/xyz/openbmc_project/control/host0/SOCReset",
-        "xyz.openbmc_project.Control.Host.SOCReset", "SOCReset");
+        hostService, socResetPath, "xyz.openbmc_project.Control.Host.SOCReset",
+        "SOCReset");
 
     sleep(1);
     sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
     std::string currentHostState = amd::ras::util::getProperty<std::string>(
-        bus, "xyz.openbmc_project.State.Host",
-        "/xyz/openbmc_project/state/host0", "xyz.openbmc_project.State.Host",
-        "currentHostState");
+        bus, hostService.c_str(), hostPath.c_str(),
+        "xyz.openbmc_project.State.Host", "currentHostState");
 
     if (currentHostState.compare(
             "xyz.openbmc_project.State.Host.HostState.Off") == 0)
     {
         std::string command = "xyz.openbmc_project.State.Host.Transition.On";
-        requestHostTransition(command);
+        requestHostTransition(node, command);
     }
 }
 
-void triggerSysReset()
+void triggerSysReset(const std::string& node)
 {
     std::string command = "xyz.openbmc_project.State.Host.Transition.Reboot";
 
-    requestHostTransition(command);
+    requestHostTransition(node, command);
 }
 
-void triggerColdReset(const std::string* resetSignal)
+void triggerColdReset(const std::string& node, const std::string* resetSignal)
 {
     if (*resetSignal == "RSMRST")
     {
         lg2::info("RSMRST reset triggered");
-        triggerRsmrstReset();
+        triggerRsmrstReset(node);
     }
     else if (*resetSignal == "SYS_RST")
     {
         lg2::info("SYS_RST signal triggered");
-        triggerSysReset();
+        triggerSysReset(node);
     }
 }
 
@@ -238,7 +243,7 @@ void rasRecoveryAction(std::string& node, uint8_t buf,
     {
         if ((buf & sysMgmtCtrlErr))
         {
-            triggerColdReset(resetSignal);
+            triggerColdReset(node, resetSignal);
         }
         else
         {
@@ -247,7 +252,7 @@ void rasRecoveryAction(std::string& node, uint8_t buf,
     }
     else if (*systemRecovery == "COLD_RESET")
     {
-        triggerColdReset(resetSignal);
+        triggerColdReset(node, resetSignal);
     }
     else if (*systemRecovery == "NO_RESET")
     {
