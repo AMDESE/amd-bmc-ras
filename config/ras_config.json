@@ -146,7 +146,7 @@
         {
             "PcieAerPollingEn": {
                 "Description": "If this field is true, PCI Express Advanced Error Reporting (PCIE AER) correctable errors will be polled",
-                "Value": false
+                "Value": true
             }
         },
         {
