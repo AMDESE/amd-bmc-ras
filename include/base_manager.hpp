@@ -3,6 +3,9 @@
 #include "config_manager.hpp"
 #include "oem_cper.hpp"
 
+#include <sdbusplus/asio/connection.hpp>
+#include <sdbusplus/bus/match.hpp>
+
 #include <algorithm>
 #include <mutex>
 
@@ -15,6 +18,15 @@ namespace amd
 {
 namespace ras
 {
+// PMFW readiness notification contract (single D-Bus signal emitted by
+// amd-host-manager). Shared by the APML and PLDM managers to defer the
+// PMFW-dependent platform initialization until PMFW is ready, and to tear it
+// down when PMFW is not ready. The signal carries the readiness state as a
+// boolean argument (true = ready, false = not ready).
+constexpr auto pmfwStatusInterface = "com.amd.PmfwStatus";
+constexpr auto pmfwStatusPathPrefix = "/com/amd/pmfw/host";
+constexpr auto pmfwStatusSignal = "PmfwStatus";
+
 struct CpuId
 {
     uint32_t eax;
@@ -41,7 +53,8 @@ class Manager
     Manager(const Manager&) = delete;
     Manager(Manager&&) = delete;
     Manager& operator=(Manager&&) = delete;
-    Manager(amd::ras::config::Manager&, std::string&);
+    Manager(amd::ras::config::Manager&,
+            std::shared_ptr<sdbusplus::asio::connection>&, std::string&);
     ~Manager() = default;
 
     /** @brief Initializes the RAS manager class.
@@ -95,6 +108,69 @@ class Manager
     std::vector<uint8_t> blockId;
     std::mutex harvestMutex;
     bool fatalDescriptorsInitialized = false;
+
+    /** @brief Shared D-Bus system bus connection.
+     *
+     *  @details Used by the common PMFW status signal subscription and by
+     *  derived transports for their D-Bus interactions.
+     */
+    std::shared_ptr<sdbusplus::asio::connection> systemBus;
+
+    /** @brief Current PMFW readiness state.
+     *
+     *  @details False until the PMFW ready notification is received. Used to
+     *  gate PMFW-dependent handling and to reflect a single source of truth
+     *  for the PMFW state shared by the APML and PLDM managers.
+     */
+    bool pmfwReady = false;
+
+    /** @brief D-Bus match rule for the PMFW status notification signal. */
+    std::unique_ptr<sdbusplus::bus::match_t> pmfwStatusMatch;
+
+    /** @brief Subscribe to the PMFW status signal from amd-host-manager.
+     *
+     *  @details Registers a single D-Bus signal match for the per-node PMFW
+     *  status object. The signal carries the readiness state as a boolean
+     *  argument; on notification it updates pmfwReady and dispatches to the
+     *  transport-specific handlers via applyPmfwStatus(). Shared by the APML
+     *  and PLDM managers.
+     */
+    void subscribePmfwSignals();
+
+    /** @brief Apply a PMFW readiness state change.
+     *
+     *  @details Common handling shared by the APML and PLDM managers: records
+     *  the new pmfwReady state and dispatches to the transport-specific
+     *  pmfwReadyHandler() or pmfwNotReadyHandler().
+     *
+     *  @param[in] ready - true if PMFW is ready; false otherwise.
+     */
+    void applyPmfwStatus(bool ready);
+
+    /** @brief Reconcile PMFW state when the host is already powered on.
+     *
+     *  @details The PMFW status signal is transient. If the host is already
+     *  powered on when this service starts (e.g. a RAS restart while the host
+     *  is running), the ready notification may have been missed. This common
+     *  helper applies the ready state now so platform initialization is not
+     *  skipped. Shared by the APML and PLDM managers.
+     */
+    void reconcilePmfwState();
+
+    /** @brief Handle the transition to the PMFW-ready state.
+     *
+     *  @details Derived classes override this to perform the transport-specific
+     *  platform initialization that requires PMFW.
+     */
+    virtual void pmfwReadyHandler() = 0;
+
+    /** @brief Handle the transition to the PMFW-not-ready state.
+     *
+     *  @details Derived classes override this to tear down the
+     *  transport-specific platform initialization while keeping the alert
+     *  handlers armed to service system management control errors.
+     */
+    virtual void pmfwNotReadyHandler() = 0;
 
     /** @brief Get the CPU socket information.
      *

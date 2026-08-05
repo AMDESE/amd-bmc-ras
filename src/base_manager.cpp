@@ -130,19 +130,17 @@ void Manager::getCpuSocketInfo()
             {
                 try
                 {
-                    uint32_t microCode =
-                        amd::ras::util::getProperty<uint32_t>(
-                            bus, inventoryService.data(),
-                            inventoryPath[i].c_str(),
-                            inventoryInterface.data(), "Microcode");
+                    uint32_t microCode = amd::ras::util::getProperty<uint32_t>(
+                        bus, inventoryService.data(), inventoryPath[i].c_str(),
+                        inventoryInterface.data(), "Microcode");
 
                     uCode[i] = microCode;
                     lg2::info("Microcode = {VAL}", "VAL", lg2::hex, microCode);
                 }
                 catch (const std::exception& e)
                 {
-                    lg2::error("Failed to get Microcode property: {ERR}",
-                               "ERR", e.what());
+                    lg2::error("Failed to get Microcode property: {ERR}", "ERR",
+                               e.what());
                 }
             }
 
@@ -151,8 +149,7 @@ void Manager::getCpuSocketInfo()
                 try
                 {
                     uint64_t ppinVal = amd::ras::util::getProperty<uint64_t>(
-                        bus, inventoryService.data(),
-                        inventoryPath[i].c_str(),
+                        bus, inventoryService.data(), inventoryPath[i].c_str(),
                         inventoryInterface.data(), "Id");
 
                     ppin[i] = ppinVal;
@@ -169,11 +166,77 @@ void Manager::getCpuSocketInfo()
     amd::ras::util::cper::createIndexFile(errCount, node);
 }
 
-Manager::Manager(amd::ras::config::Manager& manager, std::string& node) :
+Manager::Manager(amd::ras::config::Manager& manager,
+                 std::shared_ptr<sdbusplus::asio::connection>& systemBus,
+                 std::string& node) :
     errCount(0), progId(1), recordId(1), configMgr(manager), rcd(nullptr),
     mcaPtr(nullptr), dramPtr(nullptr), pciePtr(nullptr),
-    coreDebugDumpPtr(nullptr), node(node), whFamilyId(0)
+    coreDebugDumpPtr(nullptr), node(node), whFamilyId(0), systemBus(systemBus)
 {}
+
+void Manager::subscribePmfwSignals()
+{
+    std::string pmfwPath = std::string(pmfwStatusPathPrefix) + node;
+
+    std::string matchRule =
+        "type='signal',interface='" + std::string(pmfwStatusInterface) +
+        "',path='" + pmfwPath + "',member='" + std::string(pmfwStatusSignal) +
+        "'";
+
+    try
+    {
+        pmfwStatusMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*systemBus), matchRule,
+            [this](sdbusplus::message_t& msg) {
+                bool ready = false;
+                try
+                {
+                    msg.read(ready);
+                }
+                catch (const std::exception& e)
+                {
+                    lg2::error("Failed to read PMFW status signal for node "
+                               "{NODE}: {ERROR}",
+                               "NODE", node, "ERROR", e.what());
+                    return;
+                }
+
+                lg2::info("PMFW status notification received for node {NODE}: "
+                          "ready={READY}",
+                          "NODE", node, "READY", ready);
+                applyPmfwStatus(ready);
+            });
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to subscribe to PMFW status signal on {PATH}: "
+                   "{ERROR}",
+                   "PATH", pmfwPath, "ERROR", e.what());
+        return;
+    }
+
+    lg2::info("Subscribed to PMFW status signal on {PATH}", "PATH", pmfwPath);
+}
+
+void Manager::applyPmfwStatus(bool ready)
+{
+    pmfwReady = ready;
+
+    if (ready)
+    {
+        pmfwReadyHandler();
+    }
+    else
+    {
+        pmfwNotReadyHandler();
+    }
+}
+
+void Manager::reconcilePmfwState()
+{
+    // TODO:  Implement a method to reconcile Pmfw State if the host is already
+    // powered on when this service starts.
+}
 
 void Manager::loadPlatformConfig()
 {

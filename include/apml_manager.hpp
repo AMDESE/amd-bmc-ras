@@ -94,12 +94,11 @@ class Manager : public amd::ras::Manager
 
   private:
     sdbusplus::asio::object_server& objectServer;
-    std::shared_ptr<sdbusplus::asio::connection>& systemBus;
 
     size_t contextType;
     size_t watchdogTimerCounter;
     boost::asio::io_context& io;
-    bool apmlInitialized;
+    bool pmfwRuntimeReady;
     bool platformInitialized;
     bool runtimeErrPollingSupported;
     std::vector<bool> cpuAlertProcessed;
@@ -154,6 +153,22 @@ class Manager : public amd::ras::Manager
      */
     void alertEventHandler(boost::asio::posix::stream_descriptor&,
                            const gpiod::line&, size_t);
+
+    /** @brief Handle the transition to the PMFW-ready state.
+     *
+     *  @details Performs the platform initialization that requires PMFW
+     *  (processor info, thresholds, runtime error polling) and reads CPUIDs.
+     *  Deferred until PMFW is ready.
+     */
+    void pmfwReadyHandler() override;
+
+    /** @brief Handle the transition to the PMFW-not-ready state.
+     *
+     *  @details Tears down platform initialization by stopping runtime error
+     *  polling and clearing pmfwRuntimeReady so runtime validity checks are
+     *  skipped until PMFW is ready again.
+     */
+    void pmfwNotReadyHandler() override;
 
     /** @brief Stream descriptor for handling  APML alert events.
      *

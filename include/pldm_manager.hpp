@@ -99,7 +99,6 @@ class Manager : public amd::ras::Manager
 
   private:
     sdbusplus::asio::object_server& objectServer;
-    std::shared_ptr<sdbusplus::asio::connection>& systemBus;
     boost::asio::io_context& io;
 
     // Indicates whether the PLDM subsystem has been initialized
@@ -136,6 +135,19 @@ class Manager : public amd::ras::Manager
      *  error reporting.
      */
     void platformInitialize();
+
+    /** @brief Handle the transition to the PMFW-ready state.
+     *
+     *  @details Performs the platform initialization that requires PMFW.
+     *  Deferred until PMFW is ready.
+     */
+    void pmfwReadyHandler() override;
+
+    /** @brief Handle the transition to the PMFW-not-ready state.
+     *
+     *  @details Marks the platform uninitialized.
+     */
+    void pmfwNotReadyHandler() override;
 
     /** @brief Handles incoming PLDM RAS event signals.
      *
