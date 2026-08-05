@@ -155,9 +155,9 @@ Manager::Manager(amd::ras::config::Manager& manager,
                  sdbusplus::asio::object_server& objectServer,
                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
                  boost::asio::io_context& io, std::string& node) :
-    amd::ras::Manager(manager, node), objectServer(objectServer),
-    systemBus(systemBus), io(io), pldmInitialized(false),
-    platformInitialized(false), runtimeErrSupported(false)
+    amd::ras::Manager(manager, systemBus, node), objectServer(objectServer),
+    io(io), pldmInitialized(false), platformInitialized(false),
+    runtimeErrSupported(false)
 {}
 
 void Manager::onHostStateChanged(bool hostOff)
@@ -526,7 +526,31 @@ void Manager::init()
 
     loadPlatformConfig();
 
-    platformInitialize();
+    // Platform initialization requires PMFW. It is deferred until the PMFW
+    // ready signal is received from amd-host-manager.
+    subscribePmfwSignals();
+}
+
+void Manager::pmfwReadyHandler()
+{
+    // Perform platform initialization now that the PMFW mailbox is available.
+    // Guard against exceptions (e.g. unsupported family) so the service keeps
+    // running.
+    try
+    {
+        platformInitialize();
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Platform initialization failed on PMFW ready: {ERROR}",
+                   "ERROR", e.what());
+    }
+}
+
+void Manager::pmfwNotReadyHandler()
+{
+    // Mark PLDM/platform uninitialized.
+    pldmInitialized = false;
 }
 
 void Manager::configure()
@@ -562,123 +586,29 @@ void Manager::registerEventHandler()
     lg2::info("Registered PLDM RAS event signal monitor");
 
     registerSysMgmtCtrlErrAlertHandler();
+
+    reconcilePmfwState();
 }
 
 void Manager::configureSysMgmtCtrlErrAlertHandling()
 {
-    const std::string primaryPath =
-        "/var/lib/amd-bmc-ras/amd_ras_gpio_config" + node + ".json";
-    const std::string fallbackPath =
-        "/usr/share/amd-bmc-ras/amd_ras_gpio_config" + node + ".json";
-
-    std::ifstream jsonFile(primaryPath);
-    std::string cfgPath = primaryPath;
-
-    if (!jsonFile.is_open())
-    {
-        jsonFile.open(fallbackPath);
-        cfgPath = fallbackPath;
-    }
-
-    if (!jsonFile.is_open())
-    {
-        throw sdbusplus::xyz::openbmc_project::Common::File::Error::Open();
-    }
-
-    if (jsonFile.peek() == std::ifstream::traits_type::eof())
-    {
-        jsonFile.close();
-        lg2::error("GPIO config file is empty: {FILE}", "FILE", cfgPath);
-        throw std::runtime_error("GPIO config file is empty");
-    }
-
-    nlohmann::json config;
-    jsonFile >> config;
-    jsonFile.close();
-
-    alertHandleMode.clear();
-    socketNames.clear();
-
-    if (config.contains("Alert_Config") && config["Alert_Config"].is_array())
-    {
-        for (const auto& entry : config["Alert_Config"])
-        {
-            if (entry.contains("AlertHandle"))
-            {
-                const auto& alertCfg = entry["AlertHandle"];
-                if (alertCfg.contains("Value"))
-                {
-                    alertHandleMode = alertCfg["Value"].get<std::string>();
-                }
-            }
-
-            if (alertHandleMode == "GPIO" &&
-                entry.contains("GPIO_ALERT_LINES") &&
-                entry["GPIO_ALERT_LINES"].is_array())
-            {
-                socketNames =
-                    entry["GPIO_ALERT_LINES"].get<std::vector<std::string>>();
-            }
-        }
-    }
-
-    if (alertHandleMode != "UEVENT" && alertHandleMode != "GPIO")
-    {
-        throw std::runtime_error("Invalid mode of Alert handling");
-    }
-
-    if (alertHandleMode == "GPIO" && socketNames.size() < cpuCount)
-    {
-        throw std::runtime_error(
-            "Insufficient GPIO_ALERT_LINES entries in gpio_config.json");
-    }
-
-    lg2::info("PLDM sysMgmtCtrlErr alert mode: {MODE}", "MODE",
-              alertHandleMode);
+    // System management control error handling is not supported over the PLDM
+    // transport (the ASP endpoint does not generate PLDM events for
+    // system/control fabric errors), so there is no alert-handling
+    // configuration to apply here.
+    lg2::info("System management control error handling is not supported over "
+              "PLDM; skipping alert handling configuration");
 }
 
 void Manager::registerSysMgmtCtrlErrAlertHandler()
 {
-    if (alertHandleMode == "UEVENT")
-    {
-        udevMonitors.resize(cpuCount);
-        udevPollTimers.resize(cpuCount);
-
-        for (size_t i = 0; i < cpuCount; ++i)
-        {
-            apml_register_udev_monitor(&udevMonitors[i]);
-
-            if (!udevMonitors[i].udev || !udevMonitors[i].mon)
-            {
-                lg2::error(
-                    "Failed to initialize udev monitor for socket idx {IDX}",
-                    "IDX", i);
-                apml_unregister_udev_monitor(&udevMonitors[i]);
-                continue;
-            }
-
-            lg2::info(
-                "Registered UEVENT monitor for PLDM sysMgmtCtrlErr on socket idx {IDX}",
-                "IDX", i);
-            pollSysMgmtCtrlErrUevent(i);
-        }
-        return;
-    }
-
-    gpioLines.resize(cpuCount);
-    gpioEventDescriptors.reserve(cpuCount);
-
-    for (size_t i = 0; i < cpuCount; ++i)
-    {
-        gpioEventDescriptors.emplace_back(io);
-
-        requestSysMgmtCtrlErrGPIOEvents(
-            socketNames[i],
-            std::bind(&ras::pldm::Manager::handleSysMgmtCtrlErrGPIOEvent, this,
-                      std::ref(gpioEventDescriptors[i]), std::ref(gpioLines[i]),
-                      i),
-            gpioLines[i], gpioEventDescriptors[i]);
-    }
+    // System management control (control-fabric) errors are delivered to the
+    // BMC out-of-band alert path (SBRMI/APML). In PLDM mode the ASP endpoint
+    // does not generate PLDM events for system/control fabric errors, so
+    // amd-ras cannot receive them over PLDM. This handling is therefore not
+    // supported for the PLDM transport.
+    lg2::info("System management control error handling is not supported over "
+              "PLDM");
 }
 
 void Manager::pollSysMgmtCtrlErrUevent(size_t socketIdx)

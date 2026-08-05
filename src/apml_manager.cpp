@@ -111,18 +111,17 @@ Manager::Manager(amd::ras::config::Manager& manager,
                  sdbusplus::asio::object_server& objectServer,
                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
                  boost::asio::io_context& io, std::string& node) :
-    amd::ras::Manager(manager, node), objectServer(objectServer),
-    systemBus(systemBus), watchdogTimerCounter(0), io(io),
-    apmlInitialized(false), platformInitialized(false),
-    runtimeErrPollingSupported(false), McaErrorPollingEvent(nullptr),
-    DramCeccErrorPollingEvent(nullptr), PcieAerErrorPollingEvent(nullptr),
-    ApmlAlertEvent(nullptr), mcaErrorHarvestMtx(), dramErrorHarvestMtx(),
-    pcieErrorHarvestMtx()
+    amd::ras::Manager(manager, systemBus, node), objectServer(objectServer),
+    watchdogTimerCounter(0), io(io), pmfwRuntimeReady(false),
+    platformInitialized(false), runtimeErrPollingSupported(false),
+    McaErrorPollingEvent(nullptr), DramCeccErrorPollingEvent(nullptr),
+    PcieAerErrorPollingEvent(nullptr), ApmlAlertEvent(nullptr),
+    mcaErrorHarvestMtx(), dramErrorHarvestMtx(), pcieErrorHarvestMtx()
 {}
 
 void Manager::onHostStateChanged(bool hostOff)
 {
-    apmlInitialized = false;
+    pmfwRuntimeReady = false;
 
     if (!hostOff)
     {
@@ -191,7 +190,7 @@ void Manager::platformInitialize()
             }
 
             platformInitialized = true;
-            apmlInitialized = true;
+            pmfwRuntimeReady = true;
         }
         else
         {
@@ -200,22 +199,19 @@ void Manager::platformInitialize()
     }
     else
     {
-        apmlInitialized = true;
+        pmfwRuntimeReady = true;
 
         for (size_t i : socIndex)
         {
             clearSbrmiAlertMask(i);
         }
 
+        // On re-ready after a PMFW off, the runtime polling timers were
+        // cancelled in pmfwNotReadyHandler(). Re-arm them here (the first
+        // initialization above starts them via runTimeErrorPolling()).
         if (runtimeErrPollingSupported == true)
         {
-            lg2::info("Setting MCA and DRAM OOB Config");
-
-            setMcaOobConfig();
-
-            lg2::info("Setting MCA and DRAM Error threshold");
-
-            setMcaErrThreshold();
+            runTimeErrorPolling();
         }
     }
 }
@@ -324,8 +320,6 @@ void Manager::pcieAerErrorPollingHandler(int64_t* pollingPeriod)
 void Manager::init()
 {
     lg2::info("APML MANAGER INIT");
-    oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
-    uint32_t dataOut = 0;
 
     getCpuSocketInfo();
 
@@ -348,20 +342,14 @@ void Manager::init()
         throw std::runtime_error("Failed to copy gpio config file");
     }
 
-    while (ret != OOB_SUCCESS)
-    {
-        ret = get_bmc_ras_oob_config(0, &dataOut);
-
-        if (ret == OOB_MAILBOX_CMD_UNKNOWN)
-        {
-            ret = esmi_get_processor_info(0, plat_info);
-        }
-        sleep(1);
-    }
-
+    // Load platform metadata (Model, FamilyID, DebugLogID) from JSON. This
+    // does not require PMFW and is needed by alert handling and the deferred
+    // platform initialization performed when PMFW becomes ready.
     loadPlatformConfig();
 
-    platformInitialize();
+    // Platform initialization (processor info, thresholds, runtime error
+    // polling) and CPUID reads require PMFW. They are deferred until the PMFW
+    // ready signal is received from amd-host-manager.
 
     sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
     boost::system::error_code ec;
@@ -430,6 +418,34 @@ void Manager::init()
             }
         });
 
+    // Subscribe for PMFW readiness notifications from amd-host-manager. The
+    // deferred platform initialization runs when the ready signal arrives.
+    subscribePmfwSignals();
+}
+
+void Manager::pmfwReadyHandler()
+{
+    // Perform platform initialization now that the PMFW mailbox is available.
+    // Guard against exceptions (e.g. unsupported family) so the service keeps
+    // running to service system management control errors. platformInitialize()
+    // starts runtime error polling on first init and re-arms it on re-ready.
+    try
+    {
+        platformInitialize();
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Platform initialization failed on PMFW ready: {ERROR}",
+                   "ERROR", e.what());
+        return;
+    }
+
+    if (pmfwRuntimeReady == false)
+    {
+        lg2::error("Platform initialization did not complete on PMFW ready");
+        return;
+    }
+
     /*Read CpuID*/
     for (size_t i = 0; i < cpuCount; i++)
     {
@@ -447,6 +463,28 @@ void Manager::init()
         {
             lg2::error("Failed to get the CPUID for socket {CPU}", "CPU", i);
         }
+    }
+}
+
+void Manager::pmfwNotReadyHandler()
+{
+    // Keep the alert handlers armed so system management control errors are
+    // still serviced without PMFW, but tear down platform initialization:
+    // stop runtime error polling and clear pmfwRuntimeReady so runtime
+    // validity checks are skipped until PMFW is ready again.
+    pmfwRuntimeReady = false;
+
+    if (McaErrorPollingEvent != nullptr)
+    {
+        McaErrorPollingEvent->cancel();
+    }
+    if (DramCeccErrorPollingEvent != nullptr)
+    {
+        DramCeccErrorPollingEvent->cancel();
+    }
+    if (PcieAerErrorPollingEvent != nullptr)
+    {
+        PcieAerErrorPollingEvent->cancel();
     }
 }
 
@@ -556,6 +594,8 @@ void Manager::registerEventHandler()
                               gpioLines[i], gpioEventDescriptors[i]);
         }
     }
+
+    reconcilePmfwState();
 }
 
 void Manager::releaseUdevReSrc()
@@ -1000,7 +1040,7 @@ oob_status_t Manager::runTimeErrValidityCheck(
 {
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
 
-    if (apmlInitialized == true)
+    if (pmfwRuntimeReady == true)
     {
         ret =
             get_bmc_ras_run_time_err_validity_ck(socNum, rt_err_category, inst);
