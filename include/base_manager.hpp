@@ -196,6 +196,18 @@ class Manager
      */
     void currentHostStateMonitor();
 
+    /** @brief Query whether the host is currently powered on.
+     *
+     *  @details Reads the CurrentHostState property of the per-node
+     *  xyz.openbmc_project.State.Host object. Used to avoid blocking SBRMI
+     *  access while the host is off and to reconcile PMFW state on a RAS
+     *  restart (the PMFW ready/off signals are transient).
+     *
+     *  @return true if the host is not in the Off state; false on Off or on
+     *  query failure.
+     */
+    bool isHostPoweredOn();
+
     /** @brief Called when the host power state changes.
      *
      *  @details Derived classes override this to perform

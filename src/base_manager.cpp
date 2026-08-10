@@ -234,8 +234,18 @@ void Manager::applyPmfwStatus(bool ready)
 
 void Manager::reconcilePmfwState()
 {
-    // TODO:  Implement a method to reconcile Pmfw State if the host is already
-    // powered on when this service starts.
+    // The PMFW status signal is transient. If the host is already powered on
+    // when this service starts (e.g. a RAS restart while the host is running),
+    // the ready notification may have been emitted and missed. Reconcile by
+    // applying the ready state now. Platform initialization is idempotent, so
+    // a subsequent ready signal is harmless.
+    if (isHostPoweredOn())
+    {
+        lg2::info("Host already powered on at startup; reconciling PMFW ready "
+                  "state for node {NODE}",
+                  "NODE", node);
+        applyPmfwStatus(true);
+    }
 }
 
 void Manager::loadPlatformConfig()
@@ -337,6 +347,29 @@ void Manager::currentHostStateMonitor()
                             "xyz.openbmc_project.State.Host.HostState.Off");
             onHostStateChanged(hostOff);
         });
+}
+
+bool Manager::isHostPoweredOn()
+{
+    try
+    {
+        std::string hostService = "xyz.openbmc_project.State.Host" + node;
+        std::string hostPath = "/xyz/openbmc_project/state/host" + node;
+
+        sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+        std::string currentHostState = amd::ras::util::getProperty<std::string>(
+            bus, hostService.c_str(), hostPath.c_str(),
+            "xyz.openbmc_project.State.Host", "CurrentHostState");
+
+        return currentHostState !=
+               "xyz.openbmc_project.State.Host.HostState.Off";
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to query host power state: {ERROR}", "ERROR",
+                   e.what());
+        return false;
+    }
 }
 
 void Manager::handleFchError(uint8_t socNum)
