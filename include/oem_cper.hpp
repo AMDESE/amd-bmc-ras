@@ -15,6 +15,9 @@ constexpr size_t length4 = 4;
 constexpr size_t length8 = 8;
 constexpr size_t length32 = 32;
 constexpr size_t length96 = 96;
+// Number of 32-bit words in the AMD PCIe error data buffer
+// (AmdPcieErrorData::PcieData below). The PMFW reports a fixed-size PCIe
+// error record of 91 DWORDs (364 bytes), so this bounds the PcieData array.
 constexpr size_t length91 = 91;
 
 struct CrashdumpData
