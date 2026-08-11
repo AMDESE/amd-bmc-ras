@@ -21,6 +21,17 @@ constexpr uint8_t sevNonFatalUncorrected = 0;
 constexpr uint8_t sevNonFatalCorrected = 2;
 constexpr uint8_t sevInformational = 3;
 
+// The PCIe error severity is carried in the low byte of the AMD custom first
+// DWORD. Mask with this to extract the severity code (used by both APML and
+// PLDM PCIe harvest paths).
+constexpr uint32_t severityByteMask = 0xFF;
+
+// AMD custom PCIe first-DWORD field layout (each field is one byte):
+//   [7:0]=severity  [15:8]=root port  [23:16]=PCIe controller  [31:24]=IOD
+constexpr uint32_t pcieRootPortShift = 8;
+constexpr uint32_t pcieControllerShift = 16;
+constexpr uint32_t pcieIodShift = 24;
+
 constexpr uint8_t cperValidPlatformId = 0x1;
 constexpr uint8_t cperValidTimestamp = 0x2;
 constexpr uint8_t addcGenNumber3 = 0x03;

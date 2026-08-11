@@ -1511,17 +1511,54 @@ bool Manager::harvestRuntimeOverflowSections(
 
     std::vector<uint32_t> severity(sectionCount, 2);
 
+    // The first 4 bytes of each PCIe section returned by PMFW are AMD custom
+    // data carrying the error severity. They are not part of the standard UEFI
+    // PCIe error section, so they are discarded from the CPER body; only the
+    // standard PCIe error info that follows is copied.
+    constexpr uint32_t amdCustomDataLen = sizeof(uint32_t);
+    constexpr uint32_t pcieStdDataLen = pcieDataBankLen - amdCustomDataLen;
+
     for (uint16_t i = 0; i < sectionCount; i++)
     {
         size_t sectionStart =
             dataOffset + static_cast<size_t>(i) * pcieDataBankLen;
-        size_t available = 0;
-        if (sectionStart < eventData.size())
+
+        // Extract the AMD custom severity dword and log it for debug before
+        // discarding it from the CPER body.
+        uint32_t rootErrStatus = badData;
+        if (sectionStart + amdCustomDataLen <= eventData.size())
         {
-            available = std::min(static_cast<size_t>(pcieDataBankLen),
-                                 eventData.size() - sectionStart);
+            std::memcpy(&rootErrStatus, &eventData[sectionStart],
+                        amdCustomDataLen);
+        }
+
+        lg2::info(
+            "Socket {SOCKET}: PCIe Error collected on Root Port "
+            "{ROOTPORT}, PCIe Controller {CONTROLLER}, IOD {IOD}, "
+            "severity {SEVERITY}",
+            "SOCKET", socNum, "ROOTPORT",
+            (rootErrStatus >> amd::ras::util::cper::pcieRootPortShift) &
+                amd::ras::util::cper::severityByteMask,
+            "CONTROLLER",
+            (rootErrStatus >> amd::ras::util::cper::pcieControllerShift) &
+                amd::ras::util::cper::severityByteMask,
+            "IOD",
+            (rootErrStatus >> amd::ras::util::cper::pcieIodShift) &
+                amd::ras::util::cper::severityByteMask,
+            "SEVERITY", rootErrStatus & amd::ras::util::cper::severityByteMask);
+
+        // Extract the severity code from the low byte of the custom DWORD.
+        severity[i] = rootErrStatus & amd::ras::util::cper::severityByteMask;
+
+        // Copy only the standard PCIe error info that follows the custom dword.
+        size_t pcieDataStart = sectionStart + amdCustomDataLen;
+        size_t available = 0;
+        if (pcieDataStart < eventData.size())
+        {
+            available = std::min(static_cast<size_t>(pcieStdDataLen),
+                                 eventData.size() - pcieDataStart);
             std::memcpy(ptr->PcieErrorData[i].PcieData,
-                        &eventData[sectionStart], available);
+                        &eventData[pcieDataStart], available);
         }
 
         if (available < pcieDataBankLen)
@@ -1532,11 +1569,6 @@ bool Manager::harvestRuntimeOverflowSections(
                 ptr->PcieErrorData[i].PcieData[w] = badData;
             }
         }
-
-        // PCIe severity derived from root error status (first DWORD),
-        // mirroring APML dumpProcErrorSection behavior for category==2.
-        uint32_t rootErrStatus = ptr->PcieErrorData[i].PcieData[0];
-        severity[i] = rootErrStatus & 0xFF;
 
         std::snprintf(ptr->SectionDescriptor[i].FruString,
                       sizeof(ptr->SectionDescriptor[i].FruString), "P%u",

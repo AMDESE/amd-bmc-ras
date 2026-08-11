@@ -88,7 +88,6 @@ constexpr size_t mcaIpidHiOffset = 0x2C;
 constexpr uint32_t umcHardwareId = 0x96;
 constexpr size_t crashdump = 1;
 constexpr size_t shutdown = 2;
-constexpr size_t index28 = 28;
 constexpr size_t blockId25 = 25;
 constexpr uint16_t coreMcaHardwareId = 0xb0;
 constexpr size_t coresPerCcd = 32;
@@ -3376,8 +3375,22 @@ void Manager::dumpProcErrorSection(
                 }
                 else if (PciePtr)
                 {
-                    PciePtr->PcieErrorData[section].PcieData[dumpIndex] =
-                        badData;
+                    // The first DWORD is AMD custom data (severity) that is
+                    // discarded from the standard UEFI PCIe error section.
+                    // Keep it out of PcieData even when the read fails.
+                    if (dataIn.offset == 0)
+                    {
+                        rootErrStatus = badData;
+                        continue;
+                    }
+                    // Discarding the custom DWORD shifts the write index, so
+                    // guard against overrunning the fixed-size PcieData[]
+                    // array (length91 words).
+                    if (dumpIndex < length91)
+                    {
+                        PciePtr->PcieErrorData[section].PcieData[dumpIndex] =
+                            badData;
+                    }
                 }
                 dumpIndex++;
                 continue;
@@ -3424,19 +3437,36 @@ void Manager::dumpProcErrorSection(
             }
             else if (PciePtr)
             {
-                if (dumpIndex == index28)
-                {
-                    PciePtr->PcieErrorData[section].PcieData[dumpIndex] =
-                        rootErrStatus;
-                    dumpIndex++;
-                }
-
                 if (dataIn.offset == 0)
                 {
+                    // The first 4 bytes returned by PMFW are AMD custom data
+                    // carrying the PCIe error severity. They are not part of
+                    // the standard UEFI PCIe error section, so capture them
+                    // for the section severity (extracted below) and debug
+                    // logging, then discard them from the CPER body.
                     rootErrStatus = dataOut;
+                    lg2::info(
+                        "Socket {SOCKET}: PCIe Error collected on Root Port "
+                        "{ROOTPORT}, PCIe Controller {CONTROLLER}, IOD {IOD}, "
+                        "severity {SEVERITY}",
+                        "SOCKET", socNum, "ROOTPORT",
+                        (dataOut >> amd::ras::util::cper::pcieRootPortShift) &
+                            amd::ras::util::cper::severityByteMask,
+                        "CONTROLLER",
+                        (dataOut >> amd::ras::util::cper::pcieControllerShift) &
+                            amd::ras::util::cper::severityByteMask,
+                        "IOD",
+                        (dataOut >> amd::ras::util::cper::pcieIodShift) &
+                            amd::ras::util::cper::severityByteMask,
+                        "SEVERITY",
+                        dataOut & amd::ras::util::cper::severityByteMask);
                     continue;
                 }
-                else
+
+                // Discarding the custom DWORD shifts the write index, so guard
+                // against overrunning the fixed-size PcieData[] array
+                // (length91 words).
+                if (dumpIndex < length91)
                 {
                     PciePtr->PcieErrorData[section].PcieData[dumpIndex] =
                         dataOut;
@@ -3497,7 +3527,11 @@ void Manager::dumpProcErrorSection(
         }
         else if (category == 2) // PCIE error
         {
-            Severity[section] = rootErrStatus & 0xFF;
+            // Severity is carried in the AMD custom first DWORD (discarded
+            // from the CPER body above). The severity code occupies the low
+            // byte of that DWORD, so mask with severityByteMask to extract it.
+            Severity[section] = rootErrStatus &
+                                amd::ras::util::cper::severityByteMask;
         }
         n++;
         section++;
