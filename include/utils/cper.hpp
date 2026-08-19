@@ -37,7 +37,7 @@ constexpr uint8_t cperValidTimestamp = 0x2;
 constexpr uint8_t addcGenNumber3 = 0x03;
 constexpr uint8_t familyId1ah = 0x1A;
 constexpr uint16_t pcieVendorId = 0x1022;
-constexpr uint8_t minorRevision = 0x0D;
+constexpr uint8_t minorRevision = 0x0E;
 
 /** @brief Finds a filename in the RAS directory that matches a given pattern.
  *
