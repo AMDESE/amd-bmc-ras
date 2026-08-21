@@ -30,6 +30,7 @@ namespace apml
 {
 constexpr size_t base16 = 16;
 constexpr size_t sbrmiControlRegister = 0x1;
+constexpr size_t sbrmiStatusRegister = 0x02;
 constexpr size_t sysMgmtCtrlErr = 0x4;
 constexpr size_t shutdownError = 0x40;
 
@@ -675,6 +676,22 @@ void Manager::clearSbrmiAlertMask(uint8_t socNum)
         {
             lg2::info("Socket {SOC}: Failed to read SBRMIx[0x{REG}] ", "SOC",
                       socNum, "REG", lg2::hex, alert_status[i]);
+        }
+    }
+
+    // Clear SBRMIx02 bit 3 (SwAsyncAlertSts) to re-arm GPIO alert
+    uint8_t sbrmiStatus;
+    if (read_sbrmi_status(socNum, &sbrmiStatus) == OOB_SUCCESS)
+    {
+        if (sbrmiStatus & 0x08)
+        {
+            // Register 0x02 is write-one-to-clear, write 0x08 to clear bit 3
+            ret = esmi_oob_write_byte(socNum, sbrmiStatusRegister, SBRMI, 0x08);
+            if (ret != OOB_SUCCESS)
+            {
+                lg2::error("Socket {SOC}: Failed to clear SBRMIx02 bit 3",
+                           "SOC", socNum);
+            }
         }
     }
 }
@@ -2478,6 +2495,19 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     {
         lg2::debug("Socket {SOC}: Read status register. Value: 0x{BUF}", "SOC",
                    socNum, "BUF", lg2::hex, buf);
+
+        // Clear SBRMIx02 bit 3 (SwAsyncAlertSts) to re-arm GPIO alert
+        if (buf & 0x08)
+        {
+            // Register 0x02 is write-one-to-clear, write 0x08 to clear bit 3
+            oob_status_t ret =
+                esmi_oob_write_byte(socNum, sbrmiStatusRegister, SBRMI, 0x08);
+            if (ret != OOB_SUCCESS)
+            {
+                lg2::error("Socket {SOC}: Failed to clear SBRMIx02 bit 3",
+                           "SOC", socNum);
+            }
+        }
 
         /*Check if Alert Status bit is set and clear AlertSts*/
         if (buf & 0x1)
