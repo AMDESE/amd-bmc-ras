@@ -115,14 +115,22 @@ Manager::Manager(amd::ras::config::Manager& manager,
     amd::ras::Manager(manager, systemBus, node), objectServer(objectServer),
     watchdogTimerCounter(0), io(io), pmfwRuntimeReady(false),
     platformInitialized(false), runtimeErrPollingSupported(false),
-    McaErrorPollingEvent(nullptr), DramCeccErrorPollingEvent(nullptr),
-    PcieAerErrorPollingEvent(nullptr), ApmlAlertEvent(nullptr),
-    mcaErrorHarvestMtx(), dramErrorHarvestMtx(), pcieErrorHarvestMtx()
+    cfErrorReceived(false), McaErrorPollingEvent(nullptr),
+    DramCeccErrorPollingEvent(nullptr), PcieAerErrorPollingEvent(nullptr),
+    ApmlAlertEvent(nullptr), mcaErrorHarvestMtx(), dramErrorHarvestMtx(),
+    pcieErrorHarvestMtx()
 {}
 
 void Manager::onHostStateChanged(bool hostOff)
 {
+    lg2::info("Host state changed. Host is now {STATE}", "STATE",
+              hostOff ? "OFF" : "ON");
     pmfwRuntimeReady = false;
+
+    // A host state transition indicates a reboot/power cycle. Clear the
+    // control fabric error latch so RAS error alerts are serviced again once
+    // the host is back up.
+    cfErrorReceived = false;
 
     if (!hostOff)
     {
@@ -474,6 +482,25 @@ void Manager::pmfwNotReadyHandler()
     // stop runtime error polling and clear pmfwRuntimeReady so runtime
     // validity checks are skipped until PMFW is ready again.
     pmfwRuntimeReady = false;
+
+    if (McaErrorPollingEvent != nullptr)
+    {
+        McaErrorPollingEvent->cancel();
+    }
+    if (DramCeccErrorPollingEvent != nullptr)
+    {
+        DramCeccErrorPollingEvent->cancel();
+    }
+    if (PcieAerErrorPollingEvent != nullptr)
+    {
+        PcieAerErrorPollingEvent->cancel();
+    }
+}
+
+void Manager::deactivateRuntimeErrorPolling()
+{
+    lg2::info("Deactivating runtime error polling due to control fabric error "
+              "(RasStatus[reset_ctrl_err])");
 
     if (McaErrorPollingEvent != nullptr)
     {
@@ -1102,6 +1129,7 @@ void Manager::runTimeErrorInfoCheck(uint8_t errType, uint8_t reqType)
             "Harvesting runtime error. Error Type: {ERRTYPE} Request Type: {REQTYPE}",
             "ERRTYPE", getErrorTypeStr(errType), "REQTYPE",
             getRequestTypeStr(reqType));
+
         if (errType == mcaErr)
         {
             if (mcaPtr == nullptr)
@@ -2166,6 +2194,17 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
     bool nonMcaShutdownError = false;
     cpuAlertProcessed.resize(cpuCount, false);
 
+    // Once a control fabric error (RasStatus[reset_ctrl_err]) has been
+    // detected, the system is expected to be reset based on policy. Ignore any
+    // further RAS error alerts until the host is rebooted.
+    if (cfErrorReceived == true)
+    {
+        lg2::info("Control fabric error already latched. Ignoring RAS error "
+                  "alert for SOC {SOC} until host reboot",
+                  "SOC", socNum);
+        return true;
+    }
+
     if ((src & 0xFF) == 0)
     {
         lg2::debug("Nothing to Harvest. Not RAS Error");
@@ -2193,6 +2232,14 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                             LOG_ERR, "REDFISH_MESSAGE_ID=%s",
                             "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
                             rasErrMsg.c_str(), NULL);
+
+            /* RasStatus[reset_ctrl_err] is set: the system will be reset
+               based on policy, so stop runtime error polling. */
+            deactivateRuntimeErrorPolling();
+
+            /* Latch the control fabric error so subsequent RAS error alerts
+               are ignored until the host is rebooted. */
+            cfErrorReceived = true;
 
             harvestBreakEvent(socNum);
             cpuAlertProcessed.assign(cpuCount, true);
@@ -2491,6 +2538,17 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     bool nonMcaShutdownError = false;
     cpuAlertProcessed.resize(cpuCount, false);
 
+    // Once a control fabric error (RasStatus[reset_ctrl_err]) has been
+    // detected, the system is expected to be reset based on policy. Ignore any
+    // further RAS error alerts until the host is rebooted.
+    if (cfErrorReceived == true)
+    {
+        lg2::info("Control fabric error already latched. Ignoring RAS error "
+                  "alert for SOC {SOC} until host reboot",
+                  "SOC", socNum);
+        return true;
+    }
+
     if (read_sbrmi_status(socNum, &buf) == OOB_SUCCESS)
     {
         lg2::debug("Socket {SOC}: Read status register. Value: 0x{BUF}", "SOC",
@@ -2587,6 +2645,14 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
                         "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
                         "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+
+                    /* RasStatus[reset_ctrl_err] is set: the system will be
+                       reset based on policy, so stop runtime error polling. */
+                    deactivateRuntimeErrorPolling();
+
+                    /* Latch the control fabric error so subsequent RAS error
+                       alerts are ignored until the host is rebooted. */
+                    cfErrorReceived = true;
 
                     harvestBreakEvent(socNum);
                     cpuAlertProcessed.assign(cpuCount, true);
