@@ -101,6 +101,11 @@ class Manager : public amd::ras::Manager
     bool pmfwRuntimeReady;
     bool platformInitialized;
     bool runtimeErrPollingSupported;
+    /** @brief Set once a control fabric error (RasStatus[reset_ctrl_err]) is
+     *  detected. While set, incoming RAS error alerts are ignored until the
+     *  host is rebooted, since the system is expected to be reset by policy.
+     */
+    bool cfErrorReceived;
     std::vector<bool> cpuAlertProcessed;
     boost::asio::deadline_timer* McaErrorPollingEvent;
     boost::asio::deadline_timer* DramCeccErrorPollingEvent;
@@ -169,6 +174,15 @@ class Manager : public amd::ras::Manager
      *  skipped until PMFW is ready again.
      */
     void pmfwNotReadyHandler() override;
+
+    /** @brief Deactivate runtime error polling.
+     *
+     *  @details Cancels the MCA, DRAM CECC and PCIe AER runtime error polling
+     *  timers. Invoked when a control fabric error (RasStatus[reset_ctrl_err])
+     *  is detected, since the system is expected to be reset based on policy
+     *  and further runtime polling is no longer meaningful.
+     */
+    void deactivateRuntimeErrorPolling();
 
     /** @brief Stream descriptor for handling  APML alert events.
      *
