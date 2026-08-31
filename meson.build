@@ -85,7 +85,7 @@ executable(
     install_dir: get_option('bindir'),
 )
 
-ras_config_dir = join_paths(get_option('datadir'), 'amd-bmc-ras')
+ras_config_dir = join_paths(get_option('datadir'), 'bmc-ras')
 
 install_data(
     [
