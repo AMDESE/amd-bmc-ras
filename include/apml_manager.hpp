@@ -265,6 +265,14 @@ class Manager : public amd::ras::Manager
      */
     oob_status_t setPcieErrThreshold();
 
+    /** @brief Set fatal harvest delay override.
+     *
+     *  @details Sends override_delay_reset_on_sync_flood command to CPU
+     *  so the system waits (configurable 5-120 mins) before resetting
+     *  after a syncflood, giving BMC time to harvest MCA data.
+     */
+    void setFatalHarvestDelay();
+
     /** @brief Clear the SBRMI alert mask bit.
      *
      *  @details Clears alert mask bit in SBRMI control register

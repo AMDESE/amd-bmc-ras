@@ -221,6 +221,18 @@ void Manager::platformInitialize()
         if (runtimeErrPollingSupported == true)
         {
             runTimeErrorPolling();
+
+            lg2::info("Setting MCA and DRAM OOB Config");
+
+            setMcaOobConfig();
+
+            lg2::info("Setting MCA and DRAM Error threshold");
+
+            setMcaErrThreshold();
+
+            lg2::info("Setting fatal harvest delay override");
+
+            setFatalHarvestDelay();
         }
     }
 }
@@ -422,6 +434,9 @@ void Manager::init()
 
                         lg2::info("Setting PCIE Error threshold");
                         setPcieErrThreshold();
+
+                        lg2::info("Setting fatal harvest delay override");
+                        setFatalHarvestDelay();
                     }
                 }
             }
@@ -3027,6 +3042,8 @@ oob_status_t Manager::getOobRegisters(struct oob_config_d_in* oob_config)
             (dataOut >> MCA_ERR_REPORT_EN & 1);
         oob_config->dram_cecc_oob_ec_mode =
             (dataOut >> DRAM_CECC_OOB_EC_MODE & TRIBBLE_BITS);
+        oob_config->dram_cecc_leak_rate =
+            (dataOut >> DRAM_CECC_LEAK_RATE) & 0x1F;
         oob_config->pcie_err_reporting_en = (dataOut >> PCIE_ERR_REPORT_EN & 1);
         oob_config->mca_oob_misc0_ec_enable = (dataOut & 1);
     }
@@ -3135,7 +3152,19 @@ oob_status_t Manager::setMcaErrThreshold()
 
         getOobRegisters(&oob_config);
 
-        oob_config.dram_cecc_oob_ec_mode = 1;
+        amd::ras::config::Manager::AttributeValue dramCeccOobEcModeVal =
+            configMgr.getAttribute("DramCeccOobEcMode");
+        int64_t* dramCeccOobEcMode =
+            std::get_if<int64_t>(&dramCeccOobEcModeVal);
+
+        amd::ras::config::Manager::AttributeValue dramCeccLeakRateVal =
+            configMgr.getAttribute("DramCeccLeakRate");
+        int64_t* dramCeccLeakRate = std::get_if<int64_t>(&dramCeccLeakRateVal);
+
+        oob_config.dram_cecc_oob_ec_mode =
+            static_cast<uint8_t>(*dramCeccOobEcMode);
+        oob_config.dram_cecc_leak_rate =
+            static_cast<uint8_t>(*dramCeccLeakRate);
         oob_config.mca_oob_misc0_ec_enable = 1;
 
         ret = setRasOobConfig(oob_config);
@@ -3218,6 +3247,10 @@ void Manager::runTimeErrorPolling()
                        "Error code: {ERR}",
                        "ERR", ret);
         }
+
+        lg2::info("Setting fatal harvest delay override");
+
+        setFatalHarvestDelay();
     }
 }
 
@@ -3238,6 +3271,8 @@ oob_status_t Manager::getRasOobConfig(struct oob_config_d_in* oob_config)
             (dataOut >> PCIE_ERR_REPORT_EN & 1);
         oob_config->dram_cecc_oob_ec_mode =
             (dataOut >> DRAM_CECC_OOB_EC_MODE & TRIBBLE_BITS);
+        oob_config->dram_cecc_leak_rate =
+            (dataOut >> DRAM_CECC_LEAK_RATE) & 0x1F;
         oob_config->pcie_err_reporting_en = (dataOut >> PCIE_ERR_REPORT_EN & 1);
         oob_config->mca_oob_misc0_ec_enable = (dataOut & 1);
     }
@@ -3268,8 +3303,37 @@ oob_status_t Manager::setMcaOobConfig()
     if (*dramCeccPollingEn == true)
     {
         /* DRAM CECC OOB Error Counter Mode */
+        amd::ras::config::Manager::AttributeValue dramCeccOobEcModeVal =
+            configMgr.getAttribute("DramCeccOobEcMode");
+        int64_t* dramCeccOobEcMode =
+            std::get_if<int64_t>(&dramCeccOobEcModeVal);
+
+        amd::ras::config::Manager::AttributeValue dramCeccLeakRateVal =
+            configMgr.getAttribute("DramCeccLeakRate");
+        int64_t* dramCeccLeakRate = std::get_if<int64_t>(&dramCeccLeakRateVal);
+
         oob_config.core_mca_err_reporting_en = 1;
-        oob_config.dram_cecc_oob_ec_mode = 1; /*Enabled in No leak mode*/
+        oob_config.dram_cecc_oob_ec_mode =
+            static_cast<uint8_t>(*dramCeccOobEcMode);
+        oob_config.dram_cecc_leak_rate =
+            static_cast<uint8_t>(*dramCeccLeakRate);
+    }
+    else
+    {
+        amd::ras::config::Manager::AttributeValue dramCeccOobEcModeVal =
+            configMgr.getAttribute("DramCeccOobEcMode");
+        int64_t* dramCeccOobEcMode =
+            std::get_if<int64_t>(&dramCeccOobEcModeVal);
+
+        amd::ras::config::Manager::AttributeValue dramCeccLeakRateVal =
+            configMgr.getAttribute("DramCeccLeakRate");
+        int64_t* dramCeccLeakRate = std::get_if<int64_t>(&dramCeccLeakRateVal);
+
+        oob_config.dram_cecc_oob_ec_mode =
+            static_cast<uint8_t>(*dramCeccOobEcMode);
+        oob_config.dram_cecc_leak_rate =
+            static_cast<uint8_t>(*dramCeccLeakRate);
+        oob_config.mca_oob_misc0_ec_enable = 1;
     }
 
     ret = setRasOobConfig(oob_config);
@@ -3403,6 +3467,58 @@ oob_status_t Manager::setPcieErrThreshold()
         }
     }
     return ret;
+}
+
+void Manager::setFatalHarvestDelay()
+{
+    amd::ras::config::Manager::AttributeValue fatalDelayEnVal =
+        configMgr.getAttribute("FatalHarvestDelayEn");
+    bool* fatalHarvestDelayEn = std::get_if<bool>(&fatalDelayEnVal);
+
+    if (fatalHarvestDelayEn == nullptr || *fatalHarvestDelayEn == false)
+    {
+        return;
+    }
+
+    amd::ras::config::Manager::AttributeValue fatalDelayMinsVal =
+        configMgr.getAttribute("FatalHarvestDelayMins");
+    int64_t* fatalHarvestDelayMins = std::get_if<int64_t>(&fatalDelayMinsVal);
+
+    if (fatalHarvestDelayMins == nullptr)
+    {
+        return;
+    }
+
+    struct ras_override_delay delayDataIn = {0, 0, 0};
+    bool ackResp = false;
+
+    int64_t mins = *fatalHarvestDelayMins;
+    if (mins >= 5 && mins <= 120)
+    {
+        delayDataIn.delay_val_override = static_cast<uint8_t>(mins);
+    }
+    else
+    {
+        delayDataIn.delay_val_override = 5; // minimum safe fallback
+    }
+
+    oob_status_t ret =
+        override_delay_reset_on_sync_flood(socIndex[0], delayDataIn, &ackResp);
+
+    if (ret != OOB_SUCCESS)
+    {
+        lg2::error(
+            "Failed to set fatal harvest delay override ({MINS} mins): {ERR}",
+            "MINS", static_cast<uint32_t>(delayDataIn.delay_val_override),
+            "ERR", ret);
+    }
+    else
+    {
+        lg2::info("Fatal harvest delay override set to {MINS} mins. "
+                  "CPU will wait before resetting after syncflood.",
+                  "MINS",
+                  static_cast<uint32_t>(delayDataIn.delay_val_override));
+    }
 }
 
 template <typename PtrType>
