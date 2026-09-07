@@ -304,10 +304,8 @@ void Manager::loadPlatformConfig()
 
 void Manager::currentHostStateMonitor()
 {
-    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
-
-    static auto match = sdbusplus::bus::match::match(
-        bus,
+    hostStateMatch = std::make_unique<sdbusplus::bus::match_t>(
+        static_cast<sdbusplus::bus_t&>(*systemBus),
         "type='signal',member='PropertiesChanged', "
         "interface='org.freedesktop.DBus.Properties', "
         "arg0='xyz.openbmc_project.State.Host'",

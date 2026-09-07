@@ -127,6 +127,9 @@ class Manager
     /** @brief D-Bus match rule for the PMFW status notification signal. */
     std::unique_ptr<sdbusplus::bus::match_t> pmfwStatusMatch;
 
+    /** @brief D-Bus match rule for the host state PropertiesChanged signal. */
+    std::unique_ptr<sdbusplus::bus::match_t> hostStateMatch;
+
     /** @brief Subscribe to the PMFW status signal from amd-host-manager.
      *
      *  @details Registers a single D-Bus signal match for the per-node PMFW

@@ -360,11 +360,8 @@ void Manager::init()
     // polling) and CPUID reads require PMFW. They are deferred until the PMFW
     // ready signal is received from amd-host-manager.
 
-    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
-    boost::system::error_code ec;
-
-    static auto match = sdbusplus::bus::match::match(
-        bus,
+    watchdogStateMatch = std::make_unique<sdbusplus::bus::match_t>(
+        static_cast<sdbusplus::bus_t&>(*systemBus),
         "type='signal',member='PropertiesChanged', "
         "interface='org.freedesktop.DBus.Properties', "
         "arg0='xyz.openbmc_project.State.Watchdog'",

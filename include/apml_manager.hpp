@@ -119,6 +119,9 @@ class Manager : public amd::ras::Manager
     std::string alertHandleMode;
     std::vector<std::string> socketNames;
 
+    /** @brief D-Bus match rule for the watchdog PropertiesChanged signal. */
+    std::unique_ptr<sdbusplus::bus::match_t> watchdogStateMatch;
+
     /**
      * @brief Handler for alert events.
      *
