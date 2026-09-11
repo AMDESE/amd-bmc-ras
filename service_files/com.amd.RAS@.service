@@ -4,7 +4,7 @@ After=multi-user.target
 
 [Service]
 Restart=always
-ExecStartPre=mkdir -p /var/lib/amd-bmc-ras
+ExecStartPre=mkdir -p /var/lib/bmc-ras
 ExecStart=/usr/bin/amd-ras-manager %i
 
 [Install]

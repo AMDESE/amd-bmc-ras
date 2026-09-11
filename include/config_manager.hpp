@@ -72,7 +72,7 @@ class Manager
 
     /** @brief Initialize RAS configuration parameters
      *
-     * @details Creates Config File in /var/lib/amd-bmc-ras and the
+     * @details Creates Config File in /var/lib/bmc-ras and the
      * config file values are uploaded to the D-Bus interface.
      *
      * @return On failure of accessing the config file, throw

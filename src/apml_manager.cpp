@@ -27,6 +27,7 @@ namespace ras
 namespace apml
 {
 constexpr size_t sbrmiControlRegister = 0x1;
+constexpr size_t sbrmiStatusRegister = 0x02;
 constexpr size_t sysMgmtCtrlErr = 0x4;
 constexpr size_t shutdownError = 0x40;
 
@@ -382,9 +383,9 @@ void Manager::init()
     try
     {
         std::string srcPath =
-            "/usr/share/amd-bmc-ras/amd_ras_gpio_config" + node + ".json";
+            "/usr/share/bmc-ras/amd_ras_gpio_config" + node + ".json";
         std::string destPath =
-            "/var/lib/amd-bmc-ras/amd_ras_gpio_config" + node + ".json";
+            "/var/lib/bmc-ras/amd_ras_gpio_config" + node + ".json";
 
         std::filesystem::copy_file(
             srcPath, destPath,
@@ -508,6 +509,12 @@ void Manager::init()
                 {
                     watchdogTimerCounter++;
 
+                    lg2::info("BIOS post complete. Clearing SBRMI alert mask");
+                    for (size_t i : socIndex)
+                    {
+                        clearSbrmiAlertMask(i);
+                    }
+
                     lg2::info(
                         "BIOS post complete. Setting MCA and DRAM OOB config");
                     setMcaOobConfig();
@@ -551,7 +558,7 @@ void Manager::init()
 void Manager::configure()
 {
     std::string gpioConfigFile =
-        "/var/lib/amd-bmc-ras/amd_ras_gpio_config" + node + ".json";
+        "/var/lib/bmc-ras/amd_ras_gpio_config" + node + ".json";
 
     std::ifstream jsonFile(gpioConfigFile);
     if (!jsonFile.is_open())
@@ -661,6 +668,21 @@ void Manager::clearSbrmiAlertMask(uint8_t socNum)
         {
             lg2::info("Socket {SOC}: Failed to read SBRMIx[0x{REG}] ", "SOC",
                       socNum, "REG", lg2::hex, alert_status[i]);
+        }
+    }
+
+    // Clear SBRMIx02 bit 3 (SwAsyncAlertSts) to re-arm GPIO alert
+    uint8_t sbrmiStatus;
+    if (read_sbrmi_status(socNum, &sbrmiStatus) == OOB_SUCCESS)
+    {
+        if (sbrmiStatus & 0x08)
+        {
+            ret = esmi_oob_write_byte(socNum, sbrmiStatusRegister, SBRMI, 0x08);
+            if (ret != OOB_SUCCESS)
+            {
+                lg2::error("Socket {SOC}: Failed to clear SBRMIx02 bit 3",
+                           "SOC", socNum);
+            }
         }
     }
 }
@@ -1604,6 +1626,18 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     {
         lg2::debug("Socket {SOC}: Read status register. Value: 0x{BUF}", "SOC",
                    socNum, "BUF", lg2::hex, buf);
+
+        // Clear SBRMIx02 bit 3 (SwAsyncAlertSts) to re-arm GPIO alert
+        if (buf & 0x08)
+        {
+            oob_status_t ret =
+                esmi_oob_write_byte(socNum, sbrmiStatusRegister, SBRMI, 0x08);
+            if (ret != OOB_SUCCESS)
+            {
+                lg2::error("Socket {SOC}: Failed to clear SBRMIx02 bit 3",
+                           "SOC", socNum);
+            }
+        }
 
         /*Check if Alert Status bit is set and clear AlertSts*/
         if (buf & 0x1)
