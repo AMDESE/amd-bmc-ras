@@ -97,7 +97,7 @@
         {
             "DramCeccLeakRate": {
                 "Description": "DRAM CECC leaky bucket leak rate (0x00-0x1F). Only used when DramCeccOobEcMode=2",
-                "Value": 20,
+                "Value": 25,
                 "MaxBoundLimit": 31
             }
         },
