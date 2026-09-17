@@ -116,14 +116,6 @@ class Manager
      */
     std::shared_ptr<sdbusplus::asio::connection> systemBus;
 
-    /** @brief Current PMFW readiness state.
-     *
-     *  @details False until the PMFW ready notification is received. Used to
-     *  gate PMFW-dependent handling and to reflect a single source of truth
-     *  for the PMFW state shared by the APML and PLDM managers.
-     */
-    bool pmfwReady = false;
-
     /** @brief D-Bus match rule for the PMFW status notification signal. */
     std::unique_ptr<sdbusplus::bus::match_t> pmfwStatusMatch;
 
