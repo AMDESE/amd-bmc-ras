@@ -220,8 +220,6 @@ void Manager::subscribePmfwSignals()
 
 void Manager::applyPmfwStatus(bool ready)
 {
-    pmfwReady = ready;
-
     if (ready)
     {
         pmfwReadyHandler();

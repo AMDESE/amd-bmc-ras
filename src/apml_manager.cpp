@@ -113,7 +113,7 @@ Manager::Manager(amd::ras::config::Manager& manager,
                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
                  boost::asio::io_context& io, std::string& node) :
     amd::ras::Manager(manager, systemBus, node), objectServer(objectServer),
-    watchdogTimerCounter(0), io(io), pmfwRuntimeReady(false),
+    io(io), pmfwRuntimeReady(false), hostColdReboot(false),
     platformInitialized(false), runtimeErrPollingSupported(false),
     cfErrorReceived(false), McaErrorPollingEvent(nullptr),
     DramCeccErrorPollingEvent(nullptr), PcieAerErrorPollingEvent(nullptr),
@@ -132,25 +132,18 @@ void Manager::onHostStateChanged(bool hostOff)
     // the host is back up.
     cfErrorReceived = false;
 
-    if (!hostOff)
+    if (hostOff)
     {
-        lg2::info("Current host state monitor changed");
-        oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
-        uint32_t dataOut = 0;
-
-        while (ret != OOB_SUCCESS)
-        {
-            ret = get_bmc_ras_oob_config(0, &dataOut);
-
-            if (ret == OOB_SUCCESS)
-            {
-                platformInitialize();
-                watchdogTimerCounter = 0;
-                break;
-            }
-            sleep(1);
-        }
+        pmfwNotReadyHandler();
+        releaseEventHandlers();
+        return;
     }
+
+    lg2::info("Re-registering APML event handlers after host reboot");
+
+    registerEventHandler();
+    hostColdReboot = true;
+    pmfwReadyHandler();
 }
 
 void Manager::platformInitialize()
@@ -159,22 +152,21 @@ void Manager::platformInitialize()
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     struct processor_info platInfo[1];
 
+    while (ret != OOB_SUCCESS)
+    {
+        uint8_t socNum = 0;
+        ret = esmi_get_processor_info(socNum, platInfo);
+
+        if (ret == OOB_SUCCESS)
+        {
+            familyId = platInfo->family;
+            break;
+        }
+        lg2::error("Failed to get processor info. RET: {RET}", "RET", ret);
+        sleep(1);
+    }
     if (platformInitialized == false)
     {
-        while (ret != OOB_SUCCESS)
-        {
-            uint8_t socNum = 0;
-            ret = esmi_get_processor_info(socNum, platInfo);
-
-            if (ret == OOB_SUCCESS)
-            {
-                familyId = platInfo->family;
-                break;
-            }
-            lg2::error("Failed to get processor info. RET: {RET}", "RET", ret);
-            sleep(1);
-        }
-
         if (ret == OOB_SUCCESS)
         {
             if ((platInfo->family == whFamilyId) &&
@@ -208,6 +200,8 @@ void Manager::platformInitialize()
     }
     else
     {
+        lg2::info(
+            "Platform already initialized. Re-initializing after host state change");
         pmfwRuntimeReady = true;
 
         for (size_t i : socIndex)
@@ -351,14 +345,10 @@ void Manager::init()
         throw std::runtime_error("Failed to copy gpio config file");
     }
 
-    // Load platform metadata (Model, FamilyID, DebugLogID) from JSON. This
-    // does not require PMFW and is needed by alert handling and the deferred
-    // platform initialization performed when PMFW becomes ready.
     loadPlatformConfig();
 
-    // Platform initialization (processor info, thresholds, runtime error
-    // polling) and CPUID reads require PMFW. They are deferred until the PMFW
-    // ready signal is received from amd-host-manager.
+    pmfwReadyHandler();
+    hostColdReboot = true;
 
     watchdogStateMatch = std::make_unique<sdbusplus::bus::match_t>(
         static_cast<sdbusplus::bus_t&>(*systemBus),
@@ -384,49 +374,91 @@ void Manager::init()
                 return;
             }
 
-            // We only want to check for currentHostState
-            if (properties.begin()->first != "Enabled")
+            auto enabledIt = properties.find("Enabled");
+            if (enabledIt == properties.end())
             {
+                lg2::debug("Enabled property not found in watchdog signal");
                 return;
             }
 
-            bool* currentTimerEnable =
-                std::get_if<bool>(&(properties.begin()->second));
+            bool* currentTimerEnable = std::get_if<bool>(&(enabledIt->second));
+            if (currentTimerEnable == nullptr)
+            {
+                lg2::error("Enabled property is not bool in watchdog signal");
+                return;
+            }
+
+            lg2::info("Watchdog Enabled property changed to {STATE}", "STATE",
+                      *currentTimerEnable ? "true" : "false");
 
             if (*currentTimerEnable == false)
             {
+                if (hostColdReboot == true)
+                {
+                    lg2::info("BIOS post complete. Setting PCIE OOb config");
+                    setPcieOobConfig();
+
+                    lg2::info("Setting PCIE Error threshold");
+                    setPcieErrThreshold();
+                    hostColdReboot = false;
+                    lg2::info(
+                        "Skipping watchdog-triggered runtime rearm because it already completed for this boot");
+                    return;
+                }
+                std::string watchdogNode = node;
+                if (watchdogNode.empty())
+                {
+                    watchdogNode = "0";
+                }
+
+                const std::string watchdogService =
+                    "xyz.openbmc_project.Watchdog" + watchdogNode;
+                const std::string watchdogPath =
+                    "/xyz/openbmc_project/watchdog/host" + watchdogNode;
+
+                std::string currentTimerUse;
                 sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
-                std::string currentTimerUse =
-                    amd::ras::util::getProperty<std::string>(
-                        bus, "xyz.openbmc_project.Watchdog",
-                        "/xyz/openbmc_project/watchdog/host0",
+                try
+                {
+                    currentTimerUse = amd::ras::util::getProperty<std::string>(
+                        bus, watchdogService.c_str(), watchdogPath.c_str(),
                         "xyz.openbmc_project.State.Watchdog",
-                        "currentTimerUse");
+                        "CurrentTimerUse");
+                }
+                catch (const std::exception& e)
+                {
+                    lg2::error(
+                        "Watchdog property read failed for {SERVICE} at {PATH}: {ERROR}",
+                        "SERVICE", watchdogService, "PATH", watchdogPath,
+                        "ERROR", e.what());
+                }
+
+                lg2::info("CurrentTimerUse property is {STATE}", "STATE",
+                          currentTimerUse);
 
                 if (currentTimerUse ==
                     "xyz.openbmc_project.State.Watchdog.TimerUse.BIOSFRB2")
                 {
-                    watchdogTimerCounter++;
-
-                    /*Watchdog Timer Enable property will be changed twice after
-                      BIOS post complete. Platform initialization should be
-                      performed only during the second property change*/
-                    if (watchdogTimerCounter == 2)
+                    lg2::info(
+                        "BIOS post complete. Reconfiguring RAS after host reboot");
+                    for (size_t i : socIndex)
                     {
-                        lg2::info(
-                            "BIOS post complete. Setting PCIE OOb config");
-                        setPcieOobConfig();
-
-                        lg2::info("Setting PCIE Error threshold");
-                        setPcieErrThreshold();
+                        clearSbrmiAlertMask(i);
                     }
+
+                    lg2::info(
+                        "Re-registering APML event handlers after host reboot");
+                    registerEventHandler();
+
+                    pmfwReadyHandler();
+                    hostColdReboot = false;
                 }
             }
+            else
+            {
+                pmfwNotReadyHandler();
+            }
         });
-
-    // Subscribe for PMFW readiness notifications from amd-host-manager. The
-    // deferred platform initialization runs when the ready signal arrives.
-    subscribePmfwSignals();
 }
 
 void Manager::pmfwReadyHandler()
@@ -619,8 +651,38 @@ void Manager::registerEventHandler()
                               gpioLines[i], gpioEventDescriptors[i]);
         }
     }
+}
 
-    reconcilePmfwState();
+void Manager::releaseEventHandlers()
+{
+    if (ApmlAlertEvent != nullptr)
+    {
+        ApmlAlertEvent->cancel();
+        delete ApmlAlertEvent;
+        ApmlAlertEvent = nullptr;
+    }
+
+    if (alertHandleMode == "UEVENT")
+    {
+        if (!ud.empty())
+        {
+            releaseUdevReSrc();
+            ud.clear();
+        }
+        return;
+    }
+
+    for (auto& descriptor : gpioEventDescriptors)
+    {
+        if (descriptor.is_open())
+        {
+            descriptor.cancel();
+            descriptor.release();
+        }
+    }
+
+    gpioEventDescriptors.clear();
+    gpioLines.clear();
 }
 
 void Manager::releaseUdevReSrc()
@@ -703,12 +765,15 @@ void Manager::clearSbrmiAlertMask(uint8_t socNum)
         }
     }
 
-    // Clear SBRMIx02 bit 3 (SwAsyncAlertSts) to re-arm GPIO alert
+    // Clear SBRMIx02 bit 3 (SwAsyncAlertSts) to re-arm error alert
     uint8_t sbrmiStatus;
     if (read_sbrmi_status(socNum, &sbrmiStatus) == OOB_SUCCESS)
     {
         if (sbrmiStatus & 0x08)
         {
+            lg2::info(
+                "Socket {SOC}: SBRMIx02 bit 3 is set. Clearing it to re-arm error alert",
+                "SOC", socNum);
             // Register 0x02 is write-one-to-clear, write 0x08 to clear bit 3
             ret = esmi_oob_write_byte(socNum, sbrmiStatusRegister, SBRMI, 0x08);
             if (ret != OOB_SUCCESS)
@@ -717,6 +782,11 @@ void Manager::clearSbrmiAlertMask(uint8_t socNum)
                            "SOC", socNum);
             }
         }
+    }
+    else
+    {
+        lg2::error("Socket {SOC}: Failed to read SBRMIx02 status", "SOC",
+                   socNum);
     }
 }
 
@@ -751,16 +821,22 @@ void Manager::alertSrcHandler(struct apml_udev_monitor* udev_mon,
 
     ApmlAlertEvent =
         new boost::asio::deadline_timer(io, boost::posix_time::seconds(1));
-    ApmlAlertEvent->async_wait(
-        [this, udev_mon, socket](const boost::system::error_code ec) {
-            if (ec)
+    ApmlAlertEvent->async_wait([this, udev_mon,
+                                socket](const boost::system::error_code ec) {
+        if (ec)
+        {
+            if (ec == boost::asio::error::operation_aborted)
             {
-                lg2::error("APML alert handler error: {ERROR}", "ERROR",
-                           ec.message().c_str());
+                lg2::debug(
+                    "APML alert handler timer canceled during host shutdown");
                 return;
             }
-            alertSrcHandler(udev_mon, socket);
-        });
+            lg2::error("APML alert handler error: {ERROR}", "ERROR",
+                       ec.message().c_str());
+            return;
+        }
+        alertSrcHandler(udev_mon, socket);
+    });
 }
 
 void Manager::requestGPIOEvents(
@@ -797,8 +873,16 @@ void Manager::requestGPIOEvents(
             [&name, handler](const boost::system::error_code ec) {
                 if (ec)
                 {
-                    throw std::runtime_error(
-                        "Error in fd handler: " + ec.message());
+                    if (ec == boost::asio::error::operation_aborted)
+                    {
+                        lg2::debug(
+                            "GPIO alert handler for {GPIO} canceled during shutdown",
+                            "GPIO", name);
+                        return;
+                    }
+                    lg2::error("GPIO alert handler error for {GPIO}: {ERROR}",
+                               "GPIO", name, "ERROR", ec.message().c_str());
+                    return;
                 }
                 handler();
             });
@@ -833,6 +917,12 @@ void Manager::alertEventHandler(
             const boost::system::error_code& ec) mutable {
             if (ec)
             {
+                if (ec == boost::asio::error::operation_aborted)
+                {
+                    lg2::debug(
+                        "GPIO APML alert event canceled during shutdown");
+                    return;
+                }
                 lg2::error("APML alert handler error: {ERROR}", "ERROR",
                            ec.message().c_str());
                 return;

@@ -82,6 +82,14 @@ class Manager : public amd::ras::Manager
      */
     void releaseUdevReSrc();
 
+    /** @brief Release APML event handlers before re-registering them.
+     *
+     *  @details Cancels any active APML timers and tears down the existing
+     *  UEVENT or GPIO registrations so registerEventHandler() can be safely
+     *  called again after a host reboot.
+     */
+    void releaseEventHandlers();
+
     /** @brief apmlAlertlFlag getter function
      *
      *  @details This function returns the alertHandleMode. The value
@@ -96,9 +104,9 @@ class Manager : public amd::ras::Manager
     sdbusplus::asio::object_server& objectServer;
 
     size_t contextType;
-    size_t watchdogTimerCounter;
     boost::asio::io_context& io;
     bool pmfwRuntimeReady;
+    bool hostColdReboot;
     bool platformInitialized;
     bool runtimeErrPollingSupported;
     /** @brief Set once a control fabric error (RasStatus[reset_ctrl_err]) is
