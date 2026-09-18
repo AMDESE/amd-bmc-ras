@@ -51,7 +51,7 @@ int submitCperForProcessing(sdbusplus::bus_t& bus,
         auto method = bus.new_method_call(cperServiceName, cperObjPath,
                                           cperInterface, "Process");
 
-        method.append(sdbusplus::message::object_path(inventoryPath),
+        method.append(sdbusplus::object_path(inventoryPath),
                       ContentType::CPER, sdbusplus::message::unix_fd(cperFd));
 
         bus.call_noreply(method);
