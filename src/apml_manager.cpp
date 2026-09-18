@@ -3,6 +3,7 @@
 #include "config_manager.hpp"
 #include "oem_cper.hpp"
 #include "utils/cper.hpp"
+#include "utils/decode_service.hpp"
 #include "utils/ppr_json.hpp"
 #include "utils/util.hpp"
 
@@ -841,8 +842,14 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
                 static_cast<uint8_t>(socIndex[1]), errCount, node, false);
         }
 
-        amd::ras::util::cper::createFile(mcaPtr, runtimeMcaErr, sectionCount,
-                                         errCount, node);
+        auto cperFilePath = amd::ras::util::cper::createFile(
+            mcaPtr, runtimeMcaErr, sectionCount, errCount, node);
+
+        if (!cperFilePath.empty())
+        {
+            amd::ras::util::decode_service::submitCperForProcessing(
+                *conn, cperFilePath, static_cast<uint8_t>(socIndex[0]));
+        }
 
         if (mcaPtr->SectionDescriptor != nullptr)
         {
@@ -915,8 +922,14 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
                 static_cast<uint8_t>(socIndex[1]), errCount, node, true);
         }
 
-        amd::ras::util::cper::createFile(dramPtr, runtimeDramErr, sectionCount,
-                                         errCount, node);
+        auto cperFilePath = amd::ras::util::cper::createFile(
+            dramPtr, runtimeDramErr, sectionCount, errCount, node);
+
+        if (!cperFilePath.empty())
+        {
+            amd::ras::util::decode_service::submitCperForProcessing(
+                *conn, cperFilePath, static_cast<uint8_t>(socIndex[0]));
+        }
 
         if (dramPtr->SectionDescriptor != nullptr)
         {
@@ -967,8 +980,14 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         amd::ras::util::cper::dumpErrorDescriptor(
             pciePtr, sectionCount, runtimePcieErr, severity, progId);
 
-        amd::ras::util::cper::createFile(pciePtr, runtimePcieErr, sectionCount,
-                                         errCount, node);
+        auto cperFilePath = amd::ras::util::cper::createFile(
+            pciePtr, runtimePcieErr, sectionCount, errCount, node);
+
+        if (!cperFilePath.empty())
+        {
+            amd::ras::util::decode_service::submitCperForProcessing(
+                *conn, cperFilePath, static_cast<uint8_t>(socIndex[0]));
+        }
 
         if (pciePtr->SectionDescriptor != nullptr)
         {
@@ -1813,8 +1832,14 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             }
             if (resetReady == true)
             {
-                amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount,
-                                                 node);
+                auto cperFilePath = amd::ras::util::cper::createFile(
+                    rcd, fatalErr, 2, errCount, node);
+
+                if (!cperFilePath.empty())
+                {
+                    amd::ras::util::decode_service::submitCperForProcessing(
+                        *conn, cperFilePath, socNum);
+                }
 
                 bool recoveryAction = true;
 

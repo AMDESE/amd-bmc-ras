@@ -157,10 +157,13 @@ void dumpContext(const std::shared_ptr<FatalCperRecord>&, uint16_t numbanks,
  *  @param[in] errorType - The type of error as a string view.
  *  @param[in] sectionCount - The number of sections in the CPER file.
  *  @param[in] errCount - Reference to the error count.
+ *  @param[in] node - The node identifier string.
+ *
+ *  @return The full path to the created CPER file, or empty string on failure.
  */
 template <typename T>
-void createFile(const std::shared_ptr<T>&, const std::string_view&, uint16_t,
-                size_t&, const std::string&);
+std::string createFile(const std::shared_ptr<T>&, const std::string_view&,
+                       uint16_t, size_t&, const std::string&);
 
 /** @brief Checks if the signature ID matches the configuration list.
  *
