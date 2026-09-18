@@ -608,10 +608,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
             fwrite(procPtr->McaErrorInfo,
                    sizeof(RUNTIME_ERROR_INFO) * sectionCount, singleBit, file);
 
-            std::string rasErrMsg = "Generated runtime CPER file : ";
-            rasErrMsg.append(cperFilePath);
-
-            amd::ras::util::postRedfishEvent("OpenBMC.0.1.AtScaleDebugConnected", rasErrMsg);
+            lg2::info("Generated runtime CPER file: {PATH}", "PATH",
+                       cperFilePath);
         }
     }
     else if (errorType == fatalErr)
@@ -629,10 +627,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
                    sizeof(EFI_AMD_FATAL_ERROR_DATA) * sectionCount, singleBit,
                    file);
 
-            std::string rasErrMsg = "Generated Fatal CPER file : ";
-            rasErrMsg.append(cperFilePath);
-
-            amd::ras::util::postRedfishEvent("OpenBMC.0.1.AtScaleDebugConnected", rasErrMsg);
+            lg2::info("Generated Fatal CPER file: {PATH}", "PATH",
+                       cperFilePath);
         }
     }
     else if (errorType == runtimePcieErr)
@@ -648,10 +644,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
                    sizeof(EFI_AMD_PCIE_ERROR_DATA) * sectionCount, singleBit,
                    file);
 
-            std::string rasErrMsg = "Generated runtime CPER file : ";
-            rasErrMsg.append(cperFilePath);
-
-            amd::ras::util::postRedfishEvent("OpenBMC.0.1.AtScaleDebugConnected", rasErrMsg);
+            lg2::info("Generated runtime PCIe CPER file: {PATH}", "PATH",
+                       cperFilePath);
         }
     }
     fclose(file);

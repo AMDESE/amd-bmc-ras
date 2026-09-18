@@ -1642,9 +1642,8 @@ bool Manager::decodeInterrupt(uint8_t socNum)
         /*Check if Alert Status bit is set and clear AlertSts*/
         if (buf & 0x1)
         {
-            std::string err_msg =
-                "The APML_ALERT_L is asserted due to MCE error";
-            amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", err_msg);
+            lg2::info("Socket {SOC}: APML_ALERT_L asserted due to MCE error",
+                      "SOC", socNum);
 
             uint8_t buffer;
             oob_status_t ret;
@@ -1703,21 +1702,20 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                       status of the other P
                     */
 
-                    std::string rasErrMsg =
-                        "Fatal error detected in the control fabric. "
-                        "BMC may trigger a reset based on policy set. ";
-                    amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", rasErrMsg);
+                    lg2::info(
+                        "Socket {SOC}: Fatal error detected in control fabric. "
+                        "BMC may trigger reset based on policy.",
+                        "SOC", socNum);
 
                     harvestBreakEvent(socNum);
                     cpuAlertProcessed.assign(cpuCount, true);
                 }
                 else if (buf & resetHangErr)
                 {
-                    std::string rasErrMsg =
-                        "System hang while resetting in syncflood."
-                        "Suggested next step is to do an additional manual "
-                        "immediate reset";
-                    amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", rasErrMsg);
+                    lg2::info(
+                        "Socket {SOC}: System hang while resetting in syncflood. "
+                        "Manual immediate reset suggested.",
+                        "SOC", socNum);
 
                     fchHangError = true;
                 }
@@ -1726,26 +1724,24 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             {
                 if (buf & fatalError)
                 {
-                    std::string rasErrMsg;
-
                     if (buf & shutdownError)
                     {
-                        rasErrMsg =
-                            "MCA CPU shutdown error detected."
-                            "System may reset after harvesting MCA data based on policy set.";
+                        lg2::info(
+                            "Socket {SOC}: MCA CPU shutdown error detected. "
+                            "System may reset after harvesting MCA data.",
+                            "SOC", socNum);
 
                         contextType = shutdown;
                     }
                     else
                     {
-                        rasErrMsg = "RAS FATAL Error detected. "
-                                    "System may reset after harvesting "
-                                    "MCA data based on policy set. ";
+                        lg2::info(
+                            "Socket {SOC}: RAS FATAL error detected. "
+                            "System may reset after harvesting MCA data.",
+                            "SOC", socNum);
 
                         contextType = crashdump;
                     }
-
-                    amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", rasErrMsg);
 
                     if (false == harvestMcaValidityCheck(socNum, &errorCheck))
                     {
@@ -1756,9 +1752,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                 }
                 else if (buf & shutdownError)
                 {
-                    std::string rasErrMsg =
-                        "Non MCA Shutdown error detected in the system";
-                    amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", rasErrMsg);
+                    lg2::info(
+                        "Socket {SOC}: Non-MCA shutdown error detected",
+                        "SOC", socNum);
 
                     nonMcaShutdownError = true;
                 }
@@ -1768,9 +1764,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                     {
                         runTimeErrorInfoCheck(mcaErr, interruptMode);
 
-                        std::string mcaErrOverflowMsg =
-                            "MCA runtime error counter overflow occured";
-                        amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", mcaErrOverflowMsg);
+                        lg2::info(
+                            "Socket {SOC}: MCA runtime error counter overflow",
+                            "SOC", socNum);
 
                         runtimeError = true;
                     }
@@ -1778,9 +1774,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                     {
                         runTimeErrorInfoCheck(dramCeccErr, interruptMode);
 
-                        std::string dramErrOverlowMsg =
-                            "DRAM CECC runtime error counter overflow occured";
-                        amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", dramErrOverlowMsg);
+                        lg2::info(
+                            "Socket {SOC}: DRAM CECC runtime error counter overflow",
+                            "SOC", socNum);
 
                         runtimeError = true;
                     }
@@ -1788,9 +1784,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                     {
                         runTimeErrorInfoCheck(pcieErr, interruptMode);
 
-                        std::string pcieErrOverlowMsg =
-                            "PCIE runtime error counter overflow occured";
-                        amd::ras::util::postRedfishEvent("OpenBMC.0.1.CPUError", pcieErrOverlowMsg);
+                        lg2::info(
+                            "Socket {SOC}: PCIe runtime error counter overflow",
+                            "SOC", socNum);
 
                         runtimeError = true;
                     }
