@@ -20,7 +20,7 @@ namespace decode_service
 {
 
 constexpr auto cperObjPath = "/xyz/openbmc_project/logging/cper";
-constexpr auto cperInterface = "xyz.openbmc_project.Logging.CPER";
+constexpr auto cperInterface = "xyz.openbmc_project.Logging.CPER.Processor";
 constexpr auto cperServiceName = "xyz.openbmc_project.Logging.CPER";
 
 using ContentType =
