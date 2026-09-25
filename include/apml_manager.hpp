@@ -106,7 +106,6 @@ class Manager : public amd::ras::Manager
     size_t contextType;
     boost::asio::io_context& io;
     bool pmfwRuntimeReady;
-    bool hostColdReboot;
     bool platformInitialized;
     bool runtimeErrPollingSupported;
     /** @brief Set once a control fabric error (RasStatus[reset_ctrl_err]) is
