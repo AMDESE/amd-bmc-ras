@@ -239,6 +239,11 @@ void Manager::mcaErrorPollingHandler(int64_t* pollingPeriod)
         [this](const boost::system::error_code ec) {
             if (ec)
             {
+                if (ec == boost::asio::error::operation_aborted)
+                {
+                    lg2::debug("MCA polling timer canceled during shutdown");
+                    return;
+                }
                 lg2::error("fd handler error failed: {MSG}", "MSG",
                            ec.message().c_str());
                 return;
@@ -271,6 +276,11 @@ void Manager::dramCeccErrorPollingHandler(int64_t* pollingPeriod)
         [this](const boost::system::error_code ec) {
             if (ec)
             {
+                if (ec == boost::asio::error::operation_aborted)
+                {
+                    lg2::debug("DRAM polling timer canceled during shutdown");
+                    return;
+                }
                 lg2::error("fd handler error failed: {MSG}", "MSG",
                            ec.message().c_str());
                 return;
@@ -306,6 +316,11 @@ void Manager::pcieAerErrorPollingHandler(int64_t* pollingPeriod)
         [this](const boost::system::error_code ec) {
             if (ec)
             {
+                if (ec == boost::asio::error::operation_aborted)
+                {
+                    lg2::debug("PCIe polling timer canceled during shutdown");
+                    return;
+                }
                 lg2::error("fd handler error failed: {MSG}", "MSG",
                            ec.message().c_str());
                 return;
