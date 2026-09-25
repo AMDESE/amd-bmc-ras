@@ -113,37 +113,17 @@ Manager::Manager(amd::ras::config::Manager& manager,
                  std::shared_ptr<sdbusplus::asio::connection>& systemBus,
                  boost::asio::io_context& io, std::string& node) :
     amd::ras::Manager(manager, systemBus, node), objectServer(objectServer),
-    io(io), pmfwRuntimeReady(false), hostColdReboot(false),
-    platformInitialized(false), runtimeErrPollingSupported(false),
-    cfErrorReceived(false), McaErrorPollingEvent(nullptr),
-    DramCeccErrorPollingEvent(nullptr), PcieAerErrorPollingEvent(nullptr),
-    ApmlAlertEvent(nullptr), mcaErrorHarvestMtx(), dramErrorHarvestMtx(),
-    pcieErrorHarvestMtx()
+    io(io), pmfwRuntimeReady(false), platformInitialized(false),
+    runtimeErrPollingSupported(false), cfErrorReceived(false),
+    McaErrorPollingEvent(nullptr), DramCeccErrorPollingEvent(nullptr),
+    PcieAerErrorPollingEvent(nullptr), ApmlAlertEvent(nullptr),
+    mcaErrorHarvestMtx(), dramErrorHarvestMtx(), pcieErrorHarvestMtx()
 {}
 
 void Manager::onHostStateChanged(bool hostOff)
 {
     lg2::info("Host state changed. Host is now {STATE}", "STATE",
               hostOff ? "OFF" : "ON");
-    pmfwRuntimeReady = false;
-
-    // A host state transition indicates a reboot/power cycle. Clear the
-    // control fabric error latch so RAS error alerts are serviced again once
-    // the host is back up.
-    cfErrorReceived = false;
-
-    if (hostOff)
-    {
-        pmfwNotReadyHandler();
-        releaseEventHandlers();
-        return;
-    }
-
-    lg2::info("Re-registering APML event handlers after host reboot");
-
-    registerEventHandler();
-    hostColdReboot = true;
-    pmfwReadyHandler();
 }
 
 void Manager::platformInitialize()
@@ -173,7 +153,6 @@ void Manager::platformInitialize()
                 (std::find(whModels.begin(), whModels.end(), platInfo->model) !=
                  whModels.end()))
             {
-                currentHostStateMonitor();
                 for (size_t i : socIndex)
                 {
                     clearSbrmiAlertMask(i);
@@ -347,8 +326,8 @@ void Manager::init()
 
     loadPlatformConfig();
 
-    pmfwReadyHandler();
-    hostColdReboot = true;
+    subscribePmfwSignals();
+    currentHostStateMonitor();
 
     watchdogStateMatch = std::make_unique<sdbusplus::bus::match_t>(
         static_cast<sdbusplus::bus_t&>(*systemBus),
@@ -393,18 +372,6 @@ void Manager::init()
 
             if (*currentTimerEnable == false)
             {
-                if (hostColdReboot == true)
-                {
-                    lg2::info("BIOS post complete. Setting PCIE OOb config");
-                    setPcieOobConfig();
-
-                    lg2::info("Setting PCIE Error threshold");
-                    setPcieErrThreshold();
-                    hostColdReboot = false;
-                    lg2::info(
-                        "Skipping watchdog-triggered runtime rearm because it already completed for this boot");
-                    return;
-                }
                 std::string watchdogNode = node;
                 if (watchdogNode.empty())
                 {
@@ -439,30 +406,20 @@ void Manager::init()
                 if (currentTimerUse ==
                     "xyz.openbmc_project.State.Watchdog.TimerUse.BIOSFRB2")
                 {
-                    lg2::info(
-                        "BIOS post complete. Reconfiguring RAS after host reboot");
-                    for (size_t i : socIndex)
-                    {
-                        clearSbrmiAlertMask(i);
-                    }
+                    lg2::info("BIOS post complete. Setting PCIE OOb config");
+                    setPcieOobConfig();
 
-                    lg2::info(
-                        "Re-registering APML event handlers after host reboot");
-                    registerEventHandler();
-
-                    pmfwReadyHandler();
-                    hostColdReboot = false;
+                    lg2::info("Setting PCIE Error threshold");
+                    setPcieErrThreshold();
                 }
-            }
-            else
-            {
-                pmfwNotReadyHandler();
             }
         });
 }
 
 void Manager::pmfwReadyHandler()
 {
+    cfErrorReceived = false;
+
     // Perform platform initialization now that the PMFW mailbox is available.
     // Guard against exceptions (e.g. unsupported family) so the service keeps
     // running to service system management control errors. platformInitialize()
@@ -506,6 +463,10 @@ void Manager::pmfwReadyHandler()
 
 void Manager::pmfwNotReadyHandler()
 {
+    lg2::info("PMFW reported not ready for node {NODE}; stopping runtime "
+              "polling",
+              "NODE", node);
+
     // Keep the alert handlers armed so system management control errors are
     // still serviced without PMFW, but tear down platform initialization:
     // stop runtime error polling and clear pmfwRuntimeReady so runtime
@@ -609,6 +570,8 @@ void Manager::configure()
 
 void Manager::registerEventHandler()
 {
+    lg2::info("Registering APML event handlers for {MODE} mode", "MODE",
+              alertHandleMode);
     amd::ras::util::cper::createRecord(objectServer, systemBus, node);
 
     if (alertHandleMode == "UEVENT")
@@ -629,8 +592,8 @@ void Manager::registerEventHandler()
                 apml_unregister_udev_monitor(&ud[i]);
                 return;
             }
-            lg2::debug("Register to udev event is successful {CPU}\n", "CPU",
-                       socIndex[i]);
+            lg2::info("Register to udev event is successful {CPU}\n", "CPU",
+                      socIndex[i]);
 
             alertSrcHandler(&ud[i], socIndex[i]);
         }
@@ -651,6 +614,8 @@ void Manager::registerEventHandler()
                               gpioLines[i], gpioEventDescriptors[i]);
         }
     }
+
+    reconcilePmfwState();
 }
 
 void Manager::releaseEventHandlers()
@@ -695,6 +660,7 @@ void Manager::releaseUdevReSrc()
 
 void Manager::clearSbrmiAlertMask(uint8_t socNum)
 {
+    lg2::info("Clearing SBRMI alert mask for socket {SOC}", "SOC", socNum);
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     uint8_t buffer;
     size_t retryCount = 10;
