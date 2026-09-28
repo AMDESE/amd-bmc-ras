@@ -25,7 +25,7 @@ std::string getCpuInventoryPath(uint8_t socNum);
 /** @brief Submit CPER to decode-service for processing.
  *
  *  Opens the CPER file and calls the decode-service D-Bus interface
- *  xyz.openbmc_project.Logging.CPER.Process() to submit the CPER
+ *  xyz.openbmc_project.Logging.CPER.Processor.Process() to submit the CPER
  *  for decoding and Redfish event generation.
  *
  *  @param[in] bus - D-Bus connection.
