@@ -40,6 +40,7 @@ deps = [
     dependency('libgpiodcxx', default_options: ['bindings=cxx']),
     dependency('boost'),
     dependency('phosphor-logging'),
+    dependency('phosphor-dbus-interfaces'),
     dependency('sdbusplus'),
     dependency('libsystemd'),
     dependency('nlohmann_json', include_type: 'system'),
@@ -68,6 +69,7 @@ sources = [
     'src/utils/util.cpp',
     'src/utils/cper.cpp',
     'src/utils/ppr_json.cpp',
+    'src/utils/decode_service.cpp',
 ]
 
 if apml

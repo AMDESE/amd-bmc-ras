@@ -106,17 +106,17 @@ template void dumpErrorDescriptor(const std::shared_ptr<PcieRuntimeCperRecord>&,
                                   uint16_t, const std::string_view&, uint32_t*,
                                   uint8_t);
 
-template void createFile(const std::shared_ptr<FatalCperRecord>&,
-                         const std::string_view&, uint16_t, size_t&,
-                         const std::string&);
+template std::string createFile(const std::shared_ptr<FatalCperRecord>&,
+                                const std::string_view&, uint16_t, size_t&,
+                                const std::string&);
 
-template void createFile(const std::shared_ptr<McaRuntimeCperRecord>&,
-                         const std::string_view&, uint16_t, size_t&,
-                         const std::string&);
+template std::string createFile(const std::shared_ptr<McaRuntimeCperRecord>&,
+                                const std::string_view&, uint16_t, size_t&,
+                                const std::string&);
 
-template void createFile(const std::shared_ptr<PcieRuntimeCperRecord>&,
-                         const std::string_view&, uint16_t, size_t&,
-                         const std::string&);
+template std::string createFile(const std::shared_ptr<PcieRuntimeCperRecord>&,
+                                const std::string_view&, uint16_t, size_t&,
+                                const std::string&);
 
 std::string findCperFilename(size_t number, const std::string& node)
 {
@@ -527,9 +527,9 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
 }
 
 template <typename PtrType>
-void createFile(const std::shared_ptr<PtrType>& data,
-                const std::string_view& errorType, uint16_t sectionCount,
-                size_t& errCount, const std::string& node)
+std::string createFile(const std::shared_ptr<PtrType>& data,
+                       const std::string_view& errorType, uint16_t sectionCount,
+                       size_t& errCount, const std::string& node)
 {
     static std::mutex index_file_mtx;
     std::unique_lock lock(index_file_mtx);
@@ -591,8 +591,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
 
     if (file == nullptr)
     {
-        lg2::error("Cper File open afailed");
-        return;
+        lg2::error("Cper File open failed");
+        return "";
     }
     if ((errorType == runtimeMcaErr) || (errorType == runtimeDramErr))
     {
@@ -608,10 +608,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
             fwrite(procPtr->McaErrorInfo,
                    sizeof(RUNTIME_ERROR_INFO) * sectionCount, singleBit, file);
 
-            std::string rasErrMsg = "Generated runtime CPER file : ";
-            rasErrMsg.append(cperFilePath);
-
-            amd::ras::util::postRedfishEvent("OpenBMC.0.1.AtScaleDebugConnected", rasErrMsg);
+            lg2::info("Generated runtime CPER file: {PATH}", "PATH",
+                       cperFilePath);
         }
     }
     else if (errorType == fatalErr)
@@ -629,10 +627,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
                    sizeof(EFI_AMD_FATAL_ERROR_DATA) * sectionCount, singleBit,
                    file);
 
-            std::string rasErrMsg = "Generated Fatal CPER file : ";
-            rasErrMsg.append(cperFilePath);
-
-            amd::ras::util::postRedfishEvent("OpenBMC.0.1.AtScaleDebugConnected", rasErrMsg);
+            lg2::info("Generated Fatal CPER file: {PATH}", "PATH",
+                       cperFilePath);
         }
     }
     else if (errorType == runtimePcieErr)
@@ -648,10 +644,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
                    sizeof(EFI_AMD_PCIE_ERROR_DATA) * sectionCount, singleBit,
                    file);
 
-            std::string rasErrMsg = "Generated runtime CPER file : ";
-            rasErrMsg.append(cperFilePath);
-
-            amd::ras::util::postRedfishEvent("OpenBMC.0.1.AtScaleDebugConnected", rasErrMsg);
+            lg2::info("Generated runtime PCIe CPER file: {PATH}", "PATH",
+                       cperFilePath);
         }
     }
     fclose(file);
@@ -675,6 +669,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
     }
 
     lock.unlock();
+
+    return cperFilePath;
 }
 
 } // namespace cper
