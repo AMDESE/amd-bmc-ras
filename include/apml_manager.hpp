@@ -76,6 +76,8 @@ class Manager : public amd::ras::Manager
     bool apmlInitialized;
     bool platformInitialized;
     bool runtimeErrPollingSupported;
+    /** @brief Latch for control fabric error; ignores alerts until reboot. */
+    bool cfErrorReceived;
     std::vector<bool> cpuAlertProcessed;
     boost::asio::steady_timer* McaErrorPollingEvent;
     boost::asio::steady_timer* DramCeccErrorPollingEvent;
@@ -213,6 +215,9 @@ class Manager : public amd::ras::Manager
      *  BMC time to collect MCA data
      */
     void setFatalHarvestDelay();
+
+    /** @brief Cancel runtime polling timers on control fabric error. */
+    void deactivateRuntimeErrorPolling();
 
     /** @brief Monitors the current host power state.
      *
