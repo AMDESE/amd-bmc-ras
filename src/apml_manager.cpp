@@ -115,9 +115,9 @@ Manager::Manager(amd::ras::config::Manager& manager,
     amd::ras::Manager(manager, node), progId(1), recordId(1),
     watchdogTimerCounter(0), io(io), apmlInitialized(false),
     platformInitialized(false), runtimeErrPollingSupported(false),
-    McaErrorPollingEvent(nullptr), DramCeccErrorPollingEvent(nullptr),
-    PcieAerErrorPollingEvent(nullptr), mcaErrorHarvestMtx(),
-    dramErrorHarvestMtx(), pcieErrorHarvestMtx(),
+    cfErrorReceived(false), McaErrorPollingEvent(nullptr),
+    DramCeccErrorPollingEvent(nullptr), PcieAerErrorPollingEvent(nullptr),
+    mcaErrorHarvestMtx(), dramErrorHarvestMtx(), pcieErrorHarvestMtx(),
     conn(std::make_shared<sdbusplus::asio::connection>(io))
 {}
 
@@ -162,6 +162,7 @@ void Manager::currentHostStateMonitor()
             }
 
             apmlInitialized = false;
+            cfErrorReceived = false;
 
             if (*currentHostState !=
                 "xyz.openbmc_project.State.Host.HostState.Off")
@@ -239,6 +240,8 @@ void Manager::platformInitialize()
     }
     else
     {
+        lg2::info("Platform already initialized. Re-initializing after warm "
+                  "reset or host state change");
         apmlInitialized = true;
 
         for (size_t i : socIndex)
@@ -267,7 +270,31 @@ void Manager::platformInitialize()
             lg2::info("Setting fatal harvest delay override");
 
             setFatalHarvestDelay();
+
+            // Re-arm runtime polling timers that were cancelled during
+            // control fabric error handling or host power-off. The first
+            // initialization above starts them via runTimeErrorPolling().
+            lg2::info("Re-arming runtime error polling timers");
+            runTimeErrorPolling();
         }
+    }
+}
+
+void Manager::deactivateRuntimeErrorPolling()
+{
+    lg2::info("Deactivating runtime error polling (control fabric error)");
+
+    if (McaErrorPollingEvent != nullptr)
+    {
+        McaErrorPollingEvent->cancel();
+    }
+    if (DramCeccErrorPollingEvent != nullptr)
+    {
+        DramCeccErrorPollingEvent->cancel();
+    }
+    if (PcieAerErrorPollingEvent != nullptr)
+    {
+        PcieAerErrorPollingEvent->cancel();
     }
 }
 
@@ -291,6 +318,11 @@ void Manager::mcaErrorPollingHandler(int64_t* pollingPeriod)
         [this](const boost::system::error_code ec) {
             if (ec)
             {
+                if (ec == boost::asio::error::operation_aborted)
+                {
+                    lg2::debug("MCA polling timer canceled during shutdown");
+                    return;
+                }
                 lg2::error("fd handler error failed: {MSG}", "MSG",
                            ec.message().c_str());
                 return;
@@ -323,6 +355,11 @@ void Manager::dramCeccErrorPollingHandler(int64_t* pollingPeriod)
         [this](const boost::system::error_code ec) {
             if (ec)
             {
+                if (ec == boost::asio::error::operation_aborted)
+                {
+                    lg2::debug("DRAM polling timer canceled during shutdown");
+                    return;
+                }
                 lg2::error("fd handler error failed: {MSG}", "MSG",
                            ec.message().c_str());
                 return;
@@ -358,6 +395,11 @@ void Manager::pcieAerErrorPollingHandler(int64_t* pollingPeriod)
         [this](const boost::system::error_code ec) {
             if (ec)
             {
+                if (ec == boost::asio::error::operation_aborted)
+                {
+                    lg2::debug("PCIe polling timer canceled during shutdown");
+                    return;
+                }
                 lg2::error("fd handler error failed: {MSG}", "MSG",
                            ec.message().c_str());
                 return;
@@ -508,6 +550,7 @@ void Manager::init()
                 if (currentTimerUse ==
                     "xyz.openbmc_project.State.Watchdog.TimerUse.BIOSFRB2")
                 {
+                    cfErrorReceived = false;
                     watchdogTimerCounter++;
 
                     lg2::info("BIOS post complete. Clearing SBRMI alert mask");
@@ -532,6 +575,13 @@ void Manager::init()
 
                     lg2::info("Setting fatal harvest delay override");
                     setFatalHarvestDelay();
+
+                    if (runtimeErrPollingSupported)
+                    {
+                        lg2::info(
+                            "Re-arming runtime error polling after warm reset");
+                        runTimeErrorPolling();
+                    }
                 }
             }
         });
@@ -602,6 +652,7 @@ void Manager::configure()
 
 void Manager::clearSbrmiAlertMask(uint8_t socNum)
 {
+    lg2::info("Clearing SBRMI alert mask for socket {SOC}", "SOC", socNum);
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     uint8_t buffer;
     size_t retryCount = 10;
@@ -672,12 +723,17 @@ void Manager::clearSbrmiAlertMask(uint8_t socNum)
         }
     }
 
-    // Clear SBRMIx02 bit 3 (SwAsyncAlertSts) to re-arm GPIO alert
+    // Clear SBRMIx02 bit 3 (SwAsyncAlertSts) to re-arm error alert
     uint8_t sbrmiStatus;
     if (read_sbrmi_status(socNum, &sbrmiStatus) == OOB_SUCCESS)
     {
         if (sbrmiStatus & 0x08)
         {
+            lg2::info(
+                "Socket {SOC}: SBRMIx02 bit 3 is set. Clearing it to re-arm "
+                "error alert",
+                "SOC", socNum);
+            // Register 0x02 is write-one-to-clear, write 0x08 to clear bit 3
             ret = esmi_oob_write_byte(socNum, sbrmiStatusRegister, SBRMI, 0x08);
             if (ret != OOB_SUCCESS)
             {
@@ -685,6 +741,11 @@ void Manager::clearSbrmiAlertMask(uint8_t socNum)
                            "SOC", socNum);
             }
         }
+    }
+    else
+    {
+        lg2::error("Socket {SOC}: Failed to read SBRMIx02 status", "SOC",
+                   socNum);
     }
 }
 
@@ -722,8 +783,16 @@ void Manager::requestGPIOEvents(
             [&name, handler](const boost::system::error_code ec) {
                 if (ec)
                 {
-                    throw std::runtime_error(
-                        "Error in fd handler: " + ec.message());
+                    if (ec == boost::asio::error::operation_aborted)
+                    {
+                        lg2::debug(
+                            "GPIO alert handler for {GPIO} canceled during shutdown",
+                            "GPIO", name);
+                        return;
+                    }
+                    lg2::error("GPIO alert handler error for {GPIO}: {ERROR}",
+                               "GPIO", name, "ERROR", ec.message().c_str());
+                    return;
                 }
                 handler();
             });
@@ -758,6 +827,11 @@ void Manager::alertEventHandler(
             const boost::system::error_code& ec) mutable {
             if (ec)
             {
+                if (ec == boost::asio::error::operation_aborted)
+                {
+                    lg2::debug("GPIO APML alert event canceled during shutdown");
+                    return;
+                }
                 lg2::error("APML alert handler error: {ERROR}", "ERROR",
                            ec.message().c_str());
                 return;
@@ -1641,6 +1715,13 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     bool nonMcaShutdownError = false;
     cpuAlertProcessed.resize(cpuCount, false);
 
+    if (cfErrorReceived)
+    {
+        lg2::info("Control fabric error latched, ignoring alert for SOC {SOC}",
+                  "SOC", socNum);
+        return true;
+    }
+
     if (read_sbrmi_status(socNum, &buf) == OOB_SUCCESS)
     {
         lg2::debug("Socket {SOC}: Read status register. Value: 0x{BUF}", "SOC",
@@ -1722,9 +1803,11 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                     */
 
                     lg2::info(
-                        "Socket {SOC}: Fatal error detected in control fabric. "
-                        "BMC may trigger reset based on policy.",
+                        "Socket {SOC}: Control fabric error, BMC may reset",
                         "SOC", socNum);
+
+                    deactivateRuntimeErrorPolling();
+                    cfErrorReceived = true;
 
                     harvestBreakEvent(socNum);
                     cpuAlertProcessed.assign(cpuCount, true);
