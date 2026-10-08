@@ -800,6 +800,13 @@ void Manager::alertSrcHandler(struct apml_udev_monitor* udev_mon,
         return;
     }
 
+    if (ApmlAlertEvent != nullptr)
+    {
+        ApmlAlertEvent->cancel();
+        delete ApmlAlertEvent;
+        ApmlAlertEvent = nullptr;
+    }
+
     ApmlAlertEvent =
         new boost::asio::deadline_timer(io, boost::posix_time::seconds(1));
     ApmlAlertEvent->async_wait([this, udev_mon,
