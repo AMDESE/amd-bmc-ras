@@ -1808,6 +1808,7 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
 
     amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
                                              errorCheck.df_block_instances);
+    refreshCpuIdentity(socNum);
     amd::ras::util::cper::dumpContext(rcd, errorCheck.df_block_instances,
                                       errorCheck.err_log_len, socNum, ppin,
                                       uCode, contextType);
