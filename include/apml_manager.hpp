@@ -583,6 +583,20 @@ class Manager : public amd::ras::Manager
      * processed.
      */
     bool checkIfCPUAlertsProcessed();
+
+    /** @brief Hold the CPU reset after a syncflood when no reset is
+     *         configured.
+     *
+     * @details After a syncflood the CPU resets itself once the BIOS
+     * "Delay Reset After Sync-Flood" countdown expires, regardless of
+     * SystemRecoveryMode. When SystemRecoveryMode is NO_RESET and
+     * HoldSyncfloodResetOnNoReset is true, this sends the APML delay
+     * reset on syncflood override with the stop delay counter bit set,
+     * which stops the active countdown so the host is not reset.
+     *
+     * @param[in] systemRecovery - Pointer to the system recovery policy.
+     */
+    void holdSyncfloodResetOnNoReset(const std::string* systemRecovery);
 };
 
 } // namespace apml
