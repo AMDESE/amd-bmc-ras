@@ -1383,6 +1383,7 @@ void Manager::harvestBreakEvent(uint8_t socNum)
                                               &errorSeverity, progId);
     amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
                                              breakEventBanks);
+    refreshCpuIdentity(socNum);
     amd::ras::util::cper::dumpContext(rcd, breakEventBanks, 0, socNum, ppin,
                                       uCode, breakEvent);
     memcpy(rcd->SectionDescriptor[socNum].FruString, &socNum, sizeof(socNum));
@@ -1465,6 +1466,7 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
                                               &errorSeverity, progId);
     amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
                                              errorCheck.df_block_instances);
+    refreshCpuIdentity(socNum);
     amd::ras::util::cper::dumpContext(rcd, errorCheck.df_block_instances,
                                       errorCheck.err_log_len, socNum, ppin,
                                       uCode, contextType);

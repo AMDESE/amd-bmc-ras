@@ -265,6 +265,14 @@ template uint16_t getProperty(sdbusplus::bus_t& bus, const char* service,
                               const char* path, const char* interface,
                               const char* propertyName);
 
+template uint32_t getProperty(sdbusplus::bus_t& bus, const char* service,
+                              const char* path, const char* interface,
+                              const char* propertyName);
+
+template uint64_t getProperty(sdbusplus::bus_t& bus, const char* service,
+                              const char* path, const char* interface,
+                              const char* propertyName);
+
 template <typename ReturnType>
 ReturnType getProperty(sdbusplus::bus_t& bus, const char* service,
                        const char* path, const char* interface,
