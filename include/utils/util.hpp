@@ -106,6 +106,14 @@ void triggerWarmReset(std::string& node);
 void rasRecoveryAction(std::string&, uint8_t, const std::string*,
                        const std::string*);
 
+/** @brief Unbinds the APML driver for the host.
+ *
+ * @details Invokes set-apml.sh to unbind the APML driver from the host.
+ *
+ *  @param[in] node - Host node identifier.
+ */
+void unbindApml(const std::string& node);
+
 /** @brief Gets value from D-Bus property.
  *
  *  @details Reads D-Bus property value within the given interface.
