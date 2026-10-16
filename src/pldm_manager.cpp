@@ -1064,6 +1064,7 @@ void Manager::harvestMcaDataBanksOverPldm(
     // Populate processor error section and context
     amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
                                              numMcaBanks);
+    refreshCpuIdentity(socNum);
     amd::ras::util::cper::dumpContext(rcd, numMcaBanks, mcaDataBankLen, socNum,
                                       ppin, uCode, contextType);
 
