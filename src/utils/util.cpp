@@ -9,6 +9,7 @@ extern "C"
 #include <phosphor-logging/lg2.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 
@@ -233,6 +234,22 @@ void triggerWarmReset(std::string& node)
 #else
     lg2::error("TODO: Warm reset pending as APML is not supported");
 #endif
+}
+
+void unbindApml(const std::string& node)
+{
+    std::string command = "/usr/bin/set-apml.sh unbind host" + node;
+
+    int ret = std::system(command.c_str());
+    if (ret != 0)
+    {
+        lg2::error("Failed to unbind APML for host{NODE}, ret: {RET}", "NODE",
+                   node, "RET", ret);
+    }
+    else
+    {
+        lg2::info("Successfully unbound APML for host{NODE}", "NODE", node);
+    }
 }
 
 void rasRecoveryAction(std::string& node, uint8_t buf,

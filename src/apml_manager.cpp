@@ -2570,6 +2570,8 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                 }
                 inputFile.close();
             }
+
+            amd::ras::util::unbindApml(node);
         }
         if (recoveryAction == true)
         {
@@ -3005,6 +3007,8 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         }
                         inputFile.close();
                     }
+
+                    amd::ras::util::unbindApml(node);
                 }
                 if (recoveryAction == true)
                 {
