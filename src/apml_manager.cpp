@@ -2125,6 +2125,60 @@ bool Manager::checkIfCPUAlertsProcessed()
     return false;
 }
 
+void Manager::holdSyncfloodResetOnNoReset(const std::string* systemRecovery)
+{
+    if (systemRecovery == nullptr || *systemRecovery != "NO_RESET")
+    {
+        return;
+    }
+
+    // Read the table directly: a config file persisted by an older
+    // image does not carry this key, and getAttribute() throws on a
+    // missing key.
+    const auto configMap = configMgr.rasConfigTable();
+    auto it = configMap.find("HoldSyncfloodResetOnNoReset");
+    if (it == configMap.end())
+    {
+        return;
+    }
+    const auto& holdReset = std::get<2>(it->second);
+    if (!std::holds_alternative<bool>(holdReset) || !std::get<bool>(holdReset))
+    {
+        return;
+    }
+
+    if (socIndex.empty())
+    {
+        return;
+    }
+
+    struct ras_override_delay dataIn = {0, 0, 0};
+    bool ackResp = false;
+    dataIn.stop_delay_counter = 1;
+
+    // The override is accepted on socket 0 only.
+    oob_status_t ret = override_delay_reset_on_sync_flood(
+        static_cast<uint8_t>(socIndex[0]), dataIn, &ackResp);
+
+    if (ret)
+    {
+        lg2::error(
+            "Failed to stop delay reset on syncflood countdown Err:{ERRNO}",
+            "ERRNO", ret);
+    }
+    else if (!ackResp)
+    {
+        // Not acknowledged: the countdown keeps running and the host
+        // will still be reset when it expires.
+        lg2::warning(
+            "NO_RESET: stop delay reset on syncflood request not acknowledged");
+    }
+    else
+    {
+        lg2::info("NO_RESET: stopped delay reset on syncflood countdown");
+    }
+}
+
 void Manager::mergeAutonomousTraceData(const std::string& fullPath)
 {
     std::string tracePropName = (node == secondNodeId)
@@ -2590,6 +2644,8 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
             std::string* systemRecovery =
                 std::get_if<std::string>(&SystemRecoveryVal);
 
+            holdSyncfloodResetOnNoReset(systemRecovery);
+
             amd::ras::util::rasRecoveryAction(node, (uint8_t)src,
                                               systemRecovery, resetSignal);
         }
@@ -3025,6 +3081,8 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                             configMgr.getAttribute("SystemRecoveryMode");
                     std::string* systemRecovery =
                         std::get_if<std::string>(&SystemRecoveryVal);
+
+                    holdSyncfloodResetOnNoReset(systemRecovery);
 
                     amd::ras::util::rasRecoveryAction(node, buf, systemRecovery,
                                                       resetSignal);

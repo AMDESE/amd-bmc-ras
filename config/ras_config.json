@@ -76,6 +76,12 @@
             }
         },
         {
+            "HoldSyncfloodResetOnNoReset": {
+                "Description": "If this field is true and SystemRecoveryMode is NO_RESET, stop the CPU delay reset on syncflood countdown so the host is not reset after a fatal error",
+                "Value": false
+            }
+        },
+        {
             "DramCeccPollingEn": {
                 "Description": "If this field is true, Dynamic Random Access Memory Error Correction Code (DRAM ECC) correctable errors will be polled",
                 "Value": false
