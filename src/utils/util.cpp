@@ -26,6 +26,9 @@ constexpr std::string_view inventoryInterface =
 constexpr std::string_view mapperBusName = "xyz.openbmc_project.ObjectMapper";
 constexpr std::string_view mapperPath = "/xyz/openbmc_project/object_mapper";
 constexpr std::string_view mapperIntf = "xyz.openbmc_project.ObjectMapper";
+/* Number of APML reset-on-sync-flood requests sent before falling back to
+ * the configured cold reset. */
+constexpr int warmResetAttempts = 3;
 
 void createFile(const std::string& directoryName, const std::string& fileName)
 {
@@ -194,6 +197,12 @@ void triggerSysReset(const std::string& node)
 
 void triggerColdReset(const std::string& node, const std::string* resetSignal)
 {
+    if (resetSignal == nullptr)
+    {
+        lg2::error("ResetSignalType is not set, cold reset not triggered");
+        return;
+    }
+
     if (*resetSignal == "RSMRST")
     {
         lg2::info("RSMRST reset triggered");
@@ -204,9 +213,15 @@ void triggerColdReset(const std::string& node, const std::string* resetSignal)
         lg2::info("SYS_RST signal triggered");
         triggerSysReset(node);
     }
+    else
+    {
+        lg2::error(
+            "ResetSignalType {SIGNAL} is not valid, cold reset not triggered",
+            "SIGNAL", *resetSignal);
+    }
 }
 
-void triggerWarmReset(std::string& node)
+bool triggerWarmReset(std::string& node)
 {
     oob_status_t ret;
     uint32_t ackResp = 0;
@@ -220,19 +235,30 @@ void triggerWarmReset(std::string& node)
     }
 
 #ifdef APML
-    ret = reset_on_sync_flood(socNum, &ackResp);
+    for (int attempt = 1; attempt <= warmResetAttempts; attempt++)
+    {
+        ret = reset_on_sync_flood(socNum, &ackResp);
 
-    if (ret)
-    {
-        lg2::error("Failed to request reset after sync flood");
-    }
-    else
-    {
-        lg2::info("Warm reset triggered for socket {SOC}", "SOC", socNum);
+        if (ret == OOB_SUCCESS)
+        {
+            lg2::info("Warm reset triggered for socket {SOC}", "SOC", socNum);
+            return true;
+        }
+
+        lg2::error(
+            "Failed to request reset after sync flood for socket {SOC}, attempt {ATTEMPT}/{MAX} Err:{ERRNO}",
+            "SOC", socNum, "ATTEMPT", attempt, "MAX", warmResetAttempts,
+            "ERRNO", ret);
+
+        if (attempt < warmResetAttempts)
+        {
+            sleep(1);
+        }
     }
 #else
     lg2::error("TODO: Warm reset pending as APML is not supported");
 #endif
+    return false;
 }
 
 void rasRecoveryAction(std::string& node, uint8_t buf,
@@ -245,9 +271,13 @@ void rasRecoveryAction(std::string& node, uint8_t buf,
         {
             triggerColdReset(node, resetSignal);
         }
-        else
+        else if (!triggerWarmReset(node))
         {
-            triggerWarmReset(node);
+            /* The APML warm reset request was not accepted, so the host is
+            left in the sync flood with no reset. Fall back to the
+            configured cold reset instead of leaving it hung. */
+            lg2::error("Warm reset request failed, falling back to cold reset");
+            triggerColdReset(node, resetSignal);
         }
     }
     else if (*systemRecovery == "COLD_RESET")
