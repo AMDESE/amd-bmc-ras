@@ -962,8 +962,8 @@ void Manager::harvestRuntimeErrors(
                                      mcaErr, sectionStart, severity, checkInfo);
 
                 amd::ras::util::cper::dumpProcErrorInfoSection(
-                    mcaPtr, instVec[idx].number_of_inst, checkInfo,
-                    sectionStart, cpuCount, cpuId);
+                    mcaPtr, sectionStart, instVec[idx].number_of_inst,
+                    sectionCount, checkInfo, cpuCount, cpuId);
 
                 sectionStart += instVec[idx].number_of_inst;
             }
@@ -1036,8 +1036,8 @@ void Manager::harvestRuntimeErrors(
                 dumpProcErrorSection(dramPtr, idx, instVec[idx], dramCeccErr,
                                      sectionStart, severity, checkInfo);
                 amd::ras::util::cper::dumpProcErrorInfoSection(
-                    dramPtr, instVec[idx].number_of_inst, checkInfo,
-                    sectionStart, cpuCount, cpuId);
+                    dramPtr, sectionStart, instVec[idx].number_of_inst,
+                    sectionCount, checkInfo, cpuCount, cpuId);
 
                 sectionStart += instVec[idx].number_of_inst;
             }

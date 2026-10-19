@@ -1404,8 +1404,8 @@ bool Manager::harvestRuntimeOverflowSections(
     }
 
     amd::ras::util::cper::dumpProcErrorInfoSection(
-        ptr, sectionCount, checkInfo.data(), 0, static_cast<uint8_t>(cpuCount),
-        cpuId);
+        ptr, 0, sectionCount, sectionCount, checkInfo.data(),
+        static_cast<uint8_t>(cpuCount), cpuId);
 
     uint32_t highestSeverity = amd::ras::util::cper::sevInformational;
     amd::ras::util::cper::calculateSeverity(severity.data(), sectionCount,

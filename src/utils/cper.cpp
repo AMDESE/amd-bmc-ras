@@ -341,15 +341,27 @@ void dumpProcessorError(const std::shared_ptr<FatalCperRecord>& fatalPtr,
     }
 }
 
-void dumpProcErrorInfoSection(
-    const std::shared_ptr<McaRuntimeCperRecord>& procPtr, uint16_t sectionCount,
-    uint64_t* checkInfo, uint32_t sectionStart, uint8_t cpuCount,
-    const std::unique_ptr<CpuId[]>& cpuId)
+bool dumpProcErrorInfoSection(
+    const std::shared_ptr<McaRuntimeCperRecord>& procPtr, uint32_t sectionStart,
+    uint16_t sectionLength, uint16_t totalSectionCount, uint64_t* checkInfo,
+    uint8_t cpuCount, const std::unique_ptr<CpuId[]>& cpuId)
 {
-    for (uint32_t i = sectionStart; i < sectionCount; i++)
+    const uint64_t sectionEnd =
+        static_cast<uint64_t>(sectionStart) + sectionLength;
+
+    if (sectionEnd > totalSectionCount)
+    {
+        lg2::error("Runtime CPER section range [{START}, {END}) exceeds the "
+                   "{TOTAL} allocated sections",
+                   "START", sectionStart, "END", sectionEnd, "TOTAL",
+                   totalSectionCount);
+        return false;
+    }
+
+    for (uint32_t i = sectionStart; i < sectionEnd; i++)
     {
         procPtr->McaErrorInfo[i].ProcError.ValidFields =
-            0b11 | (sectionCount << doubleBit) | (sectionCount << hexBit);
+            0b11 | (sectionLength << doubleBit) | (sectionLength << hexBit);
 
         for (size_t rec = 0; rec < cpuCount; rec++)
         {
@@ -372,6 +384,8 @@ void dumpProcErrorInfoSection(
         procPtr->McaErrorInfo[i].ContextInfo.RegisterType = singleBit;
         procPtr->McaErrorInfo[i].ContextInfo.ArraySize = 32;
     }
+
+    return true;
 }
 
 void dumpContext(const std::shared_ptr<FatalCperRecord>& fatalPtr,
