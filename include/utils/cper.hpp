@@ -180,7 +180,8 @@ void dumpProcessorError(const std::shared_ptr<FatalCperRecord>&, size_t,
  *  @details Populates the half-open section range
  * [sectionStart, sectionStart + sectionLength) of the MCA runtime CPER record
  * with processor error information, including valid bits, MCA array size and
- * MS check GUID.
+ * MS check GUID. Every section in the range is labelled with the identity of
+ * the socket that owns it.
  *
  *  @param[in] procPtr - Shared pointer to the MCA runtime CPER record.
  *  @param[in] sectionStart - First section of the owning socket's range.
@@ -188,13 +189,13 @@ void dumpProcessorError(const std::shared_ptr<FatalCperRecord>&, size_t,
  *  @param[in] totalSectionCount - Sections allocated in the whole record,
  * used to reject a range that would run past the allocation.
  *  @param[in] checkInfo - Pointer to the check information.
- *  @param[in] cpuCount - Number of CPUs.
+ *  @param[in] cpuIdx - Logical index of the socket owning the range.
  *  @param[in] cpuId - Unique pointer to an array of CPU IDs.
  *
  *  @return false if the requested range exceeds the allocated sections.
  */
 bool dumpProcErrorInfoSection(const std::shared_ptr<McaRuntimeCperRecord>&,
-                              uint32_t, uint16_t, uint16_t, uint64_t*, uint8_t,
+                              uint32_t, uint16_t, uint16_t, uint64_t*, size_t,
                               const std::unique_ptr<CpuId[]>&);
 
 /** @brief Dumps context information into the fatal CPER record.
@@ -271,11 +272,12 @@ bool calculateSeverity(uint32_t*, uint16_t, uint32_t*, const std::string_view&);
  *
  *  @param[in] coreDebugPtr - Shared pointer to CoreDebugDumpCperRecord.
  *  @param[in] sectionIdx - Index of the section being populated.
+ *  @param[in] cpuIdx - Logical index of the socket the dump came from.
  *  @param[in] cpuId - Unique pointer to array of CPU IDs.
  */
 void dumpCoreDebugDumpHeader(
     const std::shared_ptr<CoreDebugDumpCperRecord>& coreDebugPtr,
-    uint16_t sectionIdx, const std::unique_ptr<CpuId[]>& cpuId);
+    uint16_t sectionIdx, size_t cpuIdx, const std::unique_ptr<CpuId[]>& cpuId);
 
 /** @brief Populates the SignatureID and sets the ValidFields bit in a fatal
  *         error record when a valid signature is found.
