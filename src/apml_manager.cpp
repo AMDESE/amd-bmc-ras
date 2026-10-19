@@ -572,15 +572,53 @@ void Manager::configure()
             }
         }
     }
-    if (socketNames.empty() && (alertHandleMode == "GPIO"))
+    if (alertHandleMode != "UEVENT" && alertHandleMode != "GPIO")
+    {
+        throw std::runtime_error("Invalid mode of Alert handling");
+    }
+
+    if (alertHandleMode == "GPIO")
+    {
+        validateGpioAlertTopology();
+    }
+}
+
+void Manager::validateGpioAlertTopology() const
+{
+    if (socketNames.empty())
     {
         throw std::runtime_error(
             "Failed to read GPIO_ALERT_LINES from gpio_config.json file");
     }
 
-    if (alertHandleMode != "UEVENT" && alertHandleMode != "GPIO")
+    // Every configured socket must have an alert line. Registering callbacks
+    // against a short list would index past the end of socketNames and leave
+    // the service partially armed.
+    if (socketNames.size() != cpuCount)
     {
-        throw std::runtime_error("Invalid mode of Alert handling");
+        throw std::runtime_error(
+            "GPIO_ALERT_LINES defines " + std::to_string(socketNames.size()) +
+            " alert line(s) for the configured topology [" +
+            socketTopologyStr() + "] of " + std::to_string(cpuCount) +
+            " socket(s)");
+    }
+
+    std::set<std::string> seen;
+
+    for (size_t i = 0; i < socketNames.size(); i++)
+    {
+        if (socketNames[i].empty())
+        {
+            throw std::runtime_error("GPIO_ALERT_LINES entry for socket P" +
+                                     std::to_string(socIndex[i]) + " is empty");
+        }
+
+        if (!seen.insert(socketNames[i]).second)
+        {
+            throw std::runtime_error(
+                "GPIO alert line " + socketNames[i] +
+                " is assigned to more than one socket in GPIO_ALERT_LINES");
+        }
     }
 }
 
@@ -623,11 +661,20 @@ void Manager::registerEventHandler()
         {
             gpioEventDescriptors.emplace_back(io);
 
-            requestGPIOEvents(socketNames[i],
-                              std::bind(&ras::apml::Manager::alertEventHandler,
-                                        this, std::ref(gpioEventDescriptors[i]),
-                                        std::ref(gpioLines[i]), socIndex[i]),
-                              gpioLines[i], gpioEventDescriptors[i]);
+            if (!requestGPIOEvents(
+                    socketNames[i],
+                    std::bind(&ras::apml::Manager::alertEventHandler, this,
+                              std::ref(gpioEventDescriptors[i]),
+                              std::ref(gpioLines[i]), socIndex[i]),
+                    gpioLines[i], gpioEventDescriptors[i]))
+            {
+                // A socket without an armed alert cannot report a fatal
+                // error, so fail loudly instead of running half armed.
+                releaseEventHandlers();
+                throw std::runtime_error(
+                    "Failed to register the alert line " + socketNames[i] +
+                    " for socket P" + std::to_string(socIndex[i]));
+            }
         }
     }
 
@@ -858,7 +905,7 @@ void Manager::alertSrcHandler(struct apml_udev_monitor* udev_mon,
     });
 }
 
-void Manager::requestGPIOEvents(
+bool Manager::requestGPIOEvents(
     const std::string& name, const std::function<void()>& handler,
     gpiod::line& gpioLine,
     boost::asio::posix::stream_descriptor& gpioEventDescriptor)
@@ -908,26 +955,41 @@ void Manager::requestGPIOEvents(
     }
     catch (const std::exception& e)
     {
-        lg2::error("Exception: {ERROR}", "ERROR", e.what());
+        lg2::error("Failed to arm GPIO alert line {GPIO}: {ERROR}", "GPIO",
+                   name, "ERROR", e.what());
+        return false;
     }
+
+    return true;
 }
 
 void Manager::alertEventHandler(
     boost::asio::posix::stream_descriptor& apmlAlertEvent,
     const gpiod::line& alertLine, size_t socket)
 {
-    gpiod::line_event gpioLineEvent = alertLine.event_read();
-
-    if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
+    // This runs from the asio event loop. Report failures here instead of
+    // letting an exception escape and terminate amd-bmc-ras, so the
+    // remaining sockets keep their diagnostics and the service stays up.
+    try
     {
-        lg2::debug("Falling Edge: APML Alert received");
+        gpiod::line_event gpioLineEvent = alertLine.event_read();
 
-        if (rcd == nullptr)
+        if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
         {
-            rcd = std::make_shared<FatalCperRecord>();
-        }
+            lg2::debug("Falling Edge: APML Alert received");
 
-        decodeInterrupt(socket);
+            if (rcd == nullptr)
+            {
+                rcd = std::make_shared<FatalCperRecord>();
+            }
+
+            decodeInterrupt(socket);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Socket P{SOC}: GPIO alert handling failed: {ERROR}", "SOC",
+                   socket, "ERROR", e.what());
     }
 
     apmlAlertEvent.async_wait(
