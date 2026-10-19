@@ -1033,8 +1033,9 @@ void Manager::harvestRuntimeErrors(
         {
             if (instVec[idx].number_of_inst != 0)
             {
-                dumpProcErrorSection(dramPtr, idx, instVec[idx], dramCeccErr,
-                                     sectionStart, severity, checkInfo);
+                dumpProcErrorSection(dramPtr, socIndex[idx], instVec[idx],
+                                     dramCeccErr, sectionStart, severity,
+                                     checkInfo);
                 amd::ras::util::cper::dumpProcErrorInfoSection(
                     dramPtr, sectionStart, instVec[idx].number_of_inst,
                     sectionCount, checkInfo, idx, cpuId);
@@ -1092,8 +1093,9 @@ void Manager::harvestRuntimeErrors(
         {
             if (instVec[idx].number_of_inst != 0)
             {
-                dumpProcErrorSection(pciePtr, idx, instVec[idx], pcieErr,
-                                     sectionStart, severity, checkInfo);
+                dumpProcErrorSection(pciePtr, socIndex[idx], instVec[idx],
+                                     pcieErr, sectionStart, severity,
+                                     checkInfo);
 
                 sectionStart += instVec[idx].number_of_inst;
             }
@@ -3749,9 +3751,10 @@ void Manager::dumpProcErrorSection(
                     std::memset(ProcPtr->SectionDescriptor[section].FruString,
                                 0, 20);
                 }
-                ProcPtr->SectionDescriptor[section].FruString[0] = 'P';
-                ProcPtr->SectionDescriptor[section].FruString[1] = '0' + socNum;
-                ProcPtr->SectionDescriptor[section].FruString[2] = '\0';
+                std::snprintf(
+                    ProcPtr->SectionDescriptor[section].FruString,
+                    sizeof(ProcPtr->SectionDescriptor[section].FruString),
+                    "P%u", socNum);
             }
 
             CheckInfo[section] = 0;
