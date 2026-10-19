@@ -994,7 +994,7 @@ void Manager::harvestRuntimeErrors(
 
                 amd::ras::util::cper::dumpProcErrorInfoSection(
                     mcaPtr, sectionStart, instVec[idx].number_of_inst,
-                    sectionCount, checkInfo, cpuCount, cpuId);
+                    sectionCount, checkInfo, idx, cpuId);
 
                 sectionStart += instVec[idx].number_of_inst;
             }
@@ -1068,7 +1068,7 @@ void Manager::harvestRuntimeErrors(
                                      sectionStart, severity, checkInfo);
                 amd::ras::util::cper::dumpProcErrorInfoSection(
                     dramPtr, sectionStart, instVec[idx].number_of_inst,
-                    sectionCount, checkInfo, cpuCount, cpuId);
+                    sectionCount, checkInfo, idx, cpuId);
 
                 sectionStart += instVec[idx].number_of_inst;
             }
@@ -1590,6 +1590,16 @@ void Manager::harvestDebugLogDump(
 
 void Manager::harvestX86ExceptionData(uint8_t socNum)
 {
+    size_t cpuIdx = 0;
+    if (!toLogicalIndex(socNum, cpuIdx))
+    {
+        lg2::error("x86 exception reported for socket P{SOC}, which is not "
+                   "part of the configured topology [{TOPOLOGY}]. Dropping "
+                   "the event.",
+                   "SOC", socNum, "TOPOLOGY", socketTopologyStr());
+        return;
+    }
+
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     uint16_t retries = 0;
     struct ras_dbg_log_chk_out validityCheck;
@@ -1715,7 +1725,7 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
 
         /* Populate the section header */
         amd::ras::util::cper::dumpCoreDebugDumpHeader(coreDebugDumpPtr, coreIdx,
-                                                      cpuId);
+                                                      cpuIdx, cpuId);
 
         /* Allocate payload for this core */
         coreDebugDumpPtr->DebugDumpSection[coreIdx].payload =
