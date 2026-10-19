@@ -95,6 +95,12 @@ constexpr uint16_t coreMcaHardwareId = 0xb0;
 constexpr size_t coresPerCcd = 32;
 constexpr size_t maxCoreIndex = 256;
 
+// Upper bound on how long a multi-socket RAS event may wait for the
+// remaining sockets to notify. Generous enough to cover APML retries during
+// harvest, short enough that a dropped notification cannot stall all later
+// RAS processing until the host reboots.
+constexpr size_t alertCompletionTimeoutSec = 60;
+
 void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
 {
     oob_status_t ret;
@@ -118,7 +124,8 @@ Manager::Manager(amd::ras::config::Manager& manager,
     runtimeErrPollingSupported(false), resetDrivingErrorReceived(false),
     McaErrorPollingEvent(nullptr), DramCeccErrorPollingEvent(nullptr),
     PcieAerErrorPollingEvent(nullptr), ApmlAlertEvent(nullptr),
-    mcaErrorHarvestMtx(), dramErrorHarvestMtx(), pcieErrorHarvestMtx()
+    mcaErrorHarvestMtx(), dramErrorHarvestMtx(), pcieErrorHarvestMtx(),
+    alertCompletionTimer(nullptr)
 {}
 
 void Manager::onHostStateChanged(bool hostOff)
@@ -2193,6 +2200,86 @@ bool Manager::harvestMcaValidityCheck(uint8_t info,
     return mcaValidityCheck;
 }
 
+bool Manager::markSocketAlertProcessed(uint8_t socNum)
+{
+    size_t logicalIdx = 0;
+
+    if (!toLogicalIndex(socNum, logicalIdx))
+    {
+        lg2::error("RAS alert reported for socket P{SOC}, which is not part "
+                   "of the configured topology [{TOPOLOGY}]. The event cannot "
+                   "be attributed to a CPER section.",
+                   "SOC", socNum, "TOPOLOGY", socketTopologyStr());
+        return false;
+    }
+
+    const bool firstOfEvent =
+        !std::any_of(cpuAlertProcessed.begin(), cpuAlertProcessed.end(),
+                     [](bool processed) { return processed; });
+
+    cpuAlertProcessed[logicalIdx] = true;
+
+    if (firstOfEvent && cpuCount > 1)
+    {
+        alertCompletionTimer = std::make_unique<boost::asio::steady_timer>(
+            io, std::chrono::seconds(alertCompletionTimeoutSec));
+
+        alertCompletionTimer->async_wait(
+            [this](const boost::system::error_code& ec) {
+                if (ec)
+                {
+                    return;
+                }
+                onAlertCompletionTimeout();
+            });
+    }
+
+    return true;
+}
+
+void Manager::resetAlertCompletionState()
+{
+    if (alertCompletionTimer != nullptr)
+    {
+        alertCompletionTimer->cancel();
+        alertCompletionTimer = nullptr;
+    }
+
+    cpuAlertProcessed.assign(cpuCount, false);
+}
+
+void Manager::onAlertCompletionTimeout()
+{
+    std::unique_lock lock(harvestMutex);
+
+    std::string pending;
+    for (size_t i = 0; i < cpuCount; i++)
+    {
+        if (!cpuAlertProcessed[i])
+        {
+            if (!pending.empty())
+            {
+                pending += ", ";
+            }
+            pending += "P" + std::to_string(socIndex[i]);
+        }
+    }
+
+    if (pending.empty())
+    {
+        return;
+    }
+
+    lg2::error("RAS event incomplete after {TIMEOUT}s: no notification from "
+               "socket(s) [{PENDING}] of the configured topology "
+               "[{TOPOLOGY}]. Discarding the partial record.",
+               "TIMEOUT", alertCompletionTimeoutSec, "PENDING", pending,
+               "TOPOLOGY", socketTopologyStr());
+
+    cleanupFatalCperRecord();
+    resetAlertCompletionState();
+}
+
 bool Manager::checkIfCPUAlertsProcessed()
 {
     size_t alertProcessedCount = 0;
@@ -2541,12 +2628,9 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
     configMgr.updateErrorCountDbus();
     configMgr.saveErrorCounts();
 
-    // Map physical socNum to logical index in cpuAlertProcessed
-    auto socIt = std::find(socIndex.begin(), socIndex.end(),
-                           static_cast<size_t>(socNum));
-    if (socIt != socIndex.end())
+    if (!markSocketAlertProcessed(socNum))
     {
-        cpuAlertProcessed[std::distance(socIndex.begin(), socIt)] = true;
+        return false;
     }
 
     if (fchHangError == true || runtimeError == true ||
@@ -2691,7 +2775,7 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
 
         cleanupFatalCperRecord();
 
-        cpuAlertProcessed.assign(cpuCount, false);
+        resetAlertCompletionState();
     }
 
     return true;
@@ -2969,13 +3053,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             configMgr.updateErrorCountDbus();
             configMgr.saveErrorCounts();
 
-            // Map physical socNum to logical index in cpuAlertProcessed
-            auto socIt = std::find(socIndex.begin(), socIndex.end(),
-                                   static_cast<size_t>(socNum));
-            if (socIt != socIndex.end())
+            if (!markSocketAlertProcessed(socNum))
             {
-                cpuAlertProcessed[std::distance(socIndex.begin(), socIt)] =
-                    true;
+                return false;
             }
 
             // Clear RAS status register
@@ -3133,7 +3213,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
                 cleanupFatalCperRecord();
 
-                cpuAlertProcessed.assign(cpuCount, false);
+                resetAlertCompletionState();
             }
         }
     }

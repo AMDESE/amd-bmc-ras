@@ -604,6 +604,45 @@ class Manager : public amd::ras::Manager
      * processed.
      */
     bool checkIfCPUAlertsProcessed();
+
+    /** @brief Record that a socket has finished its part of a RAS event.
+     *
+     * @details Translates the reported physical socket number into its
+     *          logical index and sets the corresponding completion flag.
+     *          An unknown socket is rejected with an explicit diagnostic
+     *          instead of silently leaving the completion gate waiting.
+     *          Arms the completion deadline on the first socket of an event
+     *          so a partial multi-socket notification cannot stall all
+     *          later RAS processing.
+     *
+     * @param[in] socNum - Physical socket number reported by hardware.
+     *
+     * @return true if the socket belongs to the configured topology.
+     */
+    bool markSocketAlertProcessed(uint8_t socNum);
+
+    /** @brief Clear the per-socket completion state and its deadline.
+     *
+     * @details Called once an event has produced its CPER, and on timeout,
+     *          so notifications from separate injection events are never
+     *          combined into one completion decision.
+     */
+    void resetAlertCompletionState();
+
+    /** @brief Abandon a multi-socket event that never completed.
+     *
+     * @details Logs the sockets that never reported, discards the partial
+     *          fatal record so it cannot be merged into a later event, and
+     *          clears the completion state.
+     */
+    void onAlertCompletionTimeout();
+
+    /** @brief Deadline for all sockets of one RAS event to report in.
+     *
+     * @details Armed when the first socket of a multi-socket event is
+     *          marked processed, cancelled when the event completes.
+     */
+    std::unique_ptr<boost::asio::steady_timer> alertCompletionTimer;
 };
 
 } // namespace apml
