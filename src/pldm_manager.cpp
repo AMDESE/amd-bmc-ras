@@ -929,7 +929,8 @@ void Manager::handleFatalOrShutdownError(
     harvestMcaDataBanksOverPldm(eventData, dataTransferHandles, eventDataSizes,
                                 socNum, contextType);
 
-    amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount, node);
+    amd::ras::util::cper::createFile(rcd, fatalErr, fatalSectionCount(),
+                                     errCount, node);
 
     amd::ras::util::cper::exportToDBus(errCount, rcd->Header.TimeStamp,
                                        objectServer, systemBus, node);
@@ -972,7 +973,8 @@ void Manager::handleSysMgmtCtrlError(uint8_t socNum)
     configMgr.updateErrorCountDbus();
     configMgr.saveErrorCounts();
 
-    amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount, node);
+    amd::ras::util::cper::createFile(rcd, fatalErr, fatalSectionCount(),
+                                     errCount, node);
     amd::ras::util::cper::exportToDBus(errCount, rcd->Header.TimeStamp,
                                        objectServer, systemBus, node);
     amd::ras::util::cper::updateIndexFile(errCount, node);
@@ -997,14 +999,22 @@ void Manager::harvestMcaDataBanksOverPldm(
     const std::vector<uint32_t>& eventDataSizes, uint8_t socNum,
     size_t contextType)
 {
-    constexpr uint16_t sectionCount = 2;
+    size_t sectionIdx = 0;
+    if (!toLogicalIndex(socNum, sectionIdx))
+    {
+        lg2::error("PLDM fatal event reported for socket P{SOC}, which is not "
+                   "part of the configured topology [{TOPOLOGY}]. Dropping "
+                   "the event.",
+                   "SOC", socNum, "TOPOLOGY", socketTopologyStr());
+        return;
+    }
 
     if (rcd == nullptr)
     {
         rcd = std::make_shared<FatalCperRecord>();
     }
 
-    initFatalCperRecord(sectionCount);
+    initFatalCperRecord(fatalSectionCount());
 
     // ---------------------------------------------------------------
     // Step 1: Build per-handle byte offsets into the flat eventData
@@ -1063,10 +1073,10 @@ void Manager::harvestMcaDataBanksOverPldm(
     lg2::info("Number of Valid MCA bank: {NUMBANKS}", "NUMBANKS", numMcaBanks);
 
     // Populate processor error section and context
-    amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
+    amd::ras::util::cper::dumpProcessorError(rcd, sectionIdx, cpuId,
                                              numMcaBanks);
-    amd::ras::util::cper::dumpContext(rcd, numMcaBanks, mcaDataBankLen, socNum,
-                                      ppin, uCode, contextType);
+    amd::ras::util::cper::dumpContext(rcd, numMcaBanks, mcaDataBankLen,
+                                      sectionIdx, ppin, uCode, contextType);
 
     // ---------------------------------------------------------------
     // Step 3: Copy MCA bank data into CrashDumpData.
@@ -1078,7 +1088,7 @@ void Manager::harvestMcaDataBanksOverPldm(
             mcaDataOffset + static_cast<size_t>(n) * mcaDataBankLen;
         if (bankStart + mcaDataBankLen <= eventData.size())
         {
-            std::memcpy(rcd->ErrorRecord[socNum].CrashDumpData[n].McaData,
+            std::memcpy(rcd->ErrorRecord[sectionIdx].CrashDumpData[n].McaData,
                         &eventData[bankStart], mcaDataBankLen);
         }
         else
@@ -1088,13 +1098,15 @@ void Manager::harvestMcaDataBanksOverPldm(
                                    : 0;
             if (available > 0)
             {
-                std::memcpy(rcd->ErrorRecord[socNum].CrashDumpData[n].McaData,
-                            &eventData[bankStart], available);
+                std::memcpy(
+                    rcd->ErrorRecord[sectionIdx].CrashDumpData[n].McaData,
+                    &eventData[bankStart], available);
             }
             for (uint32_t w = static_cast<uint32_t>(available / 4);
                  w < maxOffset32; w++)
             {
-                rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[w] = badData;
+                rcd->ErrorRecord[sectionIdx].CrashDumpData[n].McaData[w] =
+                    badData;
             }
         }
     }
@@ -1161,7 +1173,8 @@ void Manager::harvestMcaDataBanksOverPldm(
         // Write APML-compatible header word.
         uint32_t header = (errLogLen << 16) | (numInstances << 8) |
                           static_cast<uint32_t>(blkId);
-        rcd->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] = header;
+        rcd->ErrorRecord[sectionIdx].DebugLogIdData[debugLogIdOffset++] =
+            header;
 
         lg2::info("Socket {SOC}: Debug Log ID : {ID} read successful, "
                   "Block instance : {INST} , Err log length : {LEN}",
@@ -1203,13 +1216,13 @@ void Manager::harvestMcaDataBanksOverPldm(
                     std::memcpy(&word, &eventData[byteOff],
                                 eventData.size() - byteOff);
                 }
-                rcd->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                    word;
+                rcd->ErrorRecord[sectionIdx]
+                    .DebugLogIdData[debugLogIdOffset++] = word;
             }
         }
     }
 
-    processMcaBankSignatures(socNum, numMcaBanks);
+    processMcaBankSignatures(sectionIdx, numMcaBanks);
 }
 
 bool Manager::readEventDataFromFd(int fd, uint32_t eventDataSize,
@@ -1401,8 +1414,8 @@ bool Manager::harvestRuntimeOverflowSections(
     amd::ras::util::cper::dumpHeader(ptr, sectionCount, highestSeverity,
                                      errType, boardId, recordId);
 
-    amd::ras::util::cper::dumpErrorDescriptor(ptr, sectionCount, errType,
-                                              severity.data(), progId);
+    amd::ras::util::cper::dumpErrorDescriptor(
+        ptr, sectionCount, errType, severity.data(), progId, socIndex);
 
     amd::ras::util::cper::createFile(ptr, errType, sectionCount, errCount,
                                      node);
@@ -1513,8 +1526,8 @@ bool Manager::harvestRuntimeOverflowSections(
     amd::ras::util::cper::dumpHeader(ptr, sectionCount, highestSeverity,
                                      errType, boardId, recordId);
 
-    amd::ras::util::cper::dumpErrorDescriptor(ptr, sectionCount, errType,
-                                              severity.data(), progId);
+    amd::ras::util::cper::dumpErrorDescriptor(
+        ptr, sectionCount, errType, severity.data(), progId, socIndex);
 
     amd::ras::util::cper::createFile(ptr, errType, sectionCount, errCount,
                                      node);
