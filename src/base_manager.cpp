@@ -19,8 +19,10 @@ extern "C"
 #include <sdbusplus/bus/match.hpp>
 
 #include <fstream>
+#include <set>
 
 constexpr size_t base16 = 16;
+constexpr size_t maxByte = 0xFF;
 constexpr uint32_t badData = 0xBAADDA7A;
 constexpr size_t breakEventContext = 3;
 constexpr uint16_t breakEventBanks = 1;
@@ -95,6 +97,8 @@ void Manager::getCpuSocketInfo()
     }
 
     file.close();
+
+    validateSocketTopology();
 
     cpuId = std::make_unique<CpuId[]>(cpuCount);
 
@@ -382,6 +386,74 @@ void Manager::handleFchError(uint8_t socNum)
     configMgr.saveErrorCounts();
 }
 
+uint16_t Manager::fatalSectionCount() const
+{
+    return static_cast<uint16_t>(cpuCount);
+}
+
+bool Manager::toLogicalIndex(uint8_t socNum, size_t& logicalIdx) const
+{
+    auto it = std::find(socIndex.begin(), socIndex.end(),
+                        static_cast<size_t>(socNum));
+
+    if (it == socIndex.end())
+    {
+        return false;
+    }
+
+    logicalIdx = static_cast<size_t>(std::distance(socIndex.begin(), it));
+    return true;
+}
+
+std::string Manager::socketTopologyStr() const
+{
+    std::string topology;
+
+    for (size_t soc : socIndex)
+    {
+        if (!topology.empty())
+        {
+            topology += ", ";
+        }
+        topology += "P" + std::to_string(soc);
+    }
+
+    return topology;
+}
+
+void Manager::validateSocketTopology() const
+{
+    if (cpuCount == 0)
+    {
+        throw std::runtime_error("CPU count is zero in the platform config");
+    }
+
+    if (socIndex.size() != cpuCount)
+    {
+        throw std::runtime_error(
+            "Socket map holds " + std::to_string(socIndex.size()) +
+            " entries for a CPU count of " + std::to_string(cpuCount));
+    }
+
+    std::set<size_t> seen;
+
+    for (size_t soc : socIndex)
+    {
+        if (soc > maxByte)
+        {
+            throw std::runtime_error("Socket number P" + std::to_string(soc) +
+                                     " is not addressable over APML");
+        }
+
+        if (!seen.insert(soc).second)
+        {
+            throw std::runtime_error("Socket P" + std::to_string(soc) +
+                                     " is listed more than once in the "
+                                     "configured topology");
+        }
+    }
+}
+
 void Manager::cleanupFatalCperRecord()
 {
     fatalDescriptorsInitialized = false;
@@ -423,13 +495,13 @@ void Manager::initFatalCperRecord(uint16_t sectionCount)
     {
         amd::ras::util::cper::dumpHeader(rcd, sectionCount, errorSeverity,
                                          fatalErr, boardId, recordId);
-        amd::ras::util::cper::dumpErrorDescriptor(rcd, sectionCount, fatalErr,
-                                                  &errorSeverity, progId);
+        amd::ras::util::cper::dumpErrorDescriptor(
+            rcd, sectionCount, fatalErr, &errorSeverity, progId, socIndex);
         fatalDescriptorsInitialized = true;
     }
 }
 
-void Manager::processMcaBankSignatures(uint8_t socNum, uint16_t numBanks)
+void Manager::processMcaBankSignatures(size_t sectionIdx, uint16_t numBanks)
 {
     amd::ras::config::Manager::AttributeValue sigIdOffsetVal =
         configMgr.getAttribute("SigIdOffset");
@@ -445,61 +517,76 @@ void Manager::processMcaBankSignatures(uint8_t socNum, uint16_t numBanks)
 
     for (uint16_t n = 0; n < numBanks; n++)
     {
-        uint32_t mcaStatusLo = rcd->ErrorRecord[socNum]
+        uint32_t mcaStatusLo = rcd->ErrorRecord[sectionIdx]
                                    .CrashDumpData[n]
                                    .McaData[statusOffsetLo / 4];
-        uint32_t mcaStatusHi = rcd->ErrorRecord[socNum]
+        uint32_t mcaStatusHi = rcd->ErrorRecord[sectionIdx]
                                    .CrashDumpData[n]
                                    .McaData[statusOffsetHi / 4];
-        uint32_t mcaIpidLo =
-            rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[ipidOffsetLo / 4];
-        uint32_t mcaIpidHi =
-            rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[ipidOffsetHi / 4];
-        uint32_t mcaSyndLo =
-            rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[syndOffsetLo / 4];
-        uint32_t mcaSyndHi =
-            rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[syndOffsetHi / 4];
+        uint32_t mcaIpidLo = rcd->ErrorRecord[sectionIdx]
+                                 .CrashDumpData[n]
+                                 .McaData[ipidOffsetLo / 4];
+        uint32_t mcaIpidHi = rcd->ErrorRecord[sectionIdx]
+                                 .CrashDumpData[n]
+                                 .McaData[ipidOffsetHi / 4];
+        uint32_t mcaSyndLo = rcd->ErrorRecord[sectionIdx]
+                                 .CrashDumpData[n]
+                                 .McaData[syndOffsetLo / 4];
+        uint32_t mcaSyndHi = rcd->ErrorRecord[sectionIdx]
+                                 .CrashDumpData[n]
+                                 .McaData[syndOffsetHi / 4];
 
-        uint32_t mcaPspSynd1Lo = rcd->ErrorRecord[socNum]
+        uint32_t mcaPspSynd1Lo = rcd->ErrorRecord[sectionIdx]
                                      .CrashDumpData[n]
                                      .McaData[mcaPspSynd1LoCode / 4];
-        uint32_t mcaPspSynd1Hi = rcd->ErrorRecord[socNum]
+        uint32_t mcaPspSynd1Hi = rcd->ErrorRecord[sectionIdx]
                                      .CrashDumpData[n]
                                      .McaData[mcaPspSynd1HiCode / 4];
-        uint32_t mcaPspSynd2Lo = rcd->ErrorRecord[socNum]
+        uint32_t mcaPspSynd2Lo = rcd->ErrorRecord[sectionIdx]
                                      .CrashDumpData[n]
                                      .McaData[mcaPspSynd2LoCode / 4];
-        uint32_t mcaPspSynd2Hi = rcd->ErrorRecord[socNum]
+        uint32_t mcaPspSynd2Hi = rcd->ErrorRecord[sectionIdx]
                                      .CrashDumpData[n]
                                      .McaData[mcaPspSynd2HiCode / 4];
 
         if ((mcaStatusHi & (1 << 25)) && (mcaStatusHi & (1 << 23)))
         {
             amd::ras::util::cper::populateSignatureId(
-                rcd->ErrorRecord[socNum], mcaSyndLo, mcaSyndHi, mcaIpidLo,
+                rcd->ErrorRecord[sectionIdx], mcaSyndLo, mcaSyndHi, mcaIpidLo,
                 mcaIpidHi, mcaStatusLo, mcaStatusHi);
         }
 
         constexpr size_t mcaConfigLoOffset = 0x20;
         constexpr uint32_t mcaFruTextInMcaBit = 9;
-        uint32_t mcaConfigLo = rcd->ErrorRecord[socNum]
+        uint32_t mcaConfigLo = rcd->ErrorRecord[sectionIdx]
                                    .CrashDumpData[n]
                                    .McaData[mcaConfigLoOffset / 4];
 
         if ((mcaConfigLo & (1U << mcaFruTextInMcaBit)) != 0)
         {
             amd::ras::util::cper::populateFruStringPspSynd(
-                rcd->SectionDescriptor[socNum], mcaPspSynd1Lo, mcaPspSynd1Hi,
-                mcaPspSynd2Lo, mcaPspSynd2Hi);
+                rcd->SectionDescriptor[sectionIdx], mcaPspSynd1Lo,
+                mcaPspSynd1Hi, mcaPspSynd2Lo, mcaPspSynd2Hi);
         }
     }
 }
 
 void Manager::harvestBreakEvent(uint8_t socNum)
 {
-    constexpr uint16_t sectionCount = 2;
     constexpr uint8_t baseReg = 0x80;
     constexpr size_t regCount = 8;
+
+    size_t sectionIdx = 0;
+    if (!toLogicalIndex(socNum, sectionIdx))
+    {
+        lg2::error("Break event reported for socket P{SOC}, which is not part "
+                   "of the configured topology [{TOPOLOGY}]. Dropping the "
+                   "event.",
+                   "SOC", socNum, "TOPOLOGY", socketTopologyStr());
+        return;
+    }
+
+    const uint16_t sectionCount = fatalSectionCount();
 
     if (rcd == nullptr)
     {
@@ -508,9 +595,9 @@ void Manager::harvestBreakEvent(uint8_t socNum)
 
     initFatalCperRecord(sectionCount);
 
-    amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
+    amd::ras::util::cper::dumpProcessorError(rcd, sectionIdx, cpuId,
                                              breakEventBanks);
-    amd::ras::util::cper::dumpContext(rcd, breakEventBanks, 0, socNum, ppin,
+    amd::ras::util::cper::dumpContext(rcd, breakEventBanks, 0, sectionIdx, ppin,
                                       uCode, breakEventContext);
 
     for (uint16_t section = 0; section < sectionCount; ++section)
@@ -545,15 +632,17 @@ void Manager::harvestBreakEvent(uint8_t socNum)
         {
             lg2::error("Socket {SOC}: Failed to read register: {REGISTER}",
                        "SOC", socNum, "REGISTER", lg2::hex, reg);
-            rcd->ErrorRecord[socNum].CrashDumpData[0].McaData[offset] = badData;
+            rcd->ErrorRecord[sectionIdx].CrashDumpData[0].McaData[offset] =
+                badData;
             continue;
         }
 
-        rcd->ErrorRecord[socNum].CrashDumpData[0].McaData[offset] = regValue;
+        rcd->ErrorRecord[sectionIdx].CrashDumpData[0].McaData[offset] =
+            regValue;
     }
 
     // Keep break-event records aligned with existing APML/PLDM CPER format.
-    rcd->ErrorRecord[socNum].RegisterArraySize = 32;
+    rcd->ErrorRecord[sectionIdx].RegisterArraySize = 32;
 }
 
 } // namespace ras

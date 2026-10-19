@@ -434,10 +434,12 @@ class Manager : public amd::ras::Manager
      * of the system via APML when the syncflood occuered
      *
      * @param[in] fatalPtr - Shared pointer to a FatalCperRecord object.
-     * @param[in] socNum - The SoC number.
+     * @param[in] socNum - The physical SoC number to read over APML.
+     * @param[in] sectionIdx - CPER section owned by that socket.
      *
      */
-    void getLastTransAddr(const std::shared_ptr<FatalCperRecord>&, uint8_t);
+    void getLastTransAddr(const std::shared_ptr<FatalCperRecord>&, uint8_t,
+                          size_t);
 
     /** @brief Harvests debug log ID dump data
      *
@@ -445,27 +447,30 @@ class Manager : public amd::ras::Manager
      * of the block ID's provided to the function
      *
      * @param[in] fatalPtr - Shared pointer to a FatalCperRecord object.
-     * @param[in] socNum - The SoC number.
+     * @param[in] socNum - The physical SoC number to read over APML.
+     * @param[in] sectionIdx - CPER section owned by that socket.
      * @param[in] blkId - The block ID.
      * @param[in] apmlRetryCount - Pointer to the APML retry count.
      * @param[out] debugLogIdOffset - Reference to the debug log ID offset.
      *
      */
     void harvestDebugLogDump(const std::shared_ptr<FatalCperRecord>&, uint8_t,
-                             uint8_t, int64_t*, uint16_t&);
+                             size_t, uint8_t, int64_t*, uint16_t&);
 
     /** @brief Harvests uncore IFT dump data
      *
      * @details This function harvests the dump data for debug log ID 25
      *
      * @param[in] fatalPtr - Shared pointer to a FatalCperRecord object.
-     * @param[in] socNum - The SoC number.
+     * @param[in] socNum - The physical SoC number to read over APML.
+     * @param[in] sectionIdx - CPER section owned by that socket.
      * @param[in] apmlRetryCount - Pointer to the APML retry count.
      * @param[out] debugLogIdOffset - Reference to the debug log ID offset.
      *
      */
     void harvestUncoreIftDump(const std::shared_ptr<FatalCperRecord>& fatalPtr,
-                              uint8_t socNum, int64_t* apmlRetryCount,
+                              uint8_t socNum, size_t sectionIdx,
+                              int64_t* apmlRetryCount,
                               uint16_t& debugLogIdOffset);
 
     /** @brief Dumps the processor error section of the CPER record

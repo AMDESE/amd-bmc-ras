@@ -1007,7 +1007,7 @@ void Manager::harvestRuntimeErrors(
                                          runtimeMcaErr, boardId, recordId);
 
         amd::ras::util::cper::dumpErrorDescriptor(
-            mcaPtr, sectionCount, runtimeMcaErr, severity, progId);
+            mcaPtr, sectionCount, runtimeMcaErr, severity, progId, socIndex);
 
         amd::ras::util::cper::createFile(mcaPtr, runtimeMcaErr, sectionCount,
                                          errCount, node);
@@ -1081,7 +1081,7 @@ void Manager::harvestRuntimeErrors(
                                          runtimeDramErr, boardId, recordId);
 
         amd::ras::util::cper::dumpErrorDescriptor(
-            dramPtr, sectionCount, runtimeDramErr, severity, progId);
+            dramPtr, sectionCount, runtimeDramErr, severity, progId, socIndex);
 
         amd::ras::util::cper::createFile(dramPtr, runtimeDramErr, sectionCount,
                                          errCount, node);
@@ -1137,7 +1137,7 @@ void Manager::harvestRuntimeErrors(
                                          runtimePcieErr, boardId, recordId);
 
         amd::ras::util::cper::dumpErrorDescriptor(
-            pciePtr, sectionCount, runtimePcieErr, severity, progId);
+            pciePtr, sectionCount, runtimePcieErr, severity, progId, socIndex);
 
         amd::ras::util::cper::createFile(pciePtr, runtimePcieErr, sectionCount,
                                          errCount, node);
@@ -1277,7 +1277,7 @@ void Manager::runTimeErrorInfoCheck(uint8_t errType, uint8_t reqType)
 }
 
 void Manager::getLastTransAddr(const std::shared_ptr<FatalCperRecord>& fatalPtr,
-                               uint8_t socNum)
+                               uint8_t socNum, size_t sectionIdx)
 {
     oob_status_t ret;
     uint8_t blkId = 0;
@@ -1313,7 +1313,7 @@ void Manager::getLastTransAddr(const std::shared_ptr<FatalCperRecord>& fatalPtr,
 
                     ret = read_ras_df_err_dump(socNum, df_err, &data);
 
-                    fatalPtr->ErrorRecord[socNum]
+                    fatalPtr->ErrorRecord[sectionIdx]
                         .DfDumpData.LastTransAddr[n]
                         .WdtData[offset] = data;
                 }
@@ -1353,7 +1353,7 @@ inline bool retryUncoreDump(
 
 void Manager::harvestUncoreIftDump(
     const std::shared_ptr<FatalCperRecord>& fatalPtr, uint8_t socNum,
-    int64_t* apmlRetryCount, uint16_t& debugLogIdOffset)
+    size_t sectionIdx, int64_t* apmlRetryCount, uint16_t& debugLogIdOffset)
 {
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     uint16_t retries = 0;
@@ -1384,14 +1384,14 @@ void Manager::harvestUncoreIftDump(
 
             /*If 5Bh command fails ,0xBAADDA7A is written thrice in the PCIE
              * dump region*/
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                blockId25;
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                badData;
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                badData;
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                badData;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = blockId25;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = badData;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = badData;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = badData;
 
             break;
         }
@@ -1405,8 +1405,8 @@ void Manager::harvestUncoreIftDump(
                 (static_cast<uint32_t>(resp.instances) << 8) |
                 static_cast<uint32_t>(blockId25);
 
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                debugLogIdHeader;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = debugLogIdHeader;
 
             while (instanceNum < resp.instances)
             {
@@ -1443,7 +1443,7 @@ void Manager::harvestUncoreIftDump(
 
                 for (size_t i = 0; i < dataIn.offsets; i++)
                 {
-                    fatalPtr->ErrorRecord[socNum]
+                    fatalPtr->ErrorRecord[sectionIdx]
                         .DebugLogIdData[debugLogIdOffset++] =
                         dataOut.offsets_data[i];
                 }
@@ -1456,7 +1456,8 @@ void Manager::harvestUncoreIftDump(
 
 void Manager::harvestDebugLogDump(
     const std::shared_ptr<FatalCperRecord>& fatalPtr, uint8_t socNum,
-    uint8_t blkId, int64_t* apmlRetryCount, uint16_t& debugLogIdOffset)
+    size_t sectionIdx, uint8_t blkId, int64_t* apmlRetryCount,
+    uint16_t& debugLogIdOffset)
 {
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     uint16_t retries = 0;
@@ -1489,14 +1490,14 @@ void Manager::harvestDebugLogDump(
 
             /*If 5Bh command fails ,0xBAADDA7A is written thrice in the PCIE
              * dump region*/
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                blkId;
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                badData;
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                badData;
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                badData;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = blkId;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = badData;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = badData;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = badData;
 
             break;
         }
@@ -1510,8 +1511,8 @@ void Manager::harvestDebugLogDump(
                 (static_cast<uint32_t>(err_chk.df_block_instances) << 8) |
                 static_cast<uint32_t>(blkId);
 
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                debugLogIdHeader;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = debugLogIdHeader;
 
             maxOffset32 = ((err_chk.err_log_len % 4) ? 1 : 0) +
                           (err_chk.err_log_len >> 2);
@@ -1578,7 +1579,7 @@ void Manager::harvestDebugLogDump(
                         }
                     }
 
-                    fatalPtr->ErrorRecord[socNum]
+                    fatalPtr->ErrorRecord[sectionIdx]
                         .DebugLogIdData[debugLogIdOffset++] = data;
                 }
                 n++;
@@ -1692,7 +1693,8 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
         severity[i] = amd::ras::util::cper::sevInformational;
     }
     amd::ras::util::cper::dumpErrorDescriptor(
-        coreDebugDumpPtr, sectionCount, coreDebugDumpErr, severity, progId);
+        coreDebugDumpPtr, sectionCount, coreDebugDumpErr, severity, progId,
+        socIndex);
     delete[] severity;
 
     /*
@@ -1840,19 +1842,27 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
         configMgr.getAttribute("ApmlRetries");
     int64_t* apmlRetryCount = std::get_if<int64_t>(&apmlRetry);
 
-    constexpr uint16_t sectionCount = 2;
+    size_t sectionIdx = 0;
+    if (!toLogicalIndex(socNum, sectionIdx))
+    {
+        lg2::error("Fatal error reported for socket P{SOC}, which is not part "
+                   "of the configured topology [{TOPOLOGY}]. Dropping the "
+                   "event.",
+                   "SOC", socNum, "TOPOLOGY", socketTopologyStr());
+        return;
+    }
 
-    initFatalCperRecord(sectionCount);
+    initFatalCperRecord(fatalSectionCount());
 
-    amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
+    amd::ras::util::cper::dumpProcessorError(rcd, sectionIdx, cpuId,
                                              errorCheck.df_block_instances);
     amd::ras::util::cper::dumpContext(rcd, errorCheck.df_block_instances,
-                                      errorCheck.err_log_len, socNum, ppin,
+                                      errorCheck.err_log_len, sectionIdx, ppin,
                                       uCode, contextType);
 
     uint8_t blkId;
 
-    getLastTransAddr(rcd, socNum);
+    getLastTransAddr(rcd, socNum, sectionIdx);
 
     uint16_t debugLogIdOffset = 0;
     union ras_df_err_dump dfError = {0};
@@ -1861,12 +1871,13 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
     {
         if (blockId[blkId] == blockId25)
         {
-            harvestUncoreIftDump(rcd, socNum, apmlRetryCount, debugLogIdOffset);
+            harvestUncoreIftDump(rcd, socNum, sectionIdx, apmlRetryCount,
+                                 debugLogIdOffset);
         }
         else
         {
-            harvestDebugLogDump(rcd, socNum, blockId[blkId], apmlRetryCount,
-                                debugLogIdOffset);
+            harvestDebugLogDump(rcd, socNum, sectionIdx, blockId[blkId],
+                                apmlRetryCount, debugLogIdOffset);
         }
     }
 
@@ -1922,20 +1933,23 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
                                "from Bank:{N}, Offset:{OFFSET}",
                                "SOCKET", socNum, "N", n, "OFFSET", lg2::hex,
                                offset);
-                    rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[offset] =
+                    rcd->ErrorRecord[sectionIdx]
+                        .CrashDumpData[n]
+                        .McaData[offset] =
                         badData; // Write BAADDA7A pattern on error
                     continue;
                 }
 
             } // if (ret != OOB_SUCCESS)
 
-            rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[offset] = buffer;
+            rcd->ErrorRecord[sectionIdx].CrashDumpData[n].McaData[offset] =
+                buffer;
         } // for loop
 
         n++;
     }
 
-    processMcaBankSignatures(socNum, errorCheck.df_block_instances);
+    processMcaBankSignatures(sectionIdx, errorCheck.df_block_instances);
 
     uint32_t ipidOffsetLo = std::stoul((*sigIDOffset)[2], nullptr, base16);
     uint32_t ipidOffsetHi = std::stoul((*sigIDOffset)[3], nullptr, base16);
@@ -1943,14 +1957,14 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
 
     for (uint16_t bank = 0; bank < errorCheck.df_block_instances; bank++)
     {
-        uint32_t mcaStatusHi = rcd->ErrorRecord[socNum]
+        uint32_t mcaStatusHi = rcd->ErrorRecord[sectionIdx]
                                    .CrashDumpData[bank]
                                    .McaData[statusOffsetHi / 4];
 
-        uint32_t mcaIpidLo = rcd->ErrorRecord[socNum]
+        uint32_t mcaIpidLo = rcd->ErrorRecord[sectionIdx]
                                  .CrashDumpData[bank]
                                  .McaData[ipidOffsetLo / 4];
-        uint32_t mcaIpidHi = rcd->ErrorRecord[socNum]
+        uint32_t mcaIpidHi = rcd->ErrorRecord[sectionIdx]
                                  .CrashDumpData[bank]
                                  .McaData[ipidOffsetHi / 4];
 
@@ -2527,7 +2541,8 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
     }
     if (resetReady == true)
     {
-        amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount, node);
+        amd::ras::util::cper::createFile(rcd, fatalErr, fatalSectionCount(),
+                                         errCount, node);
         if (src & fatalError)
         {
             std::string currentCperFile =
@@ -2990,8 +3005,8 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             }
             if (resetReady == true)
             {
-                amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount,
-                                                 node);
+                amd::ras::util::cper::createFile(
+                    rcd, fatalErr, fatalSectionCount(), errCount, node);
 
                 amd::ras::util::cper::exportToDBus(
                     errCount, rcd->Header.TimeStamp, objectServer, systemBus,

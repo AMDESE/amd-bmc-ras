@@ -154,23 +154,26 @@ void dumpHeader(const std::shared_ptr<PtrType>&, uint16_t, uint32_t,
  *  @param[in] errorType - Type of the error.
  *  @param[in] severity - Pointer to the severity values.
  *  @param[in] progId - Program ID.
+ *  @param[in] socketMap - Logical section index to physical socket number
+ * mapping, used to label fatal sections. Ignored for other error types.
  */
 template <typename PtrType>
 void dumpErrorDescriptor(const std::shared_ptr<PtrType>&, uint16_t,
-                         const std::string_view&, uint32_t*, uint8_t);
+                         const std::string_view&, uint32_t*, uint8_t,
+                         const std::vector<size_t>&);
 
 /** @brief Dumps processor error details into the fatal CPER record.
  *
  *  @details Populates the fatal CPER record with cpuid , APIC Id info.
  *
  *  @param[in] fatalPtr - Shared pointer to the fatal CPER record.
- *  @param[in] socNum - SoC number.
+ *  @param[in] sectionIdx - Logical index of the section owned by the
+ * reporting socket. Also indexes the CPU metadata arrays.
  *  @param[in] cpuId - Unique pointer to an array of CPU IDs.
- *  @param[in] cpuCount - Number of CPUs.
+ *  @param[in] numbanks - Number of valid MCA banks.
  */
-void dumpProcessorError(const std::shared_ptr<FatalCperRecord>&, uint8_t,
-                        const std::unique_ptr<CpuId[]>&, std::vector<size_t>&,
-                        uint16_t);
+void dumpProcessorError(const std::shared_ptr<FatalCperRecord>&, size_t,
+                        const std::unique_ptr<CpuId[]>&, uint16_t);
 
 /** @brief Dumps processor error information into the MCA runtime CPER record.
  *
@@ -196,13 +199,14 @@ void dumpProcErrorInfoSection(const std::shared_ptr<McaRuntimeCperRecord>&,
  *  @param[in] fatalPtr - Shared pointer to the fatal CPER record.
  *  @param[in] numbanks - Number of banks.
  *  @param[in] bytespermca - Bytes per MCA.
- *  @param[in] socNum - SoC number.
+ *  @param[in] sectionIdx - Logical index of the section owned by the
+ * reporting socket. Also indexes the PPIN and microcode arrays.
  *  @param[in] ppin - Unique pointer to an array of PPIN values.
  *  @param[in] uCode - Unique pointer to an array of microcode values.
- *  @param[in] cpuCount - Number of CPUs.
+ *  @param[in] contextType - Register context type for the record.
  */
 void dumpContext(const std::shared_ptr<FatalCperRecord>&, uint16_t numbanks,
-                 uint16_t bytespermca, uint8_t,
+                 uint16_t bytespermca, size_t,
                  const std::unique_ptr<uint64_t[]>&,
                  const std::unique_ptr<uint32_t[]>&, size_t);
 
