@@ -154,10 +154,23 @@ class Manager : public amd::ras::Manager
      * @param[in] callback The function to call when an event is detected.
      * @param[in] line The GPIO line to use for event detection.
      * @param[in] stream The stream descriptor used to listen for events.
+     *
+     * @return true if the line was found and armed.
      */
-    void requestGPIOEvents(const std::string&, const std::function<void()>&,
+    bool requestGPIOEvents(const std::string&, const std::function<void()>&,
                            gpiod::line&,
                            boost::asio::posix::stream_descriptor&);
+
+    /** @brief Validate the GPIO alert definition against the topology.
+     *
+     * @details GPIO_ALERT_LINES must name exactly one distinct, non-empty
+     *          line per configured socket. Anything else would leave a
+     *          socket unarmed or index past the end of the vector.
+     *
+     * @throw std::runtime_error with a socket-specific message if the alert
+     *        definition does not match the configured topology.
+     */
+    void validateGpioAlertTopology() const;
 
     /**
      * @brief Handler for alert events.
