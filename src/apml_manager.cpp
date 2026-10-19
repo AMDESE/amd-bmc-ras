@@ -114,7 +114,7 @@ Manager::Manager(amd::ras::config::Manager& manager,
                  boost::asio::io_context& io, std::string& node) :
     amd::ras::Manager(manager, systemBus, node), objectServer(objectServer),
     io(io), pmfwRuntimeReady(false), platformInitialized(false),
-    runtimeErrPollingSupported(false), cfErrorReceived(false),
+    runtimeErrPollingSupported(false), resetDrivingErrorReceived(false),
     McaErrorPollingEvent(nullptr), DramCeccErrorPollingEvent(nullptr),
     PcieAerErrorPollingEvent(nullptr), ApmlAlertEvent(nullptr),
     mcaErrorHarvestMtx(), dramErrorHarvestMtx(), pcieErrorHarvestMtx()
@@ -433,7 +433,7 @@ void Manager::init()
 
 void Manager::pmfwReadyHandler()
 {
-    cfErrorReceived = false;
+    resetDrivingErrorReceived = false;
 
     // Perform platform initialization now that the PMFW mailbox is available.
     // Guard against exceptions (e.g. unsupported family) so the service keeps
@@ -2269,12 +2269,12 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
     bool nonMcaShutdownError = false;
     cpuAlertProcessed.resize(cpuCount, false);
 
-    // Once a control fabric error (RasStatus[reset_ctrl_err]) has been
-    // detected, the system is expected to be reset based on policy. Ignore any
-    // further RAS error alerts until the host is rebooted.
-    if (cfErrorReceived == true)
+    // Once a reset-driving RAS error has been detected, the system is
+    // expected to be reset based on policy. Ignore any further RAS error
+    // alerts until the host is rebooted.
+    if (resetDrivingErrorReceived == true)
     {
-        lg2::info("Control fabric error already latched. Ignoring RAS error "
+        lg2::info("Reset-driving RAS error already latched. Ignoring RAS error "
                   "alert for SOC {SOC} until host reboot",
                   "SOC", socNum);
         return true;
@@ -2312,9 +2312,9 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                based on policy, so stop runtime error polling. */
             deactivateRuntimeErrorPolling();
 
-            /* Latch the control fabric error so subsequent RAS error alerts
+            /* Latch the reset-driving error so subsequent RAS error alerts
                are ignored until the host is rebooted. */
-            cfErrorReceived = true;
+            resetDrivingErrorReceived = true;
 
             harvestBreakEvent(socNum);
             cpuAlertProcessed.assign(cpuCount, true);
@@ -2352,6 +2352,10 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                             LOG_ERR, "REDFISH_MESSAGE_ID=%s",
                             "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
                             rasErrMsg.c_str(), NULL);
+
+            // Fatal errors are also reset-driving, so ignore any later RAS
+            // alerts until the host is rebooted.
+            resetDrivingErrorReceived = true;
 
             if (false == harvestMcaValidityCheck(socNum, &errorCheck))
             {
@@ -2615,12 +2619,12 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     bool nonMcaShutdownError = false;
     cpuAlertProcessed.resize(cpuCount, false);
 
-    // Once a control fabric error (RasStatus[reset_ctrl_err]) has been
-    // detected, the system is expected to be reset based on policy. Ignore any
-    // further RAS error alerts until the host is rebooted.
-    if (cfErrorReceived == true)
+    // Once a reset-driving RAS error has been detected, the system is
+    // expected to be reset based on policy. Ignore any further RAS error
+    // alerts until the host is rebooted.
+    if (resetDrivingErrorReceived == true)
     {
-        lg2::info("Control fabric error already latched. Ignoring RAS error "
+        lg2::info("Reset-driving RAS error already latched. Ignoring RAS error "
                   "alert for SOC {SOC} until host reboot",
                   "SOC", socNum);
         return true;
@@ -2727,9 +2731,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                        reset based on policy, so stop runtime error polling. */
                     deactivateRuntimeErrorPolling();
 
-                    /* Latch the control fabric error so subsequent RAS error
+                    /* Latch the reset-driving error so subsequent RAS error
                        alerts are ignored until the host is rebooted. */
-                    cfErrorReceived = true;
+                    resetDrivingErrorReceived = true;
 
                     harvestBreakEvent(socNum);
                     cpuAlertProcessed.assign(cpuCount, true);
@@ -2768,6 +2772,10 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         "MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i", LOG_ERR,
                         "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
                         "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+
+                    // Fatal errors are also reset-driving, so ignore any
+                    // later RAS alerts until the host is rebooted.
+                    resetDrivingErrorReceived = true;
 
                     if (false == harvestMcaValidityCheck(socNum, &errorCheck))
                     {
