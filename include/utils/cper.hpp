@@ -177,18 +177,24 @@ void dumpProcessorError(const std::shared_ptr<FatalCperRecord>&, size_t,
 
 /** @brief Dumps processor error information into the MCA runtime CPER record.
  *
- *  @details Populates the MCA runtime CPER record with processor error
- * information, including valid bits,MCA array size, MS check GUID.
+ *  @details Populates the half-open section range
+ * [sectionStart, sectionStart + sectionLength) of the MCA runtime CPER record
+ * with processor error information, including valid bits, MCA array size and
+ * MS check GUID.
  *
  *  @param[in] procPtr - Shared pointer to the MCA runtime CPER record.
- *  @param[in] sectionCount - Number of sections.
+ *  @param[in] sectionStart - First section of the owning socket's range.
+ *  @param[in] sectionLength - Number of sections in that range.
+ *  @param[in] totalSectionCount - Sections allocated in the whole record,
+ * used to reject a range that would run past the allocation.
  *  @param[in] checkInfo - Pointer to the check information.
- *  @param[in] sectionStart - Start of the section.
  *  @param[in] cpuCount - Number of CPUs.
  *  @param[in] cpuId - Unique pointer to an array of CPU IDs.
+ *
+ *  @return false if the requested range exceeds the allocated sections.
  */
-void dumpProcErrorInfoSection(const std::shared_ptr<McaRuntimeCperRecord>&,
-                              uint16_t, uint64_t*, uint32_t, uint8_t,
+bool dumpProcErrorInfoSection(const std::shared_ptr<McaRuntimeCperRecord>&,
+                              uint32_t, uint16_t, uint16_t, uint64_t*, uint8_t,
                               const std::unique_ptr<CpuId[]>&);
 
 /** @brief Dumps context information into the fatal CPER record.
