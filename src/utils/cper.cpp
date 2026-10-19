@@ -344,7 +344,7 @@ void dumpProcessorError(const std::shared_ptr<FatalCperRecord>& fatalPtr,
 bool dumpProcErrorInfoSection(
     const std::shared_ptr<McaRuntimeCperRecord>& procPtr, uint32_t sectionStart,
     uint16_t sectionLength, uint16_t totalSectionCount, uint64_t* checkInfo,
-    uint8_t cpuCount, const std::unique_ptr<CpuId[]>& cpuId)
+    size_t cpuIdx, const std::unique_ptr<CpuId[]>& cpuId)
 {
     const uint64_t sectionEnd =
         static_cast<uint64_t>(sectionStart) + sectionLength;
@@ -363,19 +363,18 @@ bool dumpProcErrorInfoSection(
         procPtr->McaErrorInfo[i].ProcError.ValidFields =
             0b11 | (sectionLength << doubleBit) | (sectionLength << hexBit);
 
-        for (size_t rec = 0; rec < cpuCount; rec++)
-        {
-            memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[0],
-                   &cpuId[rec].eax, sizeof(uint32_t));
-            memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[doubleBit * 4],
-                   &cpuId[rec].ebx, sizeof(uint32_t));
-            memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[quadBit * 4],
-                   &cpuId[rec].ecx, sizeof(uint32_t));
-            memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[hexBit * 4],
-                   &cpuId[rec].edx, sizeof(uint32_t));
-            procPtr->McaErrorInfo[i].ProcError.ApicId =
-                ((cpuId[rec].ebx >> 24) & maxByte);
-        }
+        // Each section belongs to exactly one socket, so write that socket's
+        // identity rather than looping over every configured CPU.
+        memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[0],
+               &cpuId[cpuIdx].eax, sizeof(uint32_t));
+        memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[doubleBit * 4],
+               &cpuId[cpuIdx].ebx, sizeof(uint32_t));
+        memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[quadBit * 4],
+               &cpuId[cpuIdx].ecx, sizeof(uint32_t));
+        memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[hexBit * 4],
+               &cpuId[cpuIdx].edx, sizeof(uint32_t));
+        procPtr->McaErrorInfo[i].ProcError.ApicId =
+            ((cpuId[cpuIdx].ebx >> 24) & maxByte);
 
         memcpy(&procPtr->McaErrorInfo[i].ErrorInfo.ErrorType,
                &gEfiIa32x64ErrorTypeMsCheckGuid, sizeof(EFI_GUID));
@@ -1100,7 +1099,7 @@ void mergeFile(const std::string& sourceFile, const std::string& destFile)
 
 void cper::dumpCoreDebugDumpHeader(
     const std::shared_ptr<CoreDebugDumpCperRecord>& coreDebugPtr,
-    uint16_t sectionIdx, const std::unique_ptr<CpuId[]>& cpuId)
+    uint16_t sectionIdx, size_t cpuIdx, const std::unique_ptr<CpuId[]>& cpuId)
 {
     CoreDebugDumpHeader& hdr =
         coreDebugPtr->DebugDumpSection[sectionIdx].header;
@@ -1108,11 +1107,11 @@ void cper::dumpCoreDebugDumpHeader(
 
     hdr.validBits.apicIdValid = 1;
     hdr.validBits.cpuidValid = 1;
-    hdr.apicId = ((cpuId[0].ebx >> 24) & 0xFF);
-    hdr.cpuidInfo.eax = cpuId[0].eax;
-    hdr.cpuidInfo.ebx = cpuId[0].ebx;
-    hdr.cpuidInfo.ecx = cpuId[0].ecx;
-    hdr.cpuidInfo.edx = cpuId[0].edx;
+    hdr.apicId = ((cpuId[cpuIdx].ebx >> 24) & 0xFF);
+    hdr.cpuidInfo.eax = cpuId[cpuIdx].eax;
+    hdr.cpuidInfo.ebx = cpuId[cpuIdx].ebx;
+    hdr.cpuidInfo.ecx = cpuId[cpuIdx].ecx;
+    hdr.cpuidInfo.edx = cpuId[cpuIdx].edx;
 }
 
 void cper::populateSignatureId(EFI_AMD_FATAL_ERROR_DATA& errorRecord,
