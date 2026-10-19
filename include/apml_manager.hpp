@@ -108,11 +108,14 @@ class Manager : public amd::ras::Manager
     bool pmfwRuntimeReady;
     bool platformInitialized;
     bool runtimeErrPollingSupported;
-    /** @brief Set once a control fabric error (RasStatus[reset_ctrl_err]) is
-     *  detected. While set, incoming RAS error alerts are ignored until the
-     *  host is rebooted, since the system is expected to be reset by policy.
+    /** @brief Set once a reset-driving RAS error is detected.
+     *
+     *  @details Latched when a control fabric reset-control error or fatal
+     *  error is seen. While set, incoming RAS error alerts are ignored until
+     *  the host is rebooted, since the system is expected to be reset by
+     *  policy.
      */
-    bool cfErrorReceived;
+    bool resetDrivingErrorReceived;
     std::vector<bool> cpuAlertProcessed;
     boost::asio::deadline_timer* McaErrorPollingEvent;
     boost::asio::deadline_timer* DramCeccErrorPollingEvent;
