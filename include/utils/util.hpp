@@ -87,11 +87,14 @@ void triggerColdReset(const std::string& node, const std::string*);
 
 /** @brief Initiates a warm reset.
  *
- * @details trigger warm reset using apml command.
+ * @details trigger warm reset using apml command. The request is retried
+ * a few times before giving up.
  *
- * @param[in] socNum - Socket number of the processor.
+ * @param[in] node - Host node instance; selects the socket to send to.
+ *
+ * @return true if the warm reset request was accepted, false otherwise.
  */
-void triggerWarmReset(std::string& node);
+bool triggerWarmReset(std::string& node);
 
 /** @brief Performs a RAS recovery action.
  *
