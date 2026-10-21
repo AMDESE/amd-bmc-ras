@@ -20,6 +20,7 @@ extern "C"
 #include <phosphor-logging/lg2.hpp>
 #include <phosphor-logging/log.hpp>
 
+#include <chrono>
 #include <set>
 
 namespace amd
@@ -211,8 +212,8 @@ void Manager::mcaErrorPollingHandler(int64_t* pollingPeriod)
     {
         delete McaErrorPollingEvent;
     }
-    McaErrorPollingEvent = new boost::asio::deadline_timer(
-        io, boost::posix_time::seconds(*pollingPeriod));
+    McaErrorPollingEvent =
+        new boost::asio::steady_timer(io, std::chrono::seconds(*pollingPeriod));
 
     McaErrorPollingEvent->async_wait(
         [this](const boost::system::error_code ec) {
@@ -248,8 +249,8 @@ void Manager::dramCeccErrorPollingHandler(int64_t* pollingPeriod)
     if (DramCeccErrorPollingEvent != nullptr)
         delete DramCeccErrorPollingEvent;
 
-    DramCeccErrorPollingEvent = new boost::asio::deadline_timer(
-        io, boost::posix_time::seconds(*pollingPeriod));
+    DramCeccErrorPollingEvent =
+        new boost::asio::steady_timer(io, std::chrono::seconds(*pollingPeriod));
 
     DramCeccErrorPollingEvent->async_wait(
         [this](const boost::system::error_code ec) {
@@ -288,8 +289,8 @@ void Manager::pcieAerErrorPollingHandler(int64_t* pollingPeriod)
     if (PcieAerErrorPollingEvent != nullptr)
         delete PcieAerErrorPollingEvent;
 
-    PcieAerErrorPollingEvent = new boost::asio::deadline_timer(
-        io, boost::posix_time::seconds(*pollingPeriod));
+    PcieAerErrorPollingEvent =
+        new boost::asio::steady_timer(io, std::chrono::seconds(*pollingPeriod));
 
     PcieAerErrorPollingEvent->async_wait(
         [this](const boost::system::error_code ec) {
@@ -807,8 +808,7 @@ void Manager::alertSrcHandler(struct apml_udev_monitor* udev_mon,
         ApmlAlertEvent = nullptr;
     }
 
-    ApmlAlertEvent =
-        new boost::asio::deadline_timer(io, boost::posix_time::seconds(1));
+    ApmlAlertEvent = new boost::asio::steady_timer(io, std::chrono::seconds(1));
     ApmlAlertEvent->async_wait([this, udev_mon,
                                 socket](const boost::system::error_code ec) {
         if (ec)

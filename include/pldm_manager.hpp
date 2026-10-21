@@ -2,8 +2,8 @@
 
 #include "base_manager.hpp"
 
-#include <boost/asio/deadline_timer.hpp>
 #include <boost/asio/posix/stream_descriptor.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <gpiod.hpp>
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/object_server.hpp>
@@ -117,7 +117,7 @@ class Manager : public amd::ras::Manager
     std::vector<gpiod::line> gpioLines;
     std::vector<boost::asio::posix::stream_descriptor> gpioEventDescriptors;
     std::vector<apml_udev_monitor> udevMonitors;
-    std::vector<std::unique_ptr<boost::asio::deadline_timer>> udevPollTimers;
+    std::vector<std::unique_ptr<boost::asio::steady_timer>> udevPollTimers;
 
     /** @brief Called when the host power state changes.
      *
