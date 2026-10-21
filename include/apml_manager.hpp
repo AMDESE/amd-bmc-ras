@@ -9,8 +9,8 @@ extern "C"
 #include "linux/amd-apml.h"
 }
 
-#include <boost/asio/deadline_timer.hpp>
 #include <boost/asio/posix/stream_descriptor.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <gpiod.hpp>
 
 namespace amd
@@ -117,10 +117,10 @@ class Manager : public amd::ras::Manager
      */
     bool resetDrivingErrorReceived;
     std::vector<bool> cpuAlertProcessed;
-    boost::asio::deadline_timer* McaErrorPollingEvent;
-    boost::asio::deadline_timer* DramCeccErrorPollingEvent;
-    boost::asio::deadline_timer* PcieAerErrorPollingEvent;
-    boost::asio::deadline_timer* ApmlAlertEvent;
+    boost::asio::steady_timer* McaErrorPollingEvent;
+    boost::asio::steady_timer* DramCeccErrorPollingEvent;
+    boost::asio::steady_timer* PcieAerErrorPollingEvent;
+    boost::asio::steady_timer* ApmlAlertEvent;
     std::mutex mcaErrorHarvestMtx;
     std::mutex dramErrorHarvestMtx;
     std::mutex pcieErrorHarvestMtx;

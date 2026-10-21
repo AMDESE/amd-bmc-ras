@@ -20,6 +20,7 @@ extern "C"
 #include <phosphor-logging/log.hpp>
 
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -641,8 +642,8 @@ void Manager::pollSysMgmtCtrlErrUevent(size_t socketIdx)
                    "IDX", socketIdx, "RET", ret);
     }
 
-    udevPollTimers[socketIdx] = std::make_unique<boost::asio::deadline_timer>(
-        io, boost::posix_time::seconds(1));
+    udevPollTimers[socketIdx] = std::make_unique<boost::asio::steady_timer>(
+        io, std::chrono::seconds(1));
     udevPollTimers[socketIdx]->async_wait(
         [this, socketIdx](const boost::system::error_code& ec) {
             if (ec)
