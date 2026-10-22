@@ -95,6 +95,12 @@ constexpr uint16_t coreMcaHardwareId = 0xb0;
 constexpr size_t coresPerCcd = 32;
 constexpr size_t maxCoreIndex = 256;
 
+// Upper bound on how long a multi-socket RAS event may wait for the
+// remaining sockets to notify. Generous enough to cover APML retries during
+// harvest, short enough that a dropped notification cannot stall all later
+// RAS processing until the host reboots.
+constexpr size_t alertCompletionTimeoutSec = 60;
+
 void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
 {
     oob_status_t ret;
@@ -118,7 +124,8 @@ Manager::Manager(amd::ras::config::Manager& manager,
     runtimeErrPollingSupported(false), resetDrivingErrorReceived(false),
     McaErrorPollingEvent(nullptr), DramCeccErrorPollingEvent(nullptr),
     PcieAerErrorPollingEvent(nullptr), ApmlAlertEvent(nullptr),
-    mcaErrorHarvestMtx(), dramErrorHarvestMtx(), pcieErrorHarvestMtx()
+    mcaErrorHarvestMtx(), dramErrorHarvestMtx(), pcieErrorHarvestMtx(),
+    alertCompletionTimer(nullptr)
 {}
 
 void Manager::onHostStateChanged(bool hostOff)
@@ -572,15 +579,53 @@ void Manager::configure()
             }
         }
     }
-    if (socketNames.empty() && (alertHandleMode == "GPIO"))
+    if (alertHandleMode != "UEVENT" && alertHandleMode != "GPIO")
+    {
+        throw std::runtime_error("Invalid mode of Alert handling");
+    }
+
+    if (alertHandleMode == "GPIO")
+    {
+        validateGpioAlertTopology();
+    }
+}
+
+void Manager::validateGpioAlertTopology() const
+{
+    if (socketNames.empty())
     {
         throw std::runtime_error(
             "Failed to read GPIO_ALERT_LINES from gpio_config.json file");
     }
 
-    if (alertHandleMode != "UEVENT" && alertHandleMode != "GPIO")
+    // Every configured socket must have an alert line. Registering callbacks
+    // against a short list would index past the end of socketNames and leave
+    // the service partially armed.
+    if (socketNames.size() != cpuCount)
     {
-        throw std::runtime_error("Invalid mode of Alert handling");
+        throw std::runtime_error(
+            "GPIO_ALERT_LINES defines " + std::to_string(socketNames.size()) +
+            " alert line(s) for the configured topology [" +
+            socketTopologyStr() + "] of " + std::to_string(cpuCount) +
+            " socket(s)");
+    }
+
+    std::set<std::string> seen;
+
+    for (size_t i = 0; i < socketNames.size(); i++)
+    {
+        if (socketNames[i].empty())
+        {
+            throw std::runtime_error("GPIO_ALERT_LINES entry for socket P" +
+                                     std::to_string(socIndex[i]) + " is empty");
+        }
+
+        if (!seen.insert(socketNames[i]).second)
+        {
+            throw std::runtime_error(
+                "GPIO alert line " + socketNames[i] +
+                " is assigned to more than one socket in GPIO_ALERT_LINES");
+        }
     }
 }
 
@@ -623,11 +668,20 @@ void Manager::registerEventHandler()
         {
             gpioEventDescriptors.emplace_back(io);
 
-            requestGPIOEvents(socketNames[i],
-                              std::bind(&ras::apml::Manager::alertEventHandler,
-                                        this, std::ref(gpioEventDescriptors[i]),
-                                        std::ref(gpioLines[i]), socIndex[i]),
-                              gpioLines[i], gpioEventDescriptors[i]);
+            if (!requestGPIOEvents(
+                    socketNames[i],
+                    std::bind(&ras::apml::Manager::alertEventHandler, this,
+                              std::ref(gpioEventDescriptors[i]),
+                              std::ref(gpioLines[i]), socIndex[i]),
+                    gpioLines[i], gpioEventDescriptors[i]))
+            {
+                // A socket without an armed alert cannot report a fatal
+                // error, so fail loudly instead of running half armed.
+                releaseEventHandlers();
+                throw std::runtime_error(
+                    "Failed to register the alert line " + socketNames[i] +
+                    " for socket P" + std::to_string(socIndex[i]));
+            }
         }
     }
 
@@ -827,7 +881,7 @@ void Manager::alertSrcHandler(struct apml_udev_monitor* udev_mon,
     });
 }
 
-void Manager::requestGPIOEvents(
+bool Manager::requestGPIOEvents(
     const std::string& name, const std::function<void()>& handler,
     gpiod::line& gpioLine,
     boost::asio::posix::stream_descriptor& gpioEventDescriptor)
@@ -877,26 +931,41 @@ void Manager::requestGPIOEvents(
     }
     catch (const std::exception& e)
     {
-        lg2::error("Exception: {ERROR}", "ERROR", e.what());
+        lg2::error("Failed to arm GPIO alert line {GPIO}: {ERROR}", "GPIO",
+                   name, "ERROR", e.what());
+        return false;
     }
+
+    return true;
 }
 
 void Manager::alertEventHandler(
     boost::asio::posix::stream_descriptor& apmlAlertEvent,
     const gpiod::line& alertLine, size_t socket)
 {
-    gpiod::line_event gpioLineEvent = alertLine.event_read();
-
-    if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
+    // This runs from the asio event loop. Report failures here instead of
+    // letting an exception escape and terminate amd-bmc-ras, so the
+    // remaining sockets keep their diagnostics and the service stays up.
+    try
     {
-        lg2::debug("Falling Edge: APML Alert received");
+        gpiod::line_event gpioLineEvent = alertLine.event_read();
 
-        if (rcd == nullptr)
+        if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
         {
-            rcd = std::make_shared<FatalCperRecord>();
-        }
+            lg2::debug("Falling Edge: APML Alert received");
 
-        decodeInterrupt(socket);
+            if (rcd == nullptr)
+            {
+                rcd = std::make_shared<FatalCperRecord>();
+            }
+
+            decodeInterrupt(socket);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Socket P{SOC}: GPIO alert handling failed: {ERROR}", "SOC",
+                   socket, "ERROR", e.what());
     }
 
     apmlAlertEvent.async_wait(
@@ -962,8 +1031,8 @@ void Manager::harvestRuntimeErrors(
                                      mcaErr, sectionStart, severity, checkInfo);
 
                 amd::ras::util::cper::dumpProcErrorInfoSection(
-                    mcaPtr, instVec[idx].number_of_inst, checkInfo,
-                    sectionStart, cpuCount, cpuId);
+                    mcaPtr, sectionStart, instVec[idx].number_of_inst,
+                    sectionCount, checkInfo, idx, cpuId);
 
                 sectionStart += instVec[idx].number_of_inst;
             }
@@ -976,7 +1045,7 @@ void Manager::harvestRuntimeErrors(
                                          runtimeMcaErr, boardId, recordId);
 
         amd::ras::util::cper::dumpErrorDescriptor(
-            mcaPtr, sectionCount, runtimeMcaErr, severity, progId);
+            mcaPtr, sectionCount, runtimeMcaErr, severity, progId, socIndex);
 
         amd::ras::util::cper::createFile(mcaPtr, runtimeMcaErr, sectionCount,
                                          errCount, node);
@@ -1033,11 +1102,12 @@ void Manager::harvestRuntimeErrors(
         {
             if (instVec[idx].number_of_inst != 0)
             {
-                dumpProcErrorSection(dramPtr, idx, instVec[idx], dramCeccErr,
-                                     sectionStart, severity, checkInfo);
+                dumpProcErrorSection(dramPtr, socIndex[idx], instVec[idx],
+                                     dramCeccErr, sectionStart, severity,
+                                     checkInfo);
                 amd::ras::util::cper::dumpProcErrorInfoSection(
-                    dramPtr, instVec[idx].number_of_inst, checkInfo,
-                    sectionStart, cpuCount, cpuId);
+                    dramPtr, sectionStart, instVec[idx].number_of_inst,
+                    sectionCount, checkInfo, idx, cpuId);
 
                 sectionStart += instVec[idx].number_of_inst;
             }
@@ -1050,7 +1120,7 @@ void Manager::harvestRuntimeErrors(
                                          runtimeDramErr, boardId, recordId);
 
         amd::ras::util::cper::dumpErrorDescriptor(
-            dramPtr, sectionCount, runtimeDramErr, severity, progId);
+            dramPtr, sectionCount, runtimeDramErr, severity, progId, socIndex);
 
         amd::ras::util::cper::createFile(dramPtr, runtimeDramErr, sectionCount,
                                          errCount, node);
@@ -1092,8 +1162,9 @@ void Manager::harvestRuntimeErrors(
         {
             if (instVec[idx].number_of_inst != 0)
             {
-                dumpProcErrorSection(pciePtr, idx, instVec[idx], pcieErr,
-                                     sectionStart, severity, checkInfo);
+                dumpProcErrorSection(pciePtr, socIndex[idx], instVec[idx],
+                                     pcieErr, sectionStart, severity,
+                                     checkInfo);
 
                 sectionStart += instVec[idx].number_of_inst;
             }
@@ -1106,7 +1177,7 @@ void Manager::harvestRuntimeErrors(
                                          runtimePcieErr, boardId, recordId);
 
         amd::ras::util::cper::dumpErrorDescriptor(
-            pciePtr, sectionCount, runtimePcieErr, severity, progId);
+            pciePtr, sectionCount, runtimePcieErr, severity, progId, socIndex);
 
         amd::ras::util::cper::createFile(pciePtr, runtimePcieErr, sectionCount,
                                          errCount, node);
@@ -1246,7 +1317,7 @@ void Manager::runTimeErrorInfoCheck(uint8_t errType, uint8_t reqType)
 }
 
 void Manager::getLastTransAddr(const std::shared_ptr<FatalCperRecord>& fatalPtr,
-                               uint8_t socNum)
+                               uint8_t socNum, size_t sectionIdx)
 {
     oob_status_t ret;
     uint8_t blkId = 0;
@@ -1282,7 +1353,7 @@ void Manager::getLastTransAddr(const std::shared_ptr<FatalCperRecord>& fatalPtr,
 
                     ret = read_ras_df_err_dump(socNum, df_err, &data);
 
-                    fatalPtr->ErrorRecord[socNum]
+                    fatalPtr->ErrorRecord[sectionIdx]
                         .DfDumpData.LastTransAddr[n]
                         .WdtData[offset] = data;
                 }
@@ -1322,7 +1393,7 @@ inline bool retryUncoreDump(
 
 void Manager::harvestUncoreIftDump(
     const std::shared_ptr<FatalCperRecord>& fatalPtr, uint8_t socNum,
-    int64_t* apmlRetryCount, uint16_t& debugLogIdOffset)
+    size_t sectionIdx, int64_t* apmlRetryCount, uint16_t& debugLogIdOffset)
 {
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     uint16_t retries = 0;
@@ -1353,14 +1424,14 @@ void Manager::harvestUncoreIftDump(
 
             /*If 5Bh command fails ,0xBAADDA7A is written thrice in the PCIE
              * dump region*/
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                blockId25;
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                badData;
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                badData;
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                badData;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = blockId25;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = badData;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = badData;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = badData;
 
             break;
         }
@@ -1374,8 +1445,8 @@ void Manager::harvestUncoreIftDump(
                 (static_cast<uint32_t>(resp.instances) << 8) |
                 static_cast<uint32_t>(blockId25);
 
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                debugLogIdHeader;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = debugLogIdHeader;
 
             while (instanceNum < resp.instances)
             {
@@ -1412,7 +1483,7 @@ void Manager::harvestUncoreIftDump(
 
                 for (size_t i = 0; i < dataIn.offsets; i++)
                 {
-                    fatalPtr->ErrorRecord[socNum]
+                    fatalPtr->ErrorRecord[sectionIdx]
                         .DebugLogIdData[debugLogIdOffset++] =
                         dataOut.offsets_data[i];
                 }
@@ -1425,7 +1496,8 @@ void Manager::harvestUncoreIftDump(
 
 void Manager::harvestDebugLogDump(
     const std::shared_ptr<FatalCperRecord>& fatalPtr, uint8_t socNum,
-    uint8_t blkId, int64_t* apmlRetryCount, uint16_t& debugLogIdOffset)
+    size_t sectionIdx, uint8_t blkId, int64_t* apmlRetryCount,
+    uint16_t& debugLogIdOffset)
 {
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     uint16_t retries = 0;
@@ -1458,14 +1530,14 @@ void Manager::harvestDebugLogDump(
 
             /*If 5Bh command fails ,0xBAADDA7A is written thrice in the PCIE
              * dump region*/
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                blkId;
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                badData;
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                badData;
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                badData;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = blkId;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = badData;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = badData;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = badData;
 
             break;
         }
@@ -1479,8 +1551,8 @@ void Manager::harvestDebugLogDump(
                 (static_cast<uint32_t>(err_chk.df_block_instances) << 8) |
                 static_cast<uint32_t>(blkId);
 
-            fatalPtr->ErrorRecord[socNum].DebugLogIdData[debugLogIdOffset++] =
-                debugLogIdHeader;
+            fatalPtr->ErrorRecord[sectionIdx]
+                .DebugLogIdData[debugLogIdOffset++] = debugLogIdHeader;
 
             maxOffset32 = ((err_chk.err_log_len % 4) ? 1 : 0) +
                           (err_chk.err_log_len >> 2);
@@ -1547,7 +1619,7 @@ void Manager::harvestDebugLogDump(
                         }
                     }
 
-                    fatalPtr->ErrorRecord[socNum]
+                    fatalPtr->ErrorRecord[sectionIdx]
                         .DebugLogIdData[debugLogIdOffset++] = data;
                 }
                 n++;
@@ -1558,6 +1630,16 @@ void Manager::harvestDebugLogDump(
 
 void Manager::harvestX86ExceptionData(uint8_t socNum)
 {
+    size_t cpuIdx = 0;
+    if (!toLogicalIndex(socNum, cpuIdx))
+    {
+        lg2::error("x86 exception reported for socket P{SOC}, which is not "
+                   "part of the configured topology [{TOPOLOGY}]. Dropping "
+                   "the event.",
+                   "SOC", socNum, "TOPOLOGY", socketTopologyStr());
+        return;
+    }
+
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
     uint16_t retries = 0;
     struct ras_dbg_log_chk_out validityCheck;
@@ -1661,7 +1743,8 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
         severity[i] = amd::ras::util::cper::sevInformational;
     }
     amd::ras::util::cper::dumpErrorDescriptor(
-        coreDebugDumpPtr, sectionCount, coreDebugDumpErr, severity, progId);
+        coreDebugDumpPtr, sectionCount, coreDebugDumpErr, severity, progId,
+        socIndex);
     delete[] severity;
 
     /*
@@ -1682,7 +1765,7 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
 
         /* Populate the section header */
         amd::ras::util::cper::dumpCoreDebugDumpHeader(coreDebugDumpPtr, coreIdx,
-                                                      cpuId);
+                                                      cpuIdx, cpuId);
 
         /* Allocate payload for this core */
         coreDebugDumpPtr->DebugDumpSection[coreIdx].payload =
@@ -1809,19 +1892,27 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
         configMgr.getAttribute("ApmlRetries");
     int64_t* apmlRetryCount = std::get_if<int64_t>(&apmlRetry);
 
-    constexpr uint16_t sectionCount = 2;
+    size_t sectionIdx = 0;
+    if (!toLogicalIndex(socNum, sectionIdx))
+    {
+        lg2::error("Fatal error reported for socket P{SOC}, which is not part "
+                   "of the configured topology [{TOPOLOGY}]. Dropping the "
+                   "event.",
+                   "SOC", socNum, "TOPOLOGY", socketTopologyStr());
+        return;
+    }
 
-    initFatalCperRecord(sectionCount);
+    initFatalCperRecord(fatalSectionCount());
 
-    amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
+    amd::ras::util::cper::dumpProcessorError(rcd, sectionIdx, cpuId,
                                              errorCheck.df_block_instances);
     amd::ras::util::cper::dumpContext(rcd, errorCheck.df_block_instances,
-                                      errorCheck.err_log_len, socNum, ppin,
+                                      errorCheck.err_log_len, sectionIdx, ppin,
                                       uCode, contextType);
 
     uint8_t blkId;
 
-    getLastTransAddr(rcd, socNum);
+    getLastTransAddr(rcd, socNum, sectionIdx);
 
     uint16_t debugLogIdOffset = 0;
     union ras_df_err_dump dfError = {0};
@@ -1830,12 +1921,13 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
     {
         if (blockId[blkId] == blockId25)
         {
-            harvestUncoreIftDump(rcd, socNum, apmlRetryCount, debugLogIdOffset);
+            harvestUncoreIftDump(rcd, socNum, sectionIdx, apmlRetryCount,
+                                 debugLogIdOffset);
         }
         else
         {
-            harvestDebugLogDump(rcd, socNum, blockId[blkId], apmlRetryCount,
-                                debugLogIdOffset);
+            harvestDebugLogDump(rcd, socNum, sectionIdx, blockId[blkId],
+                                apmlRetryCount, debugLogIdOffset);
         }
     }
 
@@ -1891,20 +1983,23 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
                                "from Bank:{N}, Offset:{OFFSET}",
                                "SOCKET", socNum, "N", n, "OFFSET", lg2::hex,
                                offset);
-                    rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[offset] =
+                    rcd->ErrorRecord[sectionIdx]
+                        .CrashDumpData[n]
+                        .McaData[offset] =
                         badData; // Write BAADDA7A pattern on error
                     continue;
                 }
 
             } // if (ret != OOB_SUCCESS)
 
-            rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[offset] = buffer;
+            rcd->ErrorRecord[sectionIdx].CrashDumpData[n].McaData[offset] =
+                buffer;
         } // for loop
 
         n++;
     }
 
-    processMcaBankSignatures(socNum, errorCheck.df_block_instances);
+    processMcaBankSignatures(sectionIdx, errorCheck.df_block_instances);
 
     uint32_t ipidOffsetLo = std::stoul((*sigIDOffset)[2], nullptr, base16);
     uint32_t ipidOffsetHi = std::stoul((*sigIDOffset)[3], nullptr, base16);
@@ -1912,14 +2007,14 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
 
     for (uint16_t bank = 0; bank < errorCheck.df_block_instances; bank++)
     {
-        uint32_t mcaStatusHi = rcd->ErrorRecord[socNum]
+        uint32_t mcaStatusHi = rcd->ErrorRecord[sectionIdx]
                                    .CrashDumpData[bank]
                                    .McaData[statusOffsetHi / 4];
 
-        uint32_t mcaIpidLo = rcd->ErrorRecord[socNum]
+        uint32_t mcaIpidLo = rcd->ErrorRecord[sectionIdx]
                                  .CrashDumpData[bank]
                                  .McaData[ipidOffsetLo / 4];
-        uint32_t mcaIpidHi = rcd->ErrorRecord[socNum]
+        uint32_t mcaIpidHi = rcd->ErrorRecord[sectionIdx]
                                  .CrashDumpData[bank]
                                  .McaData[ipidOffsetHi / 4];
 
@@ -2103,6 +2198,86 @@ bool Manager::harvestMcaValidityCheck(uint8_t info,
     }
 
     return mcaValidityCheck;
+}
+
+bool Manager::markSocketAlertProcessed(uint8_t socNum)
+{
+    size_t logicalIdx = 0;
+
+    if (!toLogicalIndex(socNum, logicalIdx))
+    {
+        lg2::error("RAS alert reported for socket P{SOC}, which is not part "
+                   "of the configured topology [{TOPOLOGY}]. The event cannot "
+                   "be attributed to a CPER section.",
+                   "SOC", socNum, "TOPOLOGY", socketTopologyStr());
+        return false;
+    }
+
+    const bool firstOfEvent =
+        !std::any_of(cpuAlertProcessed.begin(), cpuAlertProcessed.end(),
+                     [](bool processed) { return processed; });
+
+    cpuAlertProcessed[logicalIdx] = true;
+
+    if (firstOfEvent && cpuCount > 1)
+    {
+        alertCompletionTimer = std::make_unique<boost::asio::steady_timer>(
+            io, std::chrono::seconds(alertCompletionTimeoutSec));
+
+        alertCompletionTimer->async_wait(
+            [this](const boost::system::error_code& ec) {
+                if (ec)
+                {
+                    return;
+                }
+                onAlertCompletionTimeout();
+            });
+    }
+
+    return true;
+}
+
+void Manager::resetAlertCompletionState()
+{
+    if (alertCompletionTimer != nullptr)
+    {
+        alertCompletionTimer->cancel();
+        alertCompletionTimer = nullptr;
+    }
+
+    cpuAlertProcessed.assign(cpuCount, false);
+}
+
+void Manager::onAlertCompletionTimeout()
+{
+    std::unique_lock lock(harvestMutex);
+
+    std::string pending;
+    for (size_t i = 0; i < cpuCount; i++)
+    {
+        if (!cpuAlertProcessed[i])
+        {
+            if (!pending.empty())
+            {
+                pending += ", ";
+            }
+            pending += "P" + std::to_string(socIndex[i]);
+        }
+    }
+
+    if (pending.empty())
+    {
+        return;
+    }
+
+    lg2::error("RAS event incomplete after {TIMEOUT}s: no notification from "
+               "socket(s) [{PENDING}] of the configured topology "
+               "[{TOPOLOGY}]. Discarding the partial record.",
+               "TIMEOUT", alertCompletionTimeoutSec, "PENDING", pending,
+               "TOPOLOGY", socketTopologyStr());
+
+    cleanupFatalCperRecord();
+    resetAlertCompletionState();
 }
 
 bool Manager::checkIfCPUAlertsProcessed()
@@ -2453,12 +2628,9 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
     configMgr.updateErrorCountDbus();
     configMgr.saveErrorCounts();
 
-    // Map physical socNum to logical index in cpuAlertProcessed
-    auto socIt = std::find(socIndex.begin(), socIndex.end(),
-                           static_cast<size_t>(socNum));
-    if (socIt != socIndex.end())
+    if (!markSocketAlertProcessed(socNum))
     {
-        cpuAlertProcessed[std::distance(socIndex.begin(), socIt)] = true;
+        return false;
     }
 
     if (fchHangError == true || runtimeError == true ||
@@ -2472,7 +2644,8 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
     }
     if (resetReady == true)
     {
-        amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount, node);
+        amd::ras::util::cper::createFile(rcd, fatalErr, fatalSectionCount(),
+                                         errCount, node);
         if (src & fatalError)
         {
             std::string currentCperFile =
@@ -2602,7 +2775,7 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
 
         cleanupFatalCperRecord();
 
-        cpuAlertProcessed.assign(cpuCount, false);
+        resetAlertCompletionState();
     }
 
     return true;
@@ -2880,13 +3053,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             configMgr.updateErrorCountDbus();
             configMgr.saveErrorCounts();
 
-            // Map physical socNum to logical index in cpuAlertProcessed
-            auto socIt = std::find(socIndex.begin(), socIndex.end(),
-                                   static_cast<size_t>(socNum));
-            if (socIt != socIndex.end())
+            if (!markSocketAlertProcessed(socNum))
             {
-                cpuAlertProcessed[std::distance(socIndex.begin(), socIt)] =
-                    true;
+                return false;
             }
 
             // Clear RAS status register
@@ -2907,8 +3076,8 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             }
             if (resetReady == true)
             {
-                amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount,
-                                                 node);
+                amd::ras::util::cper::createFile(
+                    rcd, fatalErr, fatalSectionCount(), errCount, node);
 
                 amd::ras::util::cper::exportToDBus(
                     errCount, rcd->Header.TimeStamp, objectServer, systemBus,
@@ -3044,7 +3213,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
                 cleanupFatalCperRecord();
 
-                cpuAlertProcessed.assign(cpuCount, false);
+                resetAlertCompletionState();
             }
         }
     }
@@ -3724,9 +3893,10 @@ void Manager::dumpProcErrorSection(
                     std::memset(ProcPtr->SectionDescriptor[section].FruString,
                                 0, 20);
                 }
-                ProcPtr->SectionDescriptor[section].FruString[0] = 'P';
-                ProcPtr->SectionDescriptor[section].FruString[1] = '0' + socNum;
-                ProcPtr->SectionDescriptor[section].FruString[2] = '\0';
+                std::snprintf(
+                    ProcPtr->SectionDescriptor[section].FruString,
+                    sizeof(ProcPtr->SectionDescriptor[section].FruString),
+                    "P%u", socNum);
             }
 
             CheckInfo[section] = 0;

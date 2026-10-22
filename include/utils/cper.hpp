@@ -154,38 +154,48 @@ void dumpHeader(const std::shared_ptr<PtrType>&, uint16_t, uint32_t,
  *  @param[in] errorType - Type of the error.
  *  @param[in] severity - Pointer to the severity values.
  *  @param[in] progId - Program ID.
+ *  @param[in] socketMap - Logical section index to physical socket number
+ * mapping, used to label fatal sections. Ignored for other error types.
  */
 template <typename PtrType>
 void dumpErrorDescriptor(const std::shared_ptr<PtrType>&, uint16_t,
-                         const std::string_view&, uint32_t*, uint8_t);
+                         const std::string_view&, uint32_t*, uint8_t,
+                         const std::vector<size_t>&);
 
 /** @brief Dumps processor error details into the fatal CPER record.
  *
  *  @details Populates the fatal CPER record with cpuid , APIC Id info.
  *
  *  @param[in] fatalPtr - Shared pointer to the fatal CPER record.
- *  @param[in] socNum - SoC number.
+ *  @param[in] sectionIdx - Logical index of the section owned by the
+ * reporting socket. Also indexes the CPU metadata arrays.
  *  @param[in] cpuId - Unique pointer to an array of CPU IDs.
- *  @param[in] cpuCount - Number of CPUs.
+ *  @param[in] numbanks - Number of valid MCA banks.
  */
-void dumpProcessorError(const std::shared_ptr<FatalCperRecord>&, uint8_t,
-                        const std::unique_ptr<CpuId[]>&, std::vector<size_t>&,
-                        uint16_t);
+void dumpProcessorError(const std::shared_ptr<FatalCperRecord>&, size_t,
+                        const std::unique_ptr<CpuId[]>&, uint16_t);
 
 /** @brief Dumps processor error information into the MCA runtime CPER record.
  *
- *  @details Populates the MCA runtime CPER record with processor error
- * information, including valid bits,MCA array size, MS check GUID.
+ *  @details Populates the half-open section range
+ * [sectionStart, sectionStart + sectionLength) of the MCA runtime CPER record
+ * with processor error information, including valid bits, MCA array size and
+ * MS check GUID. Every section in the range is labelled with the identity of
+ * the socket that owns it.
  *
  *  @param[in] procPtr - Shared pointer to the MCA runtime CPER record.
- *  @param[in] sectionCount - Number of sections.
+ *  @param[in] sectionStart - First section of the owning socket's range.
+ *  @param[in] sectionLength - Number of sections in that range.
+ *  @param[in] totalSectionCount - Sections allocated in the whole record,
+ * used to reject a range that would run past the allocation.
  *  @param[in] checkInfo - Pointer to the check information.
- *  @param[in] sectionStart - Start of the section.
- *  @param[in] cpuCount - Number of CPUs.
+ *  @param[in] cpuIdx - Logical index of the socket owning the range.
  *  @param[in] cpuId - Unique pointer to an array of CPU IDs.
+ *
+ *  @return false if the requested range exceeds the allocated sections.
  */
-void dumpProcErrorInfoSection(const std::shared_ptr<McaRuntimeCperRecord>&,
-                              uint16_t, uint64_t*, uint32_t, uint8_t,
+bool dumpProcErrorInfoSection(const std::shared_ptr<McaRuntimeCperRecord>&,
+                              uint32_t, uint16_t, uint16_t, uint64_t*, size_t,
                               const std::unique_ptr<CpuId[]>&);
 
 /** @brief Dumps context information into the fatal CPER record.
@@ -196,13 +206,14 @@ void dumpProcErrorInfoSection(const std::shared_ptr<McaRuntimeCperRecord>&,
  *  @param[in] fatalPtr - Shared pointer to the fatal CPER record.
  *  @param[in] numbanks - Number of banks.
  *  @param[in] bytespermca - Bytes per MCA.
- *  @param[in] socNum - SoC number.
+ *  @param[in] sectionIdx - Logical index of the section owned by the
+ * reporting socket. Also indexes the PPIN and microcode arrays.
  *  @param[in] ppin - Unique pointer to an array of PPIN values.
  *  @param[in] uCode - Unique pointer to an array of microcode values.
- *  @param[in] cpuCount - Number of CPUs.
+ *  @param[in] contextType - Register context type for the record.
  */
 void dumpContext(const std::shared_ptr<FatalCperRecord>&, uint16_t numbanks,
-                 uint16_t bytespermca, uint8_t,
+                 uint16_t bytespermca, size_t,
                  const std::unique_ptr<uint64_t[]>&,
                  const std::unique_ptr<uint32_t[]>&, size_t);
 
@@ -261,11 +272,12 @@ bool calculateSeverity(uint32_t*, uint16_t, uint32_t*, const std::string_view&);
  *
  *  @param[in] coreDebugPtr - Shared pointer to CoreDebugDumpCperRecord.
  *  @param[in] sectionIdx - Index of the section being populated.
+ *  @param[in] cpuIdx - Logical index of the socket the dump came from.
  *  @param[in] cpuId - Unique pointer to array of CPU IDs.
  */
 void dumpCoreDebugDumpHeader(
     const std::shared_ptr<CoreDebugDumpCperRecord>& coreDebugPtr,
-    uint16_t sectionIdx, const std::unique_ptr<CpuId[]>& cpuId);
+    uint16_t sectionIdx, size_t cpuIdx, const std::unique_ptr<CpuId[]>& cpuId);
 
 /** @brief Populates the SignatureID and sets the ValidFields bit in a fatal
  *         error record when a valid signature is found.

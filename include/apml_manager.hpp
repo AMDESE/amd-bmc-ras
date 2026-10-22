@@ -154,10 +154,23 @@ class Manager : public amd::ras::Manager
      * @param[in] callback The function to call when an event is detected.
      * @param[in] line The GPIO line to use for event detection.
      * @param[in] stream The stream descriptor used to listen for events.
+     *
+     * @return true if the line was found and armed.
      */
-    void requestGPIOEvents(const std::string&, const std::function<void()>&,
+    bool requestGPIOEvents(const std::string&, const std::function<void()>&,
                            gpiod::line&,
                            boost::asio::posix::stream_descriptor&);
+
+    /** @brief Validate the GPIO alert definition against the topology.
+     *
+     * @details GPIO_ALERT_LINES must name exactly one distinct, non-empty
+     *          line per configured socket. Anything else would leave a
+     *          socket unarmed or index past the end of the vector.
+     *
+     * @throw std::runtime_error with a socket-specific message if the alert
+     *        definition does not match the configured topology.
+     */
+    void validateGpioAlertTopology() const;
 
     /**
      * @brief Handler for alert events.
@@ -434,10 +447,12 @@ class Manager : public amd::ras::Manager
      * of the system via APML when the syncflood occuered
      *
      * @param[in] fatalPtr - Shared pointer to a FatalCperRecord object.
-     * @param[in] socNum - The SoC number.
+     * @param[in] socNum - The physical SoC number to read over APML.
+     * @param[in] sectionIdx - CPER section owned by that socket.
      *
      */
-    void getLastTransAddr(const std::shared_ptr<FatalCperRecord>&, uint8_t);
+    void getLastTransAddr(const std::shared_ptr<FatalCperRecord>&, uint8_t,
+                          size_t);
 
     /** @brief Harvests debug log ID dump data
      *
@@ -445,27 +460,30 @@ class Manager : public amd::ras::Manager
      * of the block ID's provided to the function
      *
      * @param[in] fatalPtr - Shared pointer to a FatalCperRecord object.
-     * @param[in] socNum - The SoC number.
+     * @param[in] socNum - The physical SoC number to read over APML.
+     * @param[in] sectionIdx - CPER section owned by that socket.
      * @param[in] blkId - The block ID.
      * @param[in] apmlRetryCount - Pointer to the APML retry count.
      * @param[out] debugLogIdOffset - Reference to the debug log ID offset.
      *
      */
     void harvestDebugLogDump(const std::shared_ptr<FatalCperRecord>&, uint8_t,
-                             uint8_t, int64_t*, uint16_t&);
+                             size_t, uint8_t, int64_t*, uint16_t&);
 
     /** @brief Harvests uncore IFT dump data
      *
      * @details This function harvests the dump data for debug log ID 25
      *
      * @param[in] fatalPtr - Shared pointer to a FatalCperRecord object.
-     * @param[in] socNum - The SoC number.
+     * @param[in] socNum - The physical SoC number to read over APML.
+     * @param[in] sectionIdx - CPER section owned by that socket.
      * @param[in] apmlRetryCount - Pointer to the APML retry count.
      * @param[out] debugLogIdOffset - Reference to the debug log ID offset.
      *
      */
     void harvestUncoreIftDump(const std::shared_ptr<FatalCperRecord>& fatalPtr,
-                              uint8_t socNum, int64_t* apmlRetryCount,
+                              uint8_t socNum, size_t sectionIdx,
+                              int64_t* apmlRetryCount,
                               uint16_t& debugLogIdOffset);
 
     /** @brief Dumps the processor error section of the CPER record
@@ -586,6 +604,45 @@ class Manager : public amd::ras::Manager
      * processed.
      */
     bool checkIfCPUAlertsProcessed();
+
+    /** @brief Record that a socket has finished its part of a RAS event.
+     *
+     * @details Translates the reported physical socket number into its
+     *          logical index and sets the corresponding completion flag.
+     *          An unknown socket is rejected with an explicit diagnostic
+     *          instead of silently leaving the completion gate waiting.
+     *          Arms the completion deadline on the first socket of an event
+     *          so a partial multi-socket notification cannot stall all
+     *          later RAS processing.
+     *
+     * @param[in] socNum - Physical socket number reported by hardware.
+     *
+     * @return true if the socket belongs to the configured topology.
+     */
+    bool markSocketAlertProcessed(uint8_t socNum);
+
+    /** @brief Clear the per-socket completion state and its deadline.
+     *
+     * @details Called once an event has produced its CPER, and on timeout,
+     *          so notifications from separate injection events are never
+     *          combined into one completion decision.
+     */
+    void resetAlertCompletionState();
+
+    /** @brief Abandon a multi-socket event that never completed.
+     *
+     * @details Logs the sockets that never reported, discards the partial
+     *          fatal record so it cannot be merged into a later event, and
+     *          clears the completion state.
+     */
+    void onAlertCompletionTimeout();
+
+    /** @brief Deadline for all sockets of one RAS event to report in.
+     *
+     * @details Armed when the first socket of a multi-socket event is
+     *          marked processed, cancelled when the event completes.
+     */
+    std::unique_ptr<boost::asio::steady_timer> alertCompletionTimer;
 };
 
 } // namespace apml
