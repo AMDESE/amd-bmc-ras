@@ -108,19 +108,19 @@ class Manager : public amd::ras::Manager
     bool pmfwRuntimeReady;
     bool platformInitialized;
     bool runtimeErrPollingSupported;
-    /** @brief Set once a reset-driving RAS error is detected.
+    /** @brief Per-socket latch for reset-driving RAS errors.
      *
      *  @details Latched when a control fabric reset-control error or fatal
-     *  error is seen. While set, incoming RAS error alerts are ignored until
-     *  the host is rebooted, since the system is expected to be reset by
-     *  policy.
+     *  error is seen on a given socket. While set, incoming RAS error alerts
+     *  from that same socket are ignored until the host is rebooted, since the
+     *  system is expected to be reset by policy.
      */
-    bool resetDrivingErrorReceived;
+    std::vector<bool> resetDrivingErrorReceived;
     std::vector<bool> cpuAlertProcessed;
     boost::asio::steady_timer* McaErrorPollingEvent;
     boost::asio::steady_timer* DramCeccErrorPollingEvent;
     boost::asio::steady_timer* PcieAerErrorPollingEvent;
-    boost::asio::steady_timer* ApmlAlertEvent;
+    std::vector<boost::asio::steady_timer*> apmlAlertEvents;
     std::mutex mcaErrorHarvestMtx;
     std::mutex dramErrorHarvestMtx;
     std::mutex pcieErrorHarvestMtx;
