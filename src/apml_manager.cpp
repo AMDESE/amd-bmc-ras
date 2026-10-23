@@ -115,10 +115,10 @@ Manager::Manager(amd::ras::config::Manager& manager,
                  boost::asio::io_context& io, std::string& node) :
     amd::ras::Manager(manager, systemBus, node), objectServer(objectServer),
     io(io), pmfwRuntimeReady(false), platformInitialized(false),
-    runtimeErrPollingSupported(false), resetDrivingErrorReceived(false),
+    runtimeErrPollingSupported(false), resetDrivingErrorReceived(),
     McaErrorPollingEvent(nullptr), DramCeccErrorPollingEvent(nullptr),
-    PcieAerErrorPollingEvent(nullptr), ApmlAlertEvent(nullptr),
-    mcaErrorHarvestMtx(), dramErrorHarvestMtx(), pcieErrorHarvestMtx()
+    PcieAerErrorPollingEvent(nullptr), apmlAlertEvents(), mcaErrorHarvestMtx(),
+    dramErrorHarvestMtx(), pcieErrorHarvestMtx()
 {}
 
 void Manager::onHostStateChanged(bool hostOff)
@@ -434,7 +434,7 @@ void Manager::init()
 
 void Manager::pmfwReadyHandler()
 {
-    resetDrivingErrorReceived = false;
+    resetDrivingErrorReceived.assign(cpuCount, false);
 
     // Perform platform initialization now that the PMFW mailbox is available.
     // Guard against exceptions (e.g. unsupported family) so the service keeps
@@ -636,12 +636,15 @@ void Manager::registerEventHandler()
 
 void Manager::releaseEventHandlers()
 {
-    if (ApmlAlertEvent != nullptr)
+    for (auto* timer : apmlAlertEvents)
     {
-        ApmlAlertEvent->cancel();
-        delete ApmlAlertEvent;
-        ApmlAlertEvent = nullptr;
+        if (timer != nullptr)
+        {
+            timer->cancel();
+            delete timer;
+        }
     }
+    apmlAlertEvents.clear();
 
     if (alertHandleMode == "UEVENT")
     {
@@ -801,16 +804,35 @@ void Manager::alertSrcHandler(struct apml_udev_monitor* udev_mon,
         return;
     }
 
-    if (ApmlAlertEvent != nullptr)
+    auto socketIndex = std::find(socIndex.begin(), socIndex.end(),
+                                 static_cast<size_t>(socket));
+    size_t alertIndex = 0;
+    if (socketIndex != socIndex.end())
     {
-        ApmlAlertEvent->cancel();
-        delete ApmlAlertEvent;
-        ApmlAlertEvent = nullptr;
+        alertIndex = std::distance(socIndex.begin(), socketIndex);
+    }
+    else
+    {
+        alertIndex = static_cast<size_t>(socket);
     }
 
-    ApmlAlertEvent = new boost::asio::steady_timer(io, std::chrono::seconds(1));
-    ApmlAlertEvent->async_wait([this, udev_mon,
-                                socket](const boost::system::error_code ec) {
+    if (apmlAlertEvents.size() <= alertIndex)
+    {
+        apmlAlertEvents.resize(alertIndex + 1, nullptr);
+    }
+    if (apmlAlertEvents[alertIndex] != nullptr)
+    {
+        apmlAlertEvents[alertIndex]->cancel();
+        delete apmlAlertEvents[alertIndex];
+        apmlAlertEvents[alertIndex] = nullptr;
+    }
+
+    apmlAlertEvents[alertIndex] =
+        new boost::asio::steady_timer(io, std::chrono::seconds(1));
+    apmlAlertEvents[alertIndex]->async_wait([this, udev_mon, socket,
+                                             alertIndex](
+                                                const boost::system::error_code
+                                                    ec) {
         if (ec)
         {
             if (ec == boost::asio::error::operation_aborted)
@@ -822,6 +844,15 @@ void Manager::alertSrcHandler(struct apml_udev_monitor* udev_mon,
             lg2::error("APML alert handler error: {ERROR}", "ERROR",
                        ec.message().c_str());
             return;
+        }
+
+        if (apmlAlertEvents.size() > alertIndex)
+        {
+            if (apmlAlertEvents[alertIndex] != nullptr)
+            {
+                delete apmlAlertEvents[alertIndex];
+                apmlAlertEvents[alertIndex] = nullptr;
+            }
         }
         alertSrcHandler(udev_mon, socket);
     });
@@ -2269,15 +2300,36 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
     bool nonMcaShutdownError = false;
     cpuAlertProcessed.resize(cpuCount, false);
 
-    // Once a reset-driving RAS error has been detected, the system is
-    // expected to be reset based on policy. Ignore any further RAS error
-    // alerts until the host is rebooted.
-    if (resetDrivingErrorReceived == true)
+    lg2::info(
+        "The UEVENT alert signaled for RAS error SOC: {SOC}. Source: {SRC}",
+        "SOC", socNum, "SRC", lg2::hex, src);
+    // Once a reset-driving RAS error has been detected on this socket, the
+    // system is expected to be reset based on policy. Ignore any further RAS
+    // error alerts from that same socket until the host is rebooted.
+    if (resetDrivingErrorReceived.size() != cpuCount)
     {
-        lg2::info("Reset-driving RAS error already latched. Ignoring RAS error "
-                  "alert for SOC {SOC} until host reboot",
-                  "SOC", socNum);
-        return true;
+        resetDrivingErrorReceived.resize(cpuCount, false);
+    }
+
+    auto socketIt = std::find(socIndex.begin(), socIndex.end(),
+                              static_cast<size_t>(socNum));
+    if (socketIt == socIndex.end())
+    {
+        lg2::error("Failed to map SOC {SOC} to a configured socket", "SOC",
+                   socNum);
+    }
+    else
+    {
+        size_t socketIndex = std::distance(socIndex.begin(), socketIt);
+        if (resetDrivingErrorReceived[socketIndex] == true)
+        {
+            lg2::info(
+                "Reset-driving RAS error already latched for SOC {SOC}. "
+                "Ignoring RAS error alert from the same socket until host "
+                "reboot",
+                "SOC", socNum);
+            return true;
+        }
     }
 
     if ((src & 0xFF) == 0)
@@ -2285,10 +2337,6 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
         lg2::debug("Nothing to Harvest. Not RAS Error");
         return true;
     }
-
-    lg2::error(
-        "The UEVENT alert signaled for RAS error SOC: {SOC}. Source: {SRC}",
-        "SOC", socNum, "SRC", lg2::hex, src);
 
     if (src & cfError)
     {
@@ -2312,9 +2360,14 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                based on policy, so stop runtime error polling. */
             deactivateRuntimeErrorPolling();
 
-            /* Latch the reset-driving error so subsequent RAS error alerts
-               are ignored until the host is rebooted. */
-            resetDrivingErrorReceived = true;
+            /* Latch the reset-driving error for this socket so subsequent RAS
+               error alerts from the same socket are ignored until the host is
+               rebooted. */
+            if (socketIt != socIndex.end())
+            {
+                size_t socketIndex = std::distance(socIndex.begin(), socketIt);
+                resetDrivingErrorReceived[socketIndex] = true;
+            }
 
             harvestBreakEvent(socNum);
             cpuAlertProcessed.assign(cpuCount, true);
@@ -2353,9 +2406,13 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
                             "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
                             rasErrMsg.c_str(), NULL);
 
-            // Fatal errors are also reset-driving, so ignore any later RAS
-            // alerts until the host is rebooted.
-            resetDrivingErrorReceived = true;
+            // Fatal errors are also reset-driving for this socket, so ignore
+            // later RAS alerts from the same socket until the host is rebooted.
+            if (socketIt != socIndex.end())
+            {
+                size_t socketIndex = std::distance(socIndex.begin(), socketIt);
+                resetDrivingErrorReceived[socketIndex] = true;
+            }
 
             if (false == harvestMcaValidityCheck(socNum, &errorCheck))
             {
@@ -2454,11 +2511,9 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
     configMgr.saveErrorCounts();
 
     // Map physical socNum to logical index in cpuAlertProcessed
-    auto socIt = std::find(socIndex.begin(), socIndex.end(),
-                           static_cast<size_t>(socNum));
-    if (socIt != socIndex.end())
+    if (socketIt != socIndex.end())
     {
-        cpuAlertProcessed[std::distance(socIndex.begin(), socIt)] = true;
+        cpuAlertProcessed[std::distance(socIndex.begin(), socketIt)] = true;
     }
 
     if (fchHangError == true || runtimeError == true ||
@@ -2619,15 +2674,33 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     bool nonMcaShutdownError = false;
     cpuAlertProcessed.resize(cpuCount, false);
 
-    // Once a reset-driving RAS error has been detected, the system is
-    // expected to be reset based on policy. Ignore any further RAS error
-    // alerts until the host is rebooted.
-    if (resetDrivingErrorReceived == true)
+    // Once a reset-driving RAS error has been detected on this socket, the
+    // system is expected to be reset based on policy. Ignore any further RAS
+    // error alerts from that same socket until the host is rebooted.
+    if (resetDrivingErrorReceived.size() != cpuCount)
     {
-        lg2::info("Reset-driving RAS error already latched. Ignoring RAS error "
-                  "alert for SOC {SOC} until host reboot",
-                  "SOC", socNum);
-        return true;
+        resetDrivingErrorReceived.resize(cpuCount, false);
+    }
+
+    auto socketIt = std::find(socIndex.begin(), socIndex.end(),
+                              static_cast<size_t>(socNum));
+    if (socketIt == socIndex.end())
+    {
+        lg2::error("Failed to map SOC {SOC} to a configured socket", "SOC",
+                   socNum);
+    }
+    else
+    {
+        size_t socketIndex = std::distance(socIndex.begin(), socketIt);
+        if (resetDrivingErrorReceived[socketIndex] == true)
+        {
+            lg2::info(
+                "Reset-driving RAS error already latched for SOC {SOC}. "
+                "Ignoring RAS error alert from the same socket until host "
+                "reboot",
+                "SOC", socNum);
+            return true;
+        }
     }
 
     if (read_sbrmi_status(socNum, &buf) == OOB_SUCCESS)
@@ -2731,9 +2804,15 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                        reset based on policy, so stop runtime error polling. */
                     deactivateRuntimeErrorPolling();
 
-                    /* Latch the reset-driving error so subsequent RAS error
-                       alerts are ignored until the host is rebooted. */
-                    resetDrivingErrorReceived = true;
+                    /* Latch the reset-driving error for this socket so
+                       subsequent RAS error alerts from the same socket are
+                       ignored until the host is rebooted. */
+                    if (socketIt != socIndex.end())
+                    {
+                        size_t socketIndex =
+                            std::distance(socIndex.begin(), socketIt);
+                        resetDrivingErrorReceived[socketIndex] = true;
+                    }
 
                     harvestBreakEvent(socNum);
                     cpuAlertProcessed.assign(cpuCount, true);
@@ -2773,9 +2852,15 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                         "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.CPUError",
                         "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
 
-                    // Fatal errors are also reset-driving, so ignore any
-                    // later RAS alerts until the host is rebooted.
-                    resetDrivingErrorReceived = true;
+                    // Fatal errors are also reset-driving for this socket, so
+                    // ignore later RAS alerts from the same socket until the
+                    // host is rebooted.
+                    if (socketIt != socIndex.end())
+                    {
+                        size_t socketIndex =
+                            std::distance(socIndex.begin(), socketIt);
+                        resetDrivingErrorReceived[socketIndex] = true;
+                    }
 
                     if (false == harvestMcaValidityCheck(socNum, &errorCheck))
                     {
@@ -2881,11 +2966,9 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             configMgr.saveErrorCounts();
 
             // Map physical socNum to logical index in cpuAlertProcessed
-            auto socIt = std::find(socIndex.begin(), socIndex.end(),
-                                   static_cast<size_t>(socNum));
-            if (socIt != socIndex.end())
+            if (socketIt != socIndex.end())
             {
-                cpuAlertProcessed[std::distance(socIndex.begin(), socIt)] =
+                cpuAlertProcessed[std::distance(socIndex.begin(), socketIt)] =
                     true;
             }
 
