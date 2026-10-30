@@ -211,11 +211,40 @@ bool dumpProcErrorInfoSection(const std::shared_ptr<McaRuntimeCperRecord>&,
  *  @param[in] ppin - Unique pointer to an array of PPIN values.
  *  @param[in] uCode - Unique pointer to an array of microcode values.
  *  @param[in] contextType - Register context type for the record.
+ *
+ *  @return false when the MCA payload cannot be validated or allocated.
+ *  RegisterContextType is left unchanged in that case.
  */
-void dumpContext(const std::shared_ptr<FatalCperRecord>&, uint16_t numbanks,
+bool dumpContext(const std::shared_ptr<FatalCperRecord>&, uint16_t numbanks,
                  uint16_t bytespermca, size_t,
                  const std::unique_ptr<uint64_t[]>&,
                  const std::unique_ptr<uint32_t[]>&, size_t);
+
+/** @brief Release the variable-length MCA bank buffer of one fatal section. */
+void releaseFatalMcaBanks(AmdFatalErrorData& record);
+
+/** @brief Allocate MCA bank storage for one fatal section.
+ *
+ *  RegisterArraySize becomes bankCount * bytesPerBank, rounded up to a
+ *  multiple of 4 so each bank can be indexed as 32-bit words. The bank
+ *  count is limited to maxMcaBanks, and the product must fit in
+ *  RegisterArraySize (uint16_t).
+ */
+bool prepareFatalMcaBanks(AmdFatalErrorData& record, uint16_t bankCount,
+                          uint16_t bytesPerBank);
+
+/** @brief Read one 32-bit word from a fatal MCA bank. Returns 0 and logs
+ *  if the bank or word is outside the allocated payload. A stored register
+ *  may also be 0, so the log is what distinguishes a missed read. */
+uint32_t fatalMcaDwordAt(const AmdFatalErrorData& record, uint16_t bank,
+                         uint32_t dwordIndex);
+
+/** @brief Write one 32-bit word into a fatal MCA bank. */
+void setFatalMcaDword(AmdFatalErrorData& record, uint16_t bank,
+                      uint32_t dwordIndex, uint32_t value);
+
+/** @brief Pointer to the first byte of one fatal MCA bank, or nullptr. */
+uint8_t* fatalMcaBank(AmdFatalErrorData& record, uint16_t bank);
 
 /** @brief Creates a CPER file based on the error type and section count.
  *

@@ -10,7 +10,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <limits>
+#include <new>
 #include <regex>
 
 namespace amd
@@ -131,10 +135,9 @@ template void dumpErrorDescriptor(const std::shared_ptr<PcieRuntimeCperRecord>&,
                                   uint16_t, const std::string_view&, uint32_t*,
                                   uint8_t, const std::vector<size_t>&);
 
-template void
-    dumpErrorDescriptor(const std::shared_ptr<CoreDebugDumpCperRecord>&,
-                        uint16_t, const std::string_view&, uint32_t*, uint8_t,
-                        const std::vector<size_t>&);
+template void dumpErrorDescriptor(
+    const std::shared_ptr<CoreDebugDumpCperRecord>&, uint16_t,
+    const std::string_view&, uint32_t*, uint8_t, const std::vector<size_t>&);
 
 template void createFile(const std::shared_ptr<FatalCperRecord>&,
                          const std::string_view&, uint16_t, size_t&,
@@ -387,21 +390,167 @@ bool dumpProcErrorInfoSection(
     return true;
 }
 
-void dumpContext(const std::shared_ptr<FatalCperRecord>& fatalPtr,
+static_assert(offsetof(AmdFatalMcaPrefix, Ppin) + sizeof(uint64_t) ==
+              sizeof(AmdFatalMcaPrefix));
+
+void releaseFatalMcaBanks(AmdFatalErrorData& record)
+{
+    delete[] record.mcaBanks;
+    record.mcaBanks = nullptr;
+    record.mcaBankCount = 0;
+    record.mcaBytesPerBank = 0;
+}
+
+bool prepareFatalMcaBanks(AmdFatalErrorData& record, uint16_t bankCount,
+                          uint16_t bytesPerBank)
+{
+    releaseFatalMcaBanks(record);
+    record.RegisterArraySize = 0;
+
+    if (bankCount == 0 || bytesPerBank == 0)
+    {
+        return true;
+    }
+
+    if (bankCount > maxMcaBanks)
+    {
+        lg2::warning("MCA bank count {COUNT} exceeds {MAX}, clamping", "COUNT",
+                     bankCount, "MAX", maxMcaBanks);
+        bankCount = maxMcaBanks;
+    }
+
+    const uint32_t storedBytesPerBank =
+        (static_cast<uint32_t>(bytesPerBank) + 3u) & ~3u;
+    if ((storedBytesPerBank == 0) ||
+        (storedBytesPerBank > std::numeric_limits<uint16_t>::max()))
+    {
+        lg2::error("MCA bank length {LEN} cannot be stored", "LEN",
+                   bytesPerBank);
+        return false;
+    }
+
+    uint32_t totalBytes = static_cast<uint32_t>(bankCount) * storedBytesPerBank;
+    if (totalBytes > std::numeric_limits<uint16_t>::max())
+    {
+        bankCount = static_cast<uint16_t>(
+            std::numeric_limits<uint16_t>::max() / storedBytesPerBank);
+        totalBytes = static_cast<uint32_t>(bankCount) * storedBytesPerBank;
+        lg2::warning(
+            "MCA payload exceeds RegisterArraySize, clamping to {COUNT} banks",
+            "COUNT", bankCount);
+    }
+
+    try
+    {
+        record.mcaBanks = new uint8_t[totalBytes]();
+    }
+    catch (const std::bad_alloc&)
+    {
+        lg2::error("Failed to allocate {BYTES} bytes for the MCA payload",
+                   "BYTES", totalBytes);
+        record.mcaBanks = nullptr;
+        record.mcaBankCount = 0;
+        record.mcaBytesPerBank = 0;
+        record.RegisterArraySize = 0;
+        return false;
+    }
+
+    record.mcaBankCount = bankCount;
+    record.mcaBytesPerBank = static_cast<uint16_t>(storedBytesPerBank);
+    record.RegisterArraySize = static_cast<uint16_t>(totalBytes);
+    return true;
+}
+
+uint8_t* fatalMcaBank(AmdFatalErrorData& record, uint16_t bank)
+{
+    if ((record.mcaBanks == nullptr) || (bank >= record.mcaBankCount) ||
+        (record.mcaBytesPerBank == 0))
+    {
+        return nullptr;
+    }
+
+    return record.mcaBanks +
+           (static_cast<size_t>(bank) * record.mcaBytesPerBank);
+}
+
+namespace
+{
+uint32_t* fatalMcaDwordPtr(AmdFatalErrorData& record, uint16_t bank,
+                           uint32_t dwordIndex)
+{
+    uint8_t* bankBytes = fatalMcaBank(record, bank);
+    if (bankBytes == nullptr)
+    {
+        return nullptr;
+    }
+
+    const size_t byteOffset =
+        static_cast<size_t>(dwordIndex) * sizeof(uint32_t);
+    if ((byteOffset + sizeof(uint32_t)) > record.mcaBytesPerBank)
+    {
+        return nullptr;
+    }
+
+    return reinterpret_cast<uint32_t*>(bankBytes + byteOffset);
+}
+} // namespace
+
+uint32_t fatalMcaDwordAt(const AmdFatalErrorData& record, uint16_t bank,
+                         uint32_t dwordIndex)
+{
+    const uint32_t* word = fatalMcaDwordPtr(
+        const_cast<AmdFatalErrorData&>(record), bank, dwordIndex);
+    if (word == nullptr)
+    {
+        // 0 is also a valid MCA register value, so the miss has to be logged
+        // rather than inferred from the returned word.
+        lg2::error("MCA dword read missed bank {BANK} index {INDEX}; "
+                   "returning 0",
+                   "BANK", bank, "INDEX", dwordIndex);
+        return 0;
+    }
+    return *word;
+}
+
+void setFatalMcaDword(AmdFatalErrorData& record, uint16_t bank,
+                      uint32_t dwordIndex, uint32_t value)
+{
+    uint32_t* word = fatalMcaDwordPtr(record, bank, dwordIndex);
+    if (word == nullptr)
+    {
+        lg2::error("MCA dword write dropped for bank {BANK} index {INDEX}",
+                   "BANK", bank, "INDEX", dwordIndex);
+        return;
+    }
+    *word = value;
+}
+
+bool dumpContext(const std::shared_ptr<FatalCperRecord>& fatalPtr,
                  uint16_t numbanks, uint16_t bytespermca, size_t sectionIdx,
                  const std::unique_ptr<uint64_t[]>& ppin,
                  const std::unique_ptr<uint32_t[]>& uCode, size_t contextType)
 {
-    fatalPtr->ErrorRecord[sectionIdx].Ppin = ppin[sectionIdx];
-    fatalPtr->ErrorRecord[sectionIdx].MicrocodeVersion = uCode[sectionIdx];
+    AmdFatalErrorData& record = fatalPtr->ErrorRecord[sectionIdx];
+    record.Ppin = ppin[sectionIdx];
+    record.MicrocodeVersion = uCode[sectionIdx];
 
-    if (numbanks != 0)
+    if ((numbanks != 0) && (bytespermca != 0))
     {
-        fatalPtr->ErrorRecord[sectionIdx].RegisterContextType =
-            contextType; // MSR Registers
-        fatalPtr->ErrorRecord[sectionIdx].RegisterArraySize =
-            numbanks * bytespermca;
+        if (!prepareFatalMcaBanks(record, numbanks, bytespermca))
+        {
+            lg2::error("Failed to prepare the fatal MCA payload for section "
+                       "{SECTION}: {BANKS} banks, {BYTES} bytes per bank",
+                       "SECTION", sectionIdx, "BANKS", numbanks, "BYTES",
+                       bytespermca);
+            return false;
+        }
+        record.RegisterContextType = contextType; // MSR Registers
+        return true;
     }
+
+    releaseFatalMcaBanks(record);
+    record.RegisterArraySize = 0;
+    return true;
 }
 
 std::string getCperFilename(size_t num)
@@ -422,9 +571,8 @@ bool checkSignatureIdMatch(std::map<std::string, std::string>* configSigIdList,
     // Fatal CPER sections are allocated one per configured socket, so the
     // header section count is authoritative. Fall back to cpuCount only if
     // the header has not been populated yet.
-    const size_t sectionCount = (rcd->Header.SectionCount != 0)
-                                    ? rcd->Header.SectionCount
-                                    : cpuCount;
+    const size_t sectionCount =
+        (rcd->Header.SectionCount != 0) ? rcd->Header.SectionCount : cpuCount;
     std::vector<std::array<uint32_t, 8>> signatures(sectionCount);
 
     for (size_t section = 0; section < sectionCount; section++)
@@ -581,10 +729,12 @@ void dumpHeader(const std::shared_ptr<PtrType>& data, uint16_t sectionCount,
     }
     else if (errorType == fatalErr)
     {
+        // MCA payload length is not known yet. createFile() rewrites
+        // RecordLength from each section's RegisterArraySize.
         data->Header.RecordLength =
             sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
             (sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount) +
-            (sizeof(EFI_AMD_FATAL_ERROR_DATA) * sectionCount);
+            (static_cast<uint32_t>(fatalFixedSectionBytes) * sectionCount);
 
         memcpy(&data->Header.NotificationType,
                &gEfiEventNotificationTypeMceGuid, sizeof(EFI_GUID));
@@ -617,14 +767,16 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
         {
             /*offset in bytes of the corresponding section body
               from the base of the record header*/
+            // Offsets assume no MCA payload yet. createFile() places
+            // DfDumpData and DebugLogIdData after RegisterArraySize bytes.
             data->SectionDescriptor[i].SectionOffset =
                 sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
                 (sectionCount * sizeof(EFI_ERROR_SECTION_DESCRIPTOR)) +
-                (i * sizeof(EFI_AMD_FATAL_ERROR_DATA));
+                (i * static_cast<uint32_t>(fatalFixedSectionBytes));
 
             /*The length in bytes of the section body*/
             data->SectionDescriptor[i].SectionLength =
-                sizeof(EFI_AMD_FATAL_ERROR_DATA);
+                static_cast<uint32_t>(fatalFixedSectionBytes);
 
             memcpy(&data->SectionDescriptor[i].SectionType,
                    &gEfiAmdCrashdumpGuid, sizeof(EFI_GUID));
@@ -752,6 +904,53 @@ void updateIndexFile(size_t& errCount, const std::string& node)
     out << errCount;
 }
 
+size_t fatalSectionBytes(const AmdFatalErrorData& record)
+{
+    return sizeof(AmdFatalMcaPrefix) + record.RegisterArraySize +
+           sizeof(record.DfDumpData) + sizeof(record.Reserved1) +
+           sizeof(record.DebugLogIdData);
+}
+
+void layoutFatalSections(FatalCperRecord& record, uint16_t sectionCount)
+{
+    if ((record.SectionDescriptor == nullptr) ||
+        (record.ErrorRecord == nullptr))
+    {
+        return;
+    }
+
+    uint32_t offset = sizeof(EFI_COMMON_ERROR_RECORD_HEADER) +
+                      (static_cast<uint32_t>(sectionCount) *
+                       sizeof(EFI_ERROR_SECTION_DESCRIPTOR));
+
+    for (uint16_t i = 0; i < sectionCount; i++)
+    {
+        const uint32_t length =
+            static_cast<uint32_t>(fatalSectionBytes(record.ErrorRecord[i]));
+        record.SectionDescriptor[i].SectionOffset = offset;
+        record.SectionDescriptor[i].SectionLength = length;
+        offset += length;
+    }
+
+    record.Header.RecordLength = offset;
+}
+
+void writeFatalSection(FILE* file, const AmdFatalErrorData& record)
+{
+    fwrite(static_cast<const AmdFatalMcaPrefix*>(&record),
+           sizeof(AmdFatalMcaPrefix), singleBit, file);
+
+    if ((record.RegisterArraySize > 0) && (record.mcaBanks != nullptr))
+    {
+        fwrite(record.mcaBanks, record.RegisterArraySize, singleBit, file);
+    }
+
+    fwrite(&record.DfDumpData, sizeof(record.DfDumpData), singleBit, file);
+    fwrite(record.Reserved1, sizeof(record.Reserved1), singleBit, file);
+    fwrite(record.DebugLogIdData, sizeof(record.DebugLogIdData), singleBit,
+           file);
+}
+
 template <typename PtrType>
 void createFile(const std::shared_ptr<PtrType>& data,
                 const std::string_view& errorType, uint16_t sectionCount,
@@ -853,6 +1052,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
     {
         if ((fatalPtr) && (file != nullptr))
         {
+            layoutFatalSections(*fatalPtr, sectionCount);
+
             fwrite(&fatalPtr->Header, sizeof(EFI_COMMON_ERROR_RECORD_HEADER),
                    singleBit, file);
 
@@ -860,9 +1061,10 @@ void createFile(const std::shared_ptr<PtrType>& data,
                    sizeof(EFI_ERROR_SECTION_DESCRIPTOR) * sectionCount,
                    singleBit, file);
 
-            fwrite(fatalPtr->ErrorRecord,
-                   sizeof(EFI_AMD_FATAL_ERROR_DATA) * sectionCount, singleBit,
-                   file);
+            for (uint16_t i = 0; i < sectionCount; i++)
+            {
+                writeFatalSection(file, fatalPtr->ErrorRecord[i]);
+            }
 
             std::string rasErrMsg = "Generated Fatal CPER file : ";
             rasErrMsg.append(cperFilePath);
