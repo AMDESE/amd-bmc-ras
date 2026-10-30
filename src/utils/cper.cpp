@@ -121,19 +121,20 @@ template void dumpHeader(const std::shared_ptr<CoreDebugDumpCperRecord>& data,
 
 template void dumpErrorDescriptor(const std::shared_ptr<FatalCperRecord>&,
                                   uint16_t, const std::string_view&, uint32_t*,
-                                  uint8_t);
+                                  uint8_t, const std::vector<size_t>&);
 
 template void dumpErrorDescriptor(const std::shared_ptr<McaRuntimeCperRecord>&,
                                   uint16_t, const std::string_view&, uint32_t*,
-                                  uint8_t);
+                                  uint8_t, const std::vector<size_t>&);
 
 template void dumpErrorDescriptor(const std::shared_ptr<PcieRuntimeCperRecord>&,
                                   uint16_t, const std::string_view&, uint32_t*,
-                                  uint8_t);
+                                  uint8_t, const std::vector<size_t>&);
 
 template void
     dumpErrorDescriptor(const std::shared_ptr<CoreDebugDumpCperRecord>&,
-                        uint16_t, const std::string_view&, uint32_t*, uint8_t);
+                        uint16_t, const std::string_view&, uint32_t*, uint8_t,
+                        const std::vector<size_t>&);
 
 template void createFile(const std::shared_ptr<FatalCperRecord>&,
                          const std::string_view&, uint16_t, size_t&,
@@ -311,62 +312,69 @@ void deleteCrashdumpInterface()
 }
 
 void dumpProcessorError(const std::shared_ptr<FatalCperRecord>& fatalPtr,
-                        uint8_t socNum, const std::unique_ptr<CpuId[]>& cpuId,
-                        std::vector<size_t>& socIndex, uint16_t numbanks)
+                        size_t sectionIdx,
+                        const std::unique_ptr<CpuId[]>& cpuId,
+                        uint16_t numbanks)
 {
-    for (size_t i : socIndex)
-    {
-        if (i == socNum)
-        {
-            /*bit 0: APIC_ID Valid
-              bit 1: CPUID Valid
-              bit 2: RSVD
-              bits 3-7: RSVD
-              bits 8-13: Number of Processor Context Info structures present
-              bits 14-63: RSVD*/
-            fatalPtr->ErrorRecord[i].ProcError.ValidFields = tripleBit;
-            memcpy(&fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[0],
-                   &cpuId[i].eax, sizeof(uint32_t));
-            memcpy(&fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[doubleBit * 4],
-                   &cpuId[i].ebx, sizeof(uint32_t));
-            memcpy(&fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[quadBit * 4],
-                   &cpuId[i].ecx, sizeof(uint32_t));
-            memcpy(&fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[hexBit * 4],
-                   &cpuId[i].edx, sizeof(uint32_t));
-            fatalPtr->ErrorRecord[i].ProcError.ApicId =
-                ((cpuId[i].ebx >> 24) & maxByte);
+    /*bit 0: APIC_ID Valid
+      bit 1: CPUID Valid
+      bit 2: RSVD
+      bits 3-7: RSVD
+      bits 8-13: Number of Processor Context Info structures present
+      bits 14-63: RSVD*/
+    fatalPtr->ErrorRecord[sectionIdx].ProcError.ValidFields = tripleBit;
+    memcpy(&fatalPtr->ErrorRecord[sectionIdx].ProcError.CpuIdInfo[0],
+           &cpuId[sectionIdx].eax, sizeof(uint32_t));
+    memcpy(
+        &fatalPtr->ErrorRecord[sectionIdx].ProcError.CpuIdInfo[doubleBit * 4],
+        &cpuId[sectionIdx].ebx, sizeof(uint32_t));
+    memcpy(&fatalPtr->ErrorRecord[sectionIdx].ProcError.CpuIdInfo[quadBit * 4],
+           &cpuId[sectionIdx].ecx, sizeof(uint32_t));
+    memcpy(&fatalPtr->ErrorRecord[sectionIdx].ProcError.CpuIdInfo[hexBit * 4],
+           &cpuId[sectionIdx].edx, sizeof(uint32_t));
+    fatalPtr->ErrorRecord[sectionIdx].ProcError.ApicId =
+        ((cpuId[sectionIdx].ebx >> 24) & maxByte);
 
-            if (numbanks != 0)
-            {
-                fatalPtr->ErrorRecord[i].ProcError.ValidFields |= value256;
-            }
-        }
+    if (numbanks != 0)
+    {
+        fatalPtr->ErrorRecord[sectionIdx].ProcError.ValidFields |= value256;
     }
 }
 
-void dumpProcErrorInfoSection(
-    const std::shared_ptr<McaRuntimeCperRecord>& procPtr, uint16_t sectionCount,
-    uint64_t* checkInfo, uint32_t sectionStart, uint8_t cpuCount,
-    const std::unique_ptr<CpuId[]>& cpuId)
+bool dumpProcErrorInfoSection(
+    const std::shared_ptr<McaRuntimeCperRecord>& procPtr, uint32_t sectionStart,
+    uint16_t sectionLength, uint16_t totalSectionCount, uint64_t* checkInfo,
+    size_t cpuIdx, const std::unique_ptr<CpuId[]>& cpuId)
 {
-    for (uint32_t i = sectionStart; i < sectionCount; i++)
+    const uint64_t sectionEnd =
+        static_cast<uint64_t>(sectionStart) + sectionLength;
+
+    if (sectionEnd > totalSectionCount)
+    {
+        lg2::error("Runtime CPER section range [{START}, {END}) exceeds the "
+                   "{TOTAL} allocated sections",
+                   "START", sectionStart, "END", sectionEnd, "TOTAL",
+                   totalSectionCount);
+        return false;
+    }
+
+    for (uint32_t i = sectionStart; i < sectionEnd; i++)
     {
         procPtr->McaErrorInfo[i].ProcError.ValidFields =
-            0b11 | (sectionCount << doubleBit) | (sectionCount << hexBit);
+            0b11 | (sectionLength << doubleBit) | (sectionLength << hexBit);
 
-        for (size_t rec = 0; rec < cpuCount; rec++)
-        {
-            memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[0],
-                   &cpuId[rec].eax, sizeof(uint32_t));
-            memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[doubleBit * 4],
-                   &cpuId[rec].ebx, sizeof(uint32_t));
-            memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[quadBit * 4],
-                   &cpuId[rec].ecx, sizeof(uint32_t));
-            memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[hexBit * 4],
-                   &cpuId[rec].edx, sizeof(uint32_t));
-            procPtr->McaErrorInfo[i].ProcError.ApicId =
-                ((cpuId[rec].ebx >> 24) & maxByte);
-        }
+        // Each section belongs to exactly one socket, so write that socket's
+        // identity rather than looping over every configured CPU.
+        memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[0],
+               &cpuId[cpuIdx].eax, sizeof(uint32_t));
+        memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[doubleBit * 4],
+               &cpuId[cpuIdx].ebx, sizeof(uint32_t));
+        memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[quadBit * 4],
+               &cpuId[cpuIdx].ecx, sizeof(uint32_t));
+        memcpy(&procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[hexBit * 4],
+               &cpuId[cpuIdx].edx, sizeof(uint32_t));
+        procPtr->McaErrorInfo[i].ProcError.ApicId =
+            ((cpuId[cpuIdx].ebx >> 24) & maxByte);
 
         memcpy(&procPtr->McaErrorInfo[i].ErrorInfo.ErrorType,
                &gEfiIa32x64ErrorTypeMsCheckGuid, sizeof(EFI_GUID));
@@ -375,21 +383,23 @@ void dumpProcErrorInfoSection(
         procPtr->McaErrorInfo[i].ContextInfo.RegisterType = singleBit;
         procPtr->McaErrorInfo[i].ContextInfo.ArraySize = 32;
     }
+
+    return true;
 }
 
 void dumpContext(const std::shared_ptr<FatalCperRecord>& fatalPtr,
-                 uint16_t numbanks, uint16_t bytespermca, uint8_t socNum,
+                 uint16_t numbanks, uint16_t bytespermca, size_t sectionIdx,
                  const std::unique_ptr<uint64_t[]>& ppin,
                  const std::unique_ptr<uint32_t[]>& uCode, size_t contextType)
 {
-    fatalPtr->ErrorRecord[socNum].Ppin = ppin[socNum];
-    fatalPtr->ErrorRecord[socNum].MicrocodeVersion = uCode[socNum];
+    fatalPtr->ErrorRecord[sectionIdx].Ppin = ppin[sectionIdx];
+    fatalPtr->ErrorRecord[sectionIdx].MicrocodeVersion = uCode[sectionIdx];
 
     if (numbanks != 0)
     {
-        fatalPtr->ErrorRecord[socNum].RegisterContextType =
+        fatalPtr->ErrorRecord[sectionIdx].RegisterContextType =
             contextType; // MSR Registers
-        fatalPtr->ErrorRecord[socNum].RegisterArraySize =
+        fatalPtr->ErrorRecord[sectionIdx].RegisterArraySize =
             numbanks * bytespermca;
     }
 }
@@ -409,11 +419,12 @@ bool checkSignatureIdMatch(std::map<std::string, std::string>* configSigIdList,
         return false;
     }
 
-    // Fatal CPER section indices map to physical socket IDs. In single-socket
-    // host2 layouts, valid data may exist at section index 1 while cpuCount is
-    // 1, so scan all available sections to avoid missing the signature.
-    const size_t sectionCount =
-        std::max(cpuCount, static_cast<size_t>(rcd->Header.SectionCount));
+    // Fatal CPER sections are allocated one per configured socket, so the
+    // header section count is authoritative. Fall back to cpuCount only if
+    // the header has not been populated yet.
+    const size_t sectionCount = (rcd->Header.SectionCount != 0)
+                                    ? rcd->Header.SectionCount
+                                    : cpuCount;
     std::vector<std::array<uint32_t, 8>> signatures(sectionCount);
 
     for (size_t section = 0; section < sectionCount; section++)
@@ -598,7 +609,7 @@ template <typename PtrType>
 void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
                          uint16_t sectionCount,
                          const std::string_view& errorType, uint32_t* severity,
-                         uint8_t progId)
+                         uint8_t progId, const std::vector<size_t>& socketMap)
 {
     for (size_t i = 0; i < sectionCount; i++)
     {
@@ -620,10 +631,14 @@ void dumpErrorDescriptor(const std::shared_ptr<PtrType>& data,
 
             data->SectionDescriptor[i].Severity = singleBit; // 1 = Fatal
 
+            // Section i belongs to the i'th configured socket, whose
+            // physical number is not necessarily i on sparse, reordered or
+            // node-local topologies.
+            const size_t socNum = (i < socketMap.size()) ? socketMap[i] : i;
+
             std::memset(data->SectionDescriptor[i].FruString, 0, 20);
-            data->SectionDescriptor[i].FruString[0] = 'P';
-            data->SectionDescriptor[i].FruString[1] = '0' + i;
-            data->SectionDescriptor[i].FruString[2] = '\0';
+            std::snprintf(data->SectionDescriptor[i].FruString, 20, "P%zu",
+                          socNum);
         }
         else if ((errorType == runtimeMcaErr) || (errorType == runtimeDramErr))
         {
@@ -1084,7 +1099,7 @@ void mergeFile(const std::string& sourceFile, const std::string& destFile)
 
 void cper::dumpCoreDebugDumpHeader(
     const std::shared_ptr<CoreDebugDumpCperRecord>& coreDebugPtr,
-    uint16_t sectionIdx, const std::unique_ptr<CpuId[]>& cpuId)
+    uint16_t sectionIdx, size_t cpuIdx, const std::unique_ptr<CpuId[]>& cpuId)
 {
     CoreDebugDumpHeader& hdr =
         coreDebugPtr->DebugDumpSection[sectionIdx].header;
@@ -1092,11 +1107,11 @@ void cper::dumpCoreDebugDumpHeader(
 
     hdr.validBits.apicIdValid = 1;
     hdr.validBits.cpuidValid = 1;
-    hdr.apicId = ((cpuId[0].ebx >> 24) & 0xFF);
-    hdr.cpuidInfo.eax = cpuId[0].eax;
-    hdr.cpuidInfo.ebx = cpuId[0].ebx;
-    hdr.cpuidInfo.ecx = cpuId[0].ecx;
-    hdr.cpuidInfo.edx = cpuId[0].edx;
+    hdr.apicId = ((cpuId[cpuIdx].ebx >> 24) & 0xFF);
+    hdr.cpuidInfo.eax = cpuId[cpuIdx].eax;
+    hdr.cpuidInfo.ebx = cpuId[cpuIdx].ebx;
+    hdr.cpuidInfo.ecx = cpuId[cpuIdx].ecx;
+    hdr.cpuidInfo.edx = cpuId[cpuIdx].edx;
 }
 
 void cper::populateSignatureId(EFI_AMD_FATAL_ERROR_DATA& errorRecord,

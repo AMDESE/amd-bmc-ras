@@ -221,6 +221,47 @@ class Manager
      */
     void handleFchError(uint8_t socNum);
 
+    /** @brief Number of CPER sections carried by a fatal record.
+     *
+     *  @details A fatal CPER holds one section per configured socket. Every
+     *  transport allocates, serializes and indexes sections through this
+     *  single value so the record layout always matches the topology.
+     *
+     *  @return Section count for the configured topology.
+     */
+    uint16_t fatalSectionCount() const;
+
+    /** @brief Translate a physical socket number into its logical index.
+     *
+     *  @details socIndex maps the logical index used by the cpuId, ppin,
+     *  uCode and CPER section arrays onto the physical socket number. This
+     *  is the reverse lookup and the only sanctioned way to index those
+     *  arrays from a socket number reported by hardware, since physical
+     *  numbering may be sparse, reordered or node local.
+     *
+     *  @param[in] socNum - Physical socket number reported by hardware.
+     *  @param[out] logicalIdx - Logical index of that socket on success.
+     *
+     *  @return true if socNum belongs to the configured topology.
+     */
+    bool toLogicalIndex(uint8_t socNum, size_t& logicalIdx) const;
+
+    /** @brief Comma separated list of the configured physical sockets.
+     *
+     *  @details Used in diagnostics so an unexpected socket number can be
+     *  compared against the topology the service was configured with.
+     */
+    std::string socketTopologyStr() const;
+
+    /** @brief Validate the configured socket map.
+     *
+     *  @details socIndex must hold exactly cpuCount entries that are unique
+     *  and usable as a CPER section index.
+     *
+     *  @throw std::runtime_error if the map is incomplete or inconsistent.
+     */
+    void validateSocketTopology() const;
+
     /** @brief Initialize the fatal CPER record structures.
      *
      *  @details Allocates section descriptors and error records if not
@@ -238,10 +279,10 @@ class Manager
      *  from the CrashDumpData, then populates the CPER record
      *  with signature ID and FRU string information.
      *
-     *  @param[in] socNum - Socket number.
+     *  @param[in] sectionIdx - CPER section owned by the reporting socket.
      *  @param[in] numBanks - Number of MCA banks to process.
      */
-    void processMcaBankSignatures(uint8_t socNum, uint16_t numBanks);
+    void processMcaBankSignatures(size_t sectionIdx, uint16_t numBanks);
 
     /** @brief Harvest break-event data from OOB registers.
      *
