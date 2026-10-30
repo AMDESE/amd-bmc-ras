@@ -235,7 +235,7 @@ class Manager
      *
      *  @details For each MCA bank, extracts signature ID fields
      *  (MCA_STATUS, MCA_IPID, MCA_SYND) and PSP syndrome values
-     *  from the CrashDumpData, then populates the CPER record
+     *  from the fatal MCA bank payload, then populates the CPER record
      *  with signature ID and FRU string information.
      *
      *  @param[in] socNum - Socket number.

@@ -1873,13 +1873,13 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
     maxOffset32 = ((errorCheck.err_log_len % 4) ? 1 : 0) +
                   (errorCheck.err_log_len >> 2);
 
-    uint16_t blockInstances = errorCheck.df_block_instances;
+    uint16_t blockInstances = rcd->ErrorRecord[socNum].mcaBankCount;
 
     lg2::info("Number of Valid MCA bank: {NUMBANKS}", "NUMBANKS",
               blockInstances);
     lg2::info("Number of 32 Bit Words:{MAX_OFFSET}", "MAX_OFFSET", maxOffset32);
 
-    while (n < errorCheck.df_block_instances)
+    while (n < blockInstances)
     {
         for (uint32_t offset = 0; offset < maxOffset32; offset++)
         {
@@ -1922,37 +1922,36 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
                                "from Bank:{N}, Offset:{OFFSET}",
                                "SOCKET", socNum, "N", n, "OFFSET", lg2::hex,
                                offset);
-                    rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[offset] =
-                        badData; // Write BAADDA7A pattern on error
+                    amd::ras::util::cper::setFatalMcaDword(
+                        rcd->ErrorRecord[socNum], n, offset,
+                        badData); // Write BAADDA7A pattern on error
                     continue;
                 }
 
             } // if (ret != OOB_SUCCESS)
 
-            rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[offset] = buffer;
+            amd::ras::util::cper::setFatalMcaDword(rcd->ErrorRecord[socNum], n,
+                                                   offset, buffer);
         } // for loop
 
         n++;
     }
 
-    processMcaBankSignatures(socNum, errorCheck.df_block_instances);
+    processMcaBankSignatures(socNum, blockInstances);
 
     uint32_t ipidOffsetLo = std::stoul((*sigIDOffset)[2], nullptr, base16);
     uint32_t ipidOffsetHi = std::stoul((*sigIDOffset)[3], nullptr, base16);
     uint32_t statusOffsetHi = std::stoul((*sigIDOffset)[5], nullptr, base16);
 
-    for (uint16_t bank = 0; bank < errorCheck.df_block_instances; bank++)
+    for (uint16_t bank = 0; bank < blockInstances; bank++)
     {
-        uint32_t mcaStatusHi = rcd->ErrorRecord[socNum]
-                                   .CrashDumpData[bank]
-                                   .McaData[statusOffsetHi / 4];
+        uint32_t mcaStatusHi = amd::ras::util::cper::fatalMcaDwordAt(
+            rcd->ErrorRecord[socNum], bank, statusOffsetHi / 4);
 
-        uint32_t mcaIpidLo = rcd->ErrorRecord[socNum]
-                                 .CrashDumpData[bank]
-                                 .McaData[ipidOffsetLo / 4];
-        uint32_t mcaIpidHi = rcd->ErrorRecord[socNum]
-                                 .CrashDumpData[bank]
-                                 .McaData[ipidOffsetHi / 4];
+        uint32_t mcaIpidLo = amd::ras::util::cper::fatalMcaDwordAt(
+            rcd->ErrorRecord[socNum], bank, ipidOffsetLo / 4);
+        uint32_t mcaIpidHi = amd::ras::util::cper::fatalMcaDwordAt(
+            rcd->ErrorRecord[socNum], bank, ipidOffsetHi / 4);
 
         if (mcaStatusHi & (1 << 29))
         {
@@ -2116,7 +2115,7 @@ bool Manager::harvestMcaValidityCheck(uint8_t info,
         }
 
         if ((errorCheck->df_block_instances == 0) ||
-            (errorCheck->df_block_instances > 32))
+            (errorCheck->df_block_instances > maxMcaBanks))
         {
             lg2::error("Socket {SOCKET}: Invalid MCA bank validity status. "
                        "Retry Count: {RETRY_COUNT}",
@@ -2128,7 +2127,7 @@ bool Manager::harvestMcaValidityCheck(uint8_t info,
     }
 
     if ((errorCheck->df_block_instances <= 0) ||
-        (errorCheck->df_block_instances > 32))
+        (errorCheck->df_block_instances > maxMcaBanks))
     {
         mcaValidityCheck = false;
     }

@@ -206,6 +206,31 @@ void dumpContext(const std::shared_ptr<FatalCperRecord>&, uint16_t numbanks,
                  const std::unique_ptr<uint64_t[]>&,
                  const std::unique_ptr<uint32_t[]>&, size_t);
 
+/** @brief Release the variable-length MCA bank buffer of one fatal section. */
+void releaseFatalMcaBanks(AmdFatalErrorData& record);
+
+/** @brief Allocate MCA bank storage for one fatal section.
+ *
+ *  RegisterArraySize becomes bankCount * bytesPerBank, rounded up to a
+ *  multiple of 4 so each bank can be indexed as 32-bit words. The bank
+ *  count is limited to maxMcaBanks, and the product must fit in
+ *  RegisterArraySize (uint16_t).
+ */
+bool prepareFatalMcaBanks(AmdFatalErrorData& record, uint16_t bankCount,
+                          uint16_t bytesPerBank);
+
+/** @brief Read one 32-bit word from a fatal MCA bank. Returns 0 if the
+ *  bank or word is outside the allocated payload. */
+uint32_t fatalMcaDwordAt(const AmdFatalErrorData& record, uint16_t bank,
+                         uint32_t dwordIndex);
+
+/** @brief Write one 32-bit word into a fatal MCA bank. */
+void setFatalMcaDword(AmdFatalErrorData& record, uint16_t bank,
+                      uint32_t dwordIndex, uint32_t value);
+
+/** @brief Pointer to the first byte of one fatal MCA bank, or nullptr. */
+uint8_t* fatalMcaBank(AmdFatalErrorData& record, uint16_t bank);
+
 /** @brief Creates a CPER file based on the error type and section count.
  *
  *  @details Removes existing CPER files in the RAS directory, sets the filename
