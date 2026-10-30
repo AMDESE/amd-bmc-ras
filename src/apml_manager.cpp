@@ -3,6 +3,7 @@
 #include "config_manager.hpp"
 #include "oem_cper.hpp"
 #include "utils/cper.hpp"
+#include "utils/decode_service.hpp"
 #include "utils/util.hpp"
 
 extern "C"
@@ -1014,6 +1015,10 @@ void Manager::harvestRuntimeErrors(
 
         amd::ras::util::cper::exportToDBus(errCount, mcaPtr->Header.TimeStamp,
                                            objectServer, systemBus, node);
+        amd::ras::util::decode_service::submitCper(
+            systemBus,
+            RAS_DIR + amd::ras::util::cper::findCperFilename(errCount, node),
+            socIndex.empty() ? uint8_t{0} : static_cast<uint8_t>(socIndex[0]));
         amd::ras::util::cper::updateIndexFile(errCount, node);
 
         // Per-socket CPU error counting for runtime MCA errors.
@@ -1088,6 +1093,10 @@ void Manager::harvestRuntimeErrors(
 
         amd::ras::util::cper::exportToDBus(errCount, dramPtr->Header.TimeStamp,
                                            objectServer, systemBus, node);
+        amd::ras::util::decode_service::submitCper(
+            systemBus,
+            RAS_DIR + amd::ras::util::cper::findCperFilename(errCount, node),
+            socIndex.empty() ? uint8_t{0} : static_cast<uint8_t>(socIndex[0]));
         amd::ras::util::cper::updateIndexFile(errCount, node);
         thresholdCount = configMgr.getThresholdCount(
             "DramCeccErrThresholdEnable", "DramCeccErrThresholdCount");
@@ -1144,6 +1153,10 @@ void Manager::harvestRuntimeErrors(
 
         amd::ras::util::cper::exportToDBus(errCount, pciePtr->Header.TimeStamp,
                                            objectServer, systemBus, node);
+        amd::ras::util::decode_service::submitCper(
+            systemBus,
+            RAS_DIR + amd::ras::util::cper::findCperFilename(errCount, node),
+            socIndex.empty() ? uint8_t{0} : static_cast<uint8_t>(socIndex[0]));
         amd::ras::util::cper::updateIndexFile(errCount, node);
         thresholdCount = configMgr.getThresholdCount("PcieErrThresholdEnable",
                                                      "PcieErrThresholdCount");
@@ -1800,6 +1813,10 @@ void Manager::harvestX86ExceptionData(uint8_t socNum)
     amd::ras::util::cper::exportToDBus(errCount,
                                        coreDebugDumpPtr->Header.TimeStamp,
                                        objectServer, systemBus, node);
+    amd::ras::util::decode_service::submitCper(
+        systemBus,
+        RAS_DIR + amd::ras::util::cper::findCperFilename(errCount, node),
+        socNum);
     amd::ras::util::cper::updateIndexFile(errCount, node);
 
     std::string rasErrMsg =
@@ -2537,6 +2554,10 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
         }
         amd::ras::util::cper::exportToDBus(errCount, rcd->Header.TimeStamp,
                                            objectServer, systemBus, node);
+        amd::ras::util::decode_service::submitCper(
+            systemBus,
+            RAS_DIR + amd::ras::util::cper::findCperFilename(errCount, node),
+            socNum);
         amd::ras::util::cper::updateIndexFile(errCount, node);
 
         bool recoveryAction = true;
@@ -2996,6 +3017,11 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                 amd::ras::util::cper::exportToDBus(
                     errCount, rcd->Header.TimeStamp, objectServer, systemBus,
                     node);
+                amd::ras::util::decode_service::submitCper(
+                    systemBus,
+                    RAS_DIR +
+                        amd::ras::util::cper::findCperFilename(errCount, node),
+                    socNum);
                 amd::ras::util::cper::updateIndexFile(errCount, node);
 
                 bool recoveryAction = true;

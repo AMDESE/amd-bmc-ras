@@ -3,6 +3,7 @@
 #include "config_manager.hpp"
 #include "oem_cper.hpp"
 #include "utils/cper.hpp"
+#include "utils/decode_service.hpp"
 #include "utils/util.hpp"
 
 extern "C"
@@ -933,6 +934,10 @@ void Manager::handleFatalOrShutdownError(
 
     amd::ras::util::cper::exportToDBus(errCount, rcd->Header.TimeStamp,
                                        objectServer, systemBus, node);
+    amd::ras::util::decode_service::submitCper(
+        systemBus,
+        RAS_DIR + amd::ras::util::cper::findCperFilename(errCount, node),
+        socNum);
     amd::ras::util::cper::updateIndexFile(errCount, node);
 
     // Trigger recovery action based on configured policy
@@ -975,6 +980,10 @@ void Manager::handleSysMgmtCtrlError(uint8_t socNum)
     amd::ras::util::cper::createFile(rcd, fatalErr, 2, errCount, node);
     amd::ras::util::cper::exportToDBus(errCount, rcd->Header.TimeStamp,
                                        objectServer, systemBus, node);
+    amd::ras::util::decode_service::submitCper(
+        systemBus,
+        RAS_DIR + amd::ras::util::cper::findCperFilename(errCount, node),
+        socNum);
     amd::ras::util::cper::updateIndexFile(errCount, node);
 
     amd::ras::config::Manager::AttributeValue resetSignalVal =
@@ -1408,6 +1417,10 @@ bool Manager::harvestRuntimeOverflowSections(
                                      node);
     amd::ras::util::cper::exportToDBus(errCount, ptr->Header.TimeStamp,
                                        objectServer, systemBus, node);
+    amd::ras::util::decode_service::submitCper(
+        systemBus,
+        RAS_DIR + amd::ras::util::cper::findCperFilename(errCount, node),
+        socNum);
     amd::ras::util::cper::updateIndexFile(errCount, node);
 
     delete[] ptr->SectionDescriptor;
@@ -1520,6 +1533,10 @@ bool Manager::harvestRuntimeOverflowSections(
                                      node);
     amd::ras::util::cper::exportToDBus(errCount, ptr->Header.TimeStamp,
                                        objectServer, systemBus, node);
+    amd::ras::util::decode_service::submitCper(
+        systemBus,
+        RAS_DIR + amd::ras::util::cper::findCperFilename(errCount, node),
+        socNum);
     amd::ras::util::cper::updateIndexFile(errCount, node);
 
     delete[] ptr->SectionDescriptor;

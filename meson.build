@@ -64,6 +64,14 @@ sources = [
     'src/crashdump_manager.cpp',
 ]
 
+if get_option('decode-service').enabled()
+    cpp_args += [
+        '-DDECODE_SERVICE',
+        '-DCPER_INVENTORY_PREFIX="' + get_option('cper-inventory-prefix') + '"',
+    ]
+    sources += ['src/utils/decode_service.cpp']
+endif
+
 executable(
     'amd-ras-manager',
     sources,
