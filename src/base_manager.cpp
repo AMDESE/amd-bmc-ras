@@ -112,6 +112,16 @@ void Manager::getCpuSocketInfo()
                            std::to_string(socIndex[i]);
     }
 
+    for (size_t i = 0; i < cpuCount; i++)
+    {
+        readCpuIdentity(i, false);
+    }
+
+    amd::ras::util::cper::createIndexFile(errCount, node);
+}
+
+void Manager::readCpuIdentity(size_t index, bool onlyMissing)
+{
     amd::ras::config::Manager::AttributeValue uCodeVersion =
         configMgr.getAttribute("HarvestMicrocode");
     bool* uCodeVersionFlag = std::get_if<bool>(&uCodeVersion);
@@ -120,50 +130,78 @@ void Manager::getCpuSocketInfo()
         configMgr.getAttribute("HarvestPPIN");
     bool* harvestPpinFlag = std::get_if<bool>(&harvestPpin);
 
-    if (*uCodeVersionFlag == true || *harvestPpinFlag == true)
+    bool readMicrocode = (uCodeVersionFlag != nullptr) && *uCodeVersionFlag &&
+                         (!onlyMissing || uCode[index] == 0);
+    bool readPpin = (harvestPpinFlag != nullptr) && *harvestPpinFlag &&
+                    (!onlyMissing || ppin[index] == 0);
+
+    if (!readMicrocode && !readPpin)
     {
-        sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+        return;
+    }
 
-        for (size_t i = 0; i < cpuCount; i++)
+    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+
+    if (readMicrocode)
+    {
+        try
         {
-            if (*uCodeVersionFlag == true)
-            {
-                try
-                {
-                    uint32_t microCode = amd::ras::util::getProperty<uint32_t>(
-                        bus, inventoryService.data(), inventoryPath[i].c_str(),
-                        inventoryInterface.data(), "Microcode");
+            uint32_t microCode = amd::ras::util::getProperty<uint32_t>(
+                bus, inventoryService.data(), inventoryPath[index].c_str(),
+                inventoryInterface.data(), "Microcode");
 
-                    uCode[i] = microCode;
-                    lg2::info("Microcode = {VAL}", "VAL", lg2::hex, microCode);
-                }
-                catch (const std::exception& e)
-                {
-                    lg2::error("Failed to get Microcode property: {ERR}", "ERR",
-                               e.what());
-                }
+            uCode[index] = microCode;
+            if (microCode == 0)
+            {
+                lg2::error("Microcode not available for {PATH}", "PATH",
+                           inventoryPath[index]);
             }
-
-            if (*harvestPpinFlag == true)
+            else
             {
-                try
-                {
-                    uint64_t ppinVal = amd::ras::util::getProperty<uint64_t>(
-                        bus, inventoryService.data(), inventoryPath[i].c_str(),
-                        inventoryInterface.data(), "Id");
-
-                    ppin[i] = ppinVal;
-                    lg2::info("PPIN = {VAL}", "VAL", lg2::hex, ppinVal);
-                }
-                catch (const std::exception& e)
-                {
-                    lg2::error("Failed to get PPIN property: {ERR}", "ERR",
-                               e.what());
-                }
+                lg2::info("Microcode = {VAL}", "VAL", lg2::hex, microCode);
             }
         }
+        catch (const std::exception& e)
+        {
+            lg2::error("Failed to get Microcode property: {ERR}", "ERR",
+                       e.what());
+        }
     }
-    amd::ras::util::cper::createIndexFile(errCount, node);
+
+    if (readPpin)
+    {
+        try
+        {
+            uint64_t ppinVal = amd::ras::util::getProperty<uint64_t>(
+                bus, inventoryService.data(), inventoryPath[index].c_str(),
+                inventoryInterface.data(), "Id");
+
+            ppin[index] = ppinVal;
+            if (ppinVal == 0)
+            {
+                lg2::error("PPIN not available for {PATH}", "PATH",
+                           inventoryPath[index]);
+            }
+            else
+            {
+                lg2::info("PPIN = {VAL}", "VAL", lg2::hex, ppinVal);
+            }
+        }
+        catch (const std::exception& e)
+        {
+            lg2::error("Failed to get PPIN property: {ERR}", "ERR", e.what());
+        }
+    }
+}
+
+void Manager::refreshCpuIdentity(uint8_t socNum)
+{
+    // The inventory is published after host POST, which can be later than
+    // service start; re-read any value still missing when a record is built.
+    if (socNum < cpuCount)
+    {
+        readCpuIdentity(socNum, true);
+    }
 }
 
 Manager::Manager(amd::ras::config::Manager& manager,
@@ -510,6 +548,7 @@ void Manager::harvestBreakEvent(uint8_t socNum)
 
     amd::ras::util::cper::dumpProcessorError(rcd, socNum, cpuId, socIndex,
                                              breakEventBanks);
+    refreshCpuIdentity(socNum);
     amd::ras::util::cper::dumpContext(rcd, breakEventBanks, 0, socNum, ppin,
                                       uCode, breakEventContext);
 

@@ -175,6 +175,19 @@ class Manager
      */
     void getCpuSocketInfo();
 
+    /** @brief Read the microcode version and PPIN of one CPU socket.
+     *
+     *  @param[in] index - Index into the per-socket arrays.
+     *  @param[in] onlyMissing - Skip values that are already non-zero.
+     */
+    void readCpuIdentity(size_t index, bool onlyMissing);
+
+    /** @brief Re-read missing CPU identity values before building a record.
+     *
+     *  @param[in] socNum - Socket whose record is being built.
+     */
+    void refreshCpuIdentity(uint8_t socNum);
+
     /** @brief Load platform configuration from JSON.
      *
      *  @details This API reads the platform configuration JSON file
