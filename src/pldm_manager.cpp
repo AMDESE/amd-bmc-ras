@@ -1052,12 +1052,12 @@ void Manager::harvestMcaDataBanksOverPldm(
         lg2::info("No valid MCA banks found in PLDM event data. "
                   "Harvesting additional debug log ID dumps only.");
     }
-    if (numMcaBanks > 32)
+    if (numMcaBanks > maxMcaBanks)
     {
         lg2::warning("Invalid MCA bank count {COUNT} from PLDM data, "
-                     "clamping to 32",
-                     "COUNT", numMcaBanks);
-        numMcaBanks = 32;
+                     "clamping to {MAX}",
+                     "COUNT", numMcaBanks, "MAX", maxMcaBanks);
+        numMcaBanks = maxMcaBanks;
     }
 
     lg2::info("Number of Valid MCA bank: {NUMBANKS}", "NUMBANKS", numMcaBanks);
@@ -1069,32 +1069,45 @@ void Manager::harvestMcaDataBanksOverPldm(
                                       ppin, uCode, contextType);
 
     // ---------------------------------------------------------------
-    // Step 3: Copy MCA bank data into CrashDumpData.
+    // Step 3: Copy MCA bank data into the variable-length MCA payload.
+    //         dumpContext() sized that payload from numMcaBanks.
     // ---------------------------------------------------------------
-    constexpr uint16_t maxOffset32 = mcaDataBankLen / 4;
-    for (uint16_t n = 0; n < numMcaBanks; n++)
+    AmdFatalErrorData& mcaRecord = rcd->ErrorRecord[socNum];
+    const uint16_t storedBanks = mcaRecord.mcaBankCount;
+    const uint16_t storedBankBytes = mcaRecord.mcaBytesPerBank;
+    for (uint16_t n = 0; n < storedBanks; n++)
     {
+        uint8_t* dest = amd::ras::util::cper::fatalMcaBank(mcaRecord, n);
+        if (dest == nullptr)
+        {
+            continue;
+        }
+
         size_t bankStart =
             mcaDataOffset + static_cast<size_t>(n) * mcaDataBankLen;
-        if (bankStart + mcaDataBankLen <= eventData.size())
+        const size_t bankBytes = storedBankBytes;
+        if (bankStart + bankBytes <= eventData.size())
         {
-            std::memcpy(rcd->ErrorRecord[socNum].CrashDumpData[n].McaData,
-                        &eventData[bankStart], mcaDataBankLen);
+            std::memcpy(dest, &eventData[bankStart], bankBytes);
         }
         else
         {
             size_t available = (bankStart < eventData.size())
                                    ? (eventData.size() - bankStart)
                                    : 0;
+            if (available > bankBytes)
+            {
+                available = bankBytes;
+            }
             if (available > 0)
             {
-                std::memcpy(rcd->ErrorRecord[socNum].CrashDumpData[n].McaData,
-                            &eventData[bankStart], available);
+                std::memcpy(dest, &eventData[bankStart], available);
             }
             for (uint32_t w = static_cast<uint32_t>(available / 4);
-                 w < maxOffset32; w++)
+                 w < (bankBytes / sizeof(uint32_t)); w++)
             {
-                rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[w] = badData;
+                amd::ras::util::cper::setFatalMcaDword(mcaRecord, n, w,
+                                                       badData);
             }
         }
     }
@@ -1209,7 +1222,7 @@ void Manager::harvestMcaDataBanksOverPldm(
         }
     }
 
-    processMcaBankSignatures(socNum, numMcaBanks);
+    processMcaBankSignatures(socNum, storedBanks);
 }
 
 bool Manager::readEventDataFromFd(int fd, uint32_t eventDataSize,

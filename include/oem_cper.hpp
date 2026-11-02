@@ -5,7 +5,11 @@ extern "C"
 #include "libcper/Cper.h"
 }
 
+// Bytes of MCA register state stored for one bank. PMFW reports this length
+// as err_log_len. RegisterArraySize is the bank count times this length.
 constexpr uint8_t mcaDataBankLen = 128;
+// Fatal OOB MCA harvest can report up to 256 banks (mailbox instance 0-255).
+constexpr uint16_t maxMcaBanks = 256;
 constexpr uint16_t debugDumpDataLen = 12124;
 constexpr size_t mcaPspSynd1LoCode = 80;
 constexpr size_t mcaPspSynd1HiCode = 84;
@@ -19,13 +23,6 @@ constexpr size_t length96 = 96;
 // (AmdPcieErrorData::PcieData below). The PMFW reports a fixed-size PCIe
 // error record of 91 DWORDs (364 bytes), so this bounds the PcieData array.
 constexpr size_t length91 = 91;
-
-struct CrashdumpData
-{
-    uint32_t McaData[mcaDataBankLen];
-} __attribute__((packed));
-
-using CRASHDUMP_T = CrashdumpData;
 
 struct LastTransAddress
 {
@@ -41,7 +38,10 @@ struct DfDump
 
 using DF_DUMP = DfDump;
 
-struct AmdFatalErrorData
+// On-disk prefix of a fatal section, through PPIN. The MCA payload is not
+// part of this struct: its length is RegisterArraySize, and it is written
+// immediately after this prefix.
+struct AmdFatalMcaPrefix
 {
     EFI_IA32_X64_PROCESSOR_ERROR_RECORD ProcError;
     uint32_t SignatureID[length8];
@@ -50,13 +50,29 @@ struct AmdFatalErrorData
     uint16_t RegisterArraySize;
     uint32_t MicrocodeVersion;
     uint64_t Ppin;
-    CRASHDUMP_T CrashDumpData[length32];
+} __attribute__((packed));
+
+// Fatal section body. On disk the order is prefix, then RegisterArraySize
+// bytes of MCA banks, then DfDumpData, Reserved1, and DebugLogIdData.
+// mcaBanks holds that MCA payload in memory. A 32-bank record stores
+// 32 * 128 bytes; a 256-bank record stores 256 * 128 bytes.
+struct AmdFatalErrorData : AmdFatalMcaPrefix
+{
+    uint16_t mcaBankCount;
+    uint16_t mcaBytesPerBank;
+    uint8_t* mcaBanks;
     DF_DUMP DfDumpData;
     uint32_t Reserved1[length96];
     uint32_t DebugLogIdData[debugDumpDataLen];
-} __attribute__((packed));
+};
 
 using EFI_AMD_FATAL_ERROR_DATA = AmdFatalErrorData;
+
+// Fatal section size when no MCA banks are present. The file writer adds
+// RegisterArraySize before the DF dump and debug log.
+constexpr size_t fatalFixedSectionBytes =
+    sizeof(AmdFatalMcaPrefix) + sizeof(DF_DUMP) +
+    (length96 * sizeof(uint32_t)) + (debugDumpDataLen * sizeof(uint32_t));
 
 struct RuntimeErrorInfo
 {
