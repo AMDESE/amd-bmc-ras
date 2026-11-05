@@ -845,8 +845,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
 
             sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i",
                             LOG_ERR, "REDFISH_MESSAGE_ID=%s",
-                            "OpenBMC.0.1.AtScaleDebugConnected",
-                            "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            rasErrMsg.c_str(), NULL);
         }
     }
     else if (errorType == fatalErr)
@@ -869,8 +869,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
 
             sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i",
                             LOG_ERR, "REDFISH_MESSAGE_ID=%s",
-                            "OpenBMC.0.1.AtScaleDebugConnected",
-                            "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            rasErrMsg.c_str(), NULL);
         }
     }
     else if (errorType == runtimePcieErr)
@@ -891,8 +891,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
 
             sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i",
                             LOG_ERR, "REDFISH_MESSAGE_ID=%s",
-                            "OpenBMC.0.1.AtScaleDebugConnected",
-                            "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            rasErrMsg.c_str(), NULL);
         }
     }
     else if (errorType == coreDebugDumpErr)
@@ -927,8 +927,8 @@ void createFile(const std::shared_ptr<PtrType>& data,
 
             sd_journal_send("MESSAGE=%s", rasErrMsg.c_str(), "PRIORITY=%i",
                             LOG_INFO, "REDFISH_MESSAGE_ID=%s",
-                            "OpenBMC.0.1.AtScaleDebugConnected",
-                            "REDFISH_MESSAGE_ARGS=%s", rasErrMsg.c_str(), NULL);
+                            "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                            rasErrMsg.c_str(), NULL);
         }
     }
     fclose(file);
