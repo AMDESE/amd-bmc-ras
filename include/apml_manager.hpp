@@ -13,6 +13,8 @@ extern "C"
 #include <boost/asio/steady_timer.hpp>
 #include <gpiod.hpp>
 
+#include <filesystem>
+
 namespace amd
 {
 namespace ras
@@ -335,8 +337,20 @@ class Manager : public amd::ras::Manager
     /** @brief Merge autonomous MP trace data from amd-traces service into CPER.
      *
      *  @param[in] fullPath - Full path to the CPER file to merge into.
+     *  @param[in] notBefore - A file is merged only if it was written at or
+     *                         after this time, whether it is already
+     *                         published or published while waiting; a file
+     *                         whose time cannot be read is not merged.
+     *                         file_time_type::min() takes any file.
+     *  @param[in] maxTimeoutSec - Upper bound on the wait for amd-traces.
+     *
+     *  @note Blocks the event loop while it connects to the bus, reads the
+     *        property (at most 2 s) and waits (at most maxTimeoutSec),
+     *        before the CPER is exported and the recovery action runs.
      */
-    void mergeAutonomousTraceData(const std::string& fullPath);
+    void mergeAutonomousTraceData(const std::string& fullPath,
+                                  std::filesystem::file_time_type notBefore,
+                                  int maxTimeoutSec);
 
     /** @brief Check the validity of MCA banks.
      *
