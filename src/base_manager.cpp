@@ -466,6 +466,11 @@ void Manager::cleanupFatalCperRecord()
         }
         if (rcd->ErrorRecord != nullptr)
         {
+            const uint16_t sections = rcd->Header.SectionCount;
+            for (uint16_t i = 0; i < sections; i++)
+            {
+                amd::ras::util::cper::releaseFatalMcaBanks(rcd->ErrorRecord[i]);
+            }
             delete[] rcd->ErrorRecord;
             rcd->ErrorRecord = nullptr;
         }
@@ -486,9 +491,7 @@ void Manager::initFatalCperRecord(uint16_t sectionCount)
 
     if (rcd->ErrorRecord == nullptr)
     {
-        rcd->ErrorRecord = new EFI_AMD_FATAL_ERROR_DATA[sectionCount];
-        std::memset(rcd->ErrorRecord, 0,
-                    sectionCount * sizeof(EFI_AMD_FATAL_ERROR_DATA));
+        rcd->ErrorRecord = new EFI_AMD_FATAL_ERROR_DATA[sectionCount]();
     }
 
     if (!fatalDescriptorsInitialized)
@@ -515,39 +518,30 @@ void Manager::processMcaBankSignatures(size_t sectionIdx, uint16_t numBanks)
     uint32_t statusOffsetLo = std::stoul((*sigIDOffset)[4], nullptr, base16);
     uint32_t statusOffsetHi = std::stoul((*sigIDOffset)[5], nullptr, base16);
 
+    AmdFatalErrorData& record = rcd->ErrorRecord[sectionIdx];
     for (uint16_t n = 0; n < numBanks; n++)
     {
-        uint32_t mcaStatusLo = rcd->ErrorRecord[sectionIdx]
-                                   .CrashDumpData[n]
-                                   .McaData[statusOffsetLo / 4];
-        uint32_t mcaStatusHi = rcd->ErrorRecord[sectionIdx]
-                                   .CrashDumpData[n]
-                                   .McaData[statusOffsetHi / 4];
-        uint32_t mcaIpidLo = rcd->ErrorRecord[sectionIdx]
-                                 .CrashDumpData[n]
-                                 .McaData[ipidOffsetLo / 4];
-        uint32_t mcaIpidHi = rcd->ErrorRecord[sectionIdx]
-                                 .CrashDumpData[n]
-                                 .McaData[ipidOffsetHi / 4];
-        uint32_t mcaSyndLo = rcd->ErrorRecord[sectionIdx]
-                                 .CrashDumpData[n]
-                                 .McaData[syndOffsetLo / 4];
-        uint32_t mcaSyndHi = rcd->ErrorRecord[sectionIdx]
-                                 .CrashDumpData[n]
-                                 .McaData[syndOffsetHi / 4];
+        uint32_t mcaStatusLo = amd::ras::util::cper::fatalMcaDwordAt(
+            record, n, statusOffsetLo / 4);
+        uint32_t mcaStatusHi = amd::ras::util::cper::fatalMcaDwordAt(
+            record, n, statusOffsetHi / 4);
+        uint32_t mcaIpidLo =
+            amd::ras::util::cper::fatalMcaDwordAt(record, n, ipidOffsetLo / 4);
+        uint32_t mcaIpidHi =
+            amd::ras::util::cper::fatalMcaDwordAt(record, n, ipidOffsetHi / 4);
+        uint32_t mcaSyndLo =
+            amd::ras::util::cper::fatalMcaDwordAt(record, n, syndOffsetLo / 4);
+        uint32_t mcaSyndHi =
+            amd::ras::util::cper::fatalMcaDwordAt(record, n, syndOffsetHi / 4);
 
-        uint32_t mcaPspSynd1Lo = rcd->ErrorRecord[sectionIdx]
-                                     .CrashDumpData[n]
-                                     .McaData[mcaPspSynd1LoCode / 4];
-        uint32_t mcaPspSynd1Hi = rcd->ErrorRecord[sectionIdx]
-                                     .CrashDumpData[n]
-                                     .McaData[mcaPspSynd1HiCode / 4];
-        uint32_t mcaPspSynd2Lo = rcd->ErrorRecord[sectionIdx]
-                                     .CrashDumpData[n]
-                                     .McaData[mcaPspSynd2LoCode / 4];
-        uint32_t mcaPspSynd2Hi = rcd->ErrorRecord[sectionIdx]
-                                     .CrashDumpData[n]
-                                     .McaData[mcaPspSynd2HiCode / 4];
+        uint32_t mcaPspSynd1Lo = amd::ras::util::cper::fatalMcaDwordAt(
+            record, n, mcaPspSynd1LoCode / 4);
+        uint32_t mcaPspSynd1Hi = amd::ras::util::cper::fatalMcaDwordAt(
+            record, n, mcaPspSynd1HiCode / 4);
+        uint32_t mcaPspSynd2Lo = amd::ras::util::cper::fatalMcaDwordAt(
+            record, n, mcaPspSynd2LoCode / 4);
+        uint32_t mcaPspSynd2Hi = amd::ras::util::cper::fatalMcaDwordAt(
+            record, n, mcaPspSynd2HiCode / 4);
 
         if ((mcaStatusHi & (1 << 25)) && (mcaStatusHi & (1 << 23)))
         {
@@ -558,9 +552,8 @@ void Manager::processMcaBankSignatures(size_t sectionIdx, uint16_t numBanks)
 
         constexpr size_t mcaConfigLoOffset = 0x20;
         constexpr uint32_t mcaFruTextInMcaBit = 9;
-        uint32_t mcaConfigLo = rcd->ErrorRecord[sectionIdx]
-                                   .CrashDumpData[n]
-                                   .McaData[mcaConfigLoOffset / 4];
+        uint32_t mcaConfigLo = amd::ras::util::cper::fatalMcaDwordAt(
+            record, n, mcaConfigLoOffset / 4);
 
         if ((mcaConfigLo & (1U << mcaFruTextInMcaBit)) != 0)
         {
@@ -597,8 +590,15 @@ void Manager::harvestBreakEvent(uint8_t socNum)
 
     amd::ras::util::cper::dumpProcessorError(rcd, sectionIdx, cpuId,
                                              breakEventBanks);
-    amd::ras::util::cper::dumpContext(rcd, breakEventBanks, 0, sectionIdx, ppin,
-                                      uCode, breakEventContext);
+    // Eight SBRMI bytes are stored as 32-bit words, so the MCA payload is
+    // 32 bytes. dumpContext records that length in RegisterArraySize.
+    constexpr uint16_t breakEventBytes = 32;
+    if (!amd::ras::util::cper::dumpContext(rcd, breakEventBanks,
+                                           breakEventBytes, sectionIdx, ppin,
+                                           uCode, breakEventContext))
+    {
+        return;
+    }
 
     for (uint16_t section = 0; section < sectionCount; ++section)
     {
@@ -632,17 +632,14 @@ void Manager::harvestBreakEvent(uint8_t socNum)
         {
             lg2::error("Socket {SOC}: Failed to read register: {REGISTER}",
                        "SOC", socNum, "REGISTER", lg2::hex, reg);
-            rcd->ErrorRecord[sectionIdx].CrashDumpData[0].McaData[offset] =
-                badData;
+            amd::ras::util::cper::setFatalMcaDword(rcd->ErrorRecord[sectionIdx],
+                                                   0, offset, badData);
             continue;
         }
 
-        rcd->ErrorRecord[sectionIdx].CrashDumpData[0].McaData[offset] =
-            regValue;
+        amd::ras::util::cper::setFatalMcaDword(rcd->ErrorRecord[sectionIdx], 0,
+                                               offset, regValue);
     }
-
-    // Keep break-event records aligned with existing APML/PLDM CPER format.
-    rcd->ErrorRecord[sectionIdx].RegisterArraySize = 32;
 }
 
 } // namespace ras
