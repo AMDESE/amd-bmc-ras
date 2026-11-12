@@ -19,6 +19,7 @@ extern "C"
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace amd
@@ -852,7 +853,11 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
 
     uint16_t sectionCount = p0Inst.number_of_inst + p1Inst.number_of_inst;
 
+    // Default to non-fatal uncorrected so a section whose severity is not
+    // classified is never treated as correctable.
     severity = new uint32_t[sectionCount];
+    std::fill_n(severity, sectionCount,
+                amd::ras::util::cper::sevNonFatalUncorrected);
     checkInfo = new uint64_t[sectionCount];
 
     if (errorPollingType == mcaErr)
@@ -919,7 +924,10 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         auto cperFilePath = amd::ras::util::cper::createFile(
             mcaPtr, runtimeMcaErr, sectionCount, errCount, node);
 
-        if (!cperFilePath.empty())
+        // Correctable-only records stay on the BMC; they are not sent to
+        // decode-service so no Redfish event is generated for them.
+        if (!cperFilePath.empty() &&
+            highestSeverity != amd::ras::util::cper::sevNonFatalCorrected)
         {
             amd::ras::util::decode_service::submitCperForProcessing(
                 *conn, cperFilePath, static_cast<uint8_t>(socIndex[0]));
@@ -999,7 +1007,10 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         auto cperFilePath = amd::ras::util::cper::createFile(
             dramPtr, runtimeDramErr, sectionCount, errCount, node);
 
-        if (!cperFilePath.empty())
+        // Correctable-only records stay on the BMC; they are not sent to
+        // decode-service so no Redfish event is generated for them.
+        if (!cperFilePath.empty() &&
+            highestSeverity != amd::ras::util::cper::sevNonFatalCorrected)
         {
             amd::ras::util::decode_service::submitCperForProcessing(
                 *conn, cperFilePath, static_cast<uint8_t>(socIndex[0]));
@@ -1046,7 +1057,7 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         }
 
         amd::ras::util::cper::calculateSeverity(
-            severity, sectionCount, &highestSeverity, runtimeDramErr);
+            severity, sectionCount, &highestSeverity, runtimePcieErr);
 
         amd::ras::util::cper::dumpHeader(pciePtr, sectionCount, highestSeverity,
                                          runtimePcieErr, boardId, recordId);
@@ -1057,7 +1068,10 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         auto cperFilePath = amd::ras::util::cper::createFile(
             pciePtr, runtimePcieErr, sectionCount, errCount, node);
 
-        if (!cperFilePath.empty())
+        // Correctable-only records stay on the BMC; they are not sent to
+        // decode-service so no Redfish event is generated for them.
+        if (!cperFilePath.empty() &&
+            highestSeverity != amd::ras::util::cper::sevNonFatalCorrected)
         {
             amd::ras::util::decode_service::submitCperForProcessing(
                 *conn, cperFilePath, static_cast<uint8_t>(socIndex[0]));
