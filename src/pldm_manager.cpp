@@ -588,6 +588,10 @@ void Manager::registerEventHandler()
 
     registerSysMgmtCtrlErrAlertHandler();
 
+    // Optional Turin PMIC and HPM lines. A missing GPIO is skipped and does
+    // not change the PLDM alert path registered above.
+    registerPlatformGpioAlerts(io);
+
     reconcilePmfwState();
 }
 

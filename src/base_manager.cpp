@@ -10,6 +10,7 @@ extern "C"
 #include "linux/amd-apml.h"
 }
 
+#include <syslog.h>
 #include <systemd/sd-journal.h>
 #include <unistd.h>
 
@@ -18,8 +19,11 @@ extern "C"
 #include <phosphor-logging/lg2.hpp>
 #include <sdbusplus/bus/match.hpp>
 
+#include <cstdlib>
 #include <fstream>
 #include <set>
+#include <string>
+#include <utility>
 
 constexpr size_t base16 = 16;
 constexpr size_t maxByte = 0xFF;
@@ -643,6 +647,191 @@ void Manager::harvestBreakEvent(uint8_t socNum)
 
     // Keep break-event records aligned with existing APML/PLDM CPER format.
     rcd->ErrorRecord[sectionIdx].RegisterArraySize = 32;
+}
+
+constexpr const char* hpmFpgaDumpCommand =
+    "/usr/sbin/hpm-fpga-dump.sh > /var/lib/amd-ras/fpga_dump.txt 2>&1 &";
+
+bool Manager::armPlatformGpio(PlatformGpioWatch& watch,
+                              boost::asio::io_context& io)
+{
+    try
+    {
+        watch.line = gpiod::find_line(watch.name);
+        if (!watch.line)
+        {
+            lg2::warning("Platform GPIO {GPIO} is not present; skipping",
+                         "GPIO", watch.name);
+            return false;
+        }
+
+        watch.line.request({"RAS", gpiod::line_request::EVENT_BOTH_EDGES, 0});
+
+        const int gpioFd = watch.line.event_get_fd();
+        if (gpioFd < 0)
+        {
+            lg2::error(
+                "Failed to get the file descriptor for platform GPIO {GPIO}; "
+                "skipping",
+                "GPIO", watch.name);
+            watch.line.release();
+            return false;
+        }
+
+        watch.descriptor =
+            std::make_unique<boost::asio::posix::stream_descriptor>(io);
+        watch.descriptor->assign(gpioFd);
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to arm platform GPIO {GPIO}: {ERROR}. Skipping",
+                   "GPIO", watch.name, "ERROR", e.what());
+        if (watch.line)
+        {
+            try
+            {
+                watch.line.release();
+            }
+            catch (const std::exception& releaseError)
+            {
+                lg2::debug("Releasing platform GPIO {GPIO} failed: {ERROR}",
+                           "GPIO", watch.name, "ERROR", releaseError.what());
+            }
+        }
+        watch.descriptor.reset();
+        return false;
+    }
+
+    lg2::info("Armed platform GPIO {GPIO}", "GPIO", watch.name);
+    return true;
+}
+
+void Manager::registerPlatformGpioAlerts(boost::asio::io_context& io)
+{
+    struct GpioSpec
+    {
+        const char* name;
+        const char* message;
+        bool dumpHpmRegisters;
+    };
+
+    // P0 is always present on Turin. P1 follows the configured socket count.
+    // HPM lockout is a board line, not a per-socket alert.
+    std::vector<GpioSpec> specs = {
+        {"P0_DIMM_AF_ERROR",
+         "P0 DIMM A-F PMIC FATAL Error detected. System will be power off",
+         false},
+        {"P0_DIMM_GL_ERROR",
+         "P0 DIMM G-L PMIC FATAL Error detected. System will be power off",
+         false},
+    };
+
+    if (cpuCount > 1)
+    {
+        specs.push_back(
+            {"P1_DIMM_AF_ERROR",
+             "P1 DIMM A-F PMIC FATAL Error detected. System will be power off",
+             false});
+        specs.push_back(
+            {"P1_DIMM_GL_ERROR",
+             "P1 DIMM G-L PMIC FATAL Error detected. System will be power off",
+             false});
+    }
+
+    specs.push_back(
+        {"HPM_FPGA_LOCKOUT",
+         "HPM FPGA detected fatal error. FPGA registers dumped to "
+         "/var/lib/amd-ras/fpga_dump.txt. A/C power cycle to recover",
+         true});
+
+    for (const auto& spec : specs)
+    {
+        auto watch = std::make_unique<PlatformGpioWatch>();
+        watch->name = spec.name;
+        watch->message = spec.message;
+        watch->dumpHpmRegisters = spec.dumpHpmRegisters;
+        if (!armPlatformGpio(*watch, io))
+        {
+            continue;
+        }
+
+        platformGpioWatches.push_back(std::move(watch));
+        watchPlatformGpio(platformGpioWatches.size() - 1);
+    }
+}
+
+void Manager::watchPlatformGpio(size_t index)
+{
+    if ((index >= platformGpioWatches.size()) ||
+        (platformGpioWatches[index] == nullptr) ||
+        (platformGpioWatches[index]->descriptor == nullptr) ||
+        !platformGpioWatches[index]->descriptor->is_open())
+    {
+        return;
+    }
+
+    platformGpioWatches[index]->descriptor->async_wait(
+        boost::asio::posix::stream_descriptor::wait_read,
+        [this, index](const boost::system::error_code& ec) {
+            if (ec)
+            {
+                if (ec == boost::asio::error::operation_aborted)
+                {
+                    lg2::debug("Platform GPIO handler canceled");
+                    return;
+                }
+                const std::string name = (index < platformGpioWatches.size() &&
+                                          platformGpioWatches[index] != nullptr)
+                                             ? platformGpioWatches[index]->name
+                                             : std::string("unknown");
+                lg2::error("Platform GPIO {GPIO} wait failed: {ERROR}", "GPIO",
+                           name, "ERROR", ec.message());
+                return;
+            }
+
+            handlePlatformGpioEvent(index);
+            watchPlatformGpio(index);
+        });
+}
+
+void Manager::handlePlatformGpioEvent(size_t index)
+{
+    if ((index >= platformGpioWatches.size()) ||
+        (platformGpioWatches[index] == nullptr))
+    {
+        return;
+    }
+
+    PlatformGpioWatch& watch = *platformGpioWatches[index];
+
+    try
+    {
+        const gpiod::line_event gpioLineEvent = watch.line.event_read();
+        if (gpioLineEvent.event_type != gpiod::line_event::RISING_EDGE)
+        {
+            return;
+        }
+
+        lg2::info("Rising edge on platform GPIO {GPIO}", "GPIO", watch.name);
+        sd_journal_send("MESSAGE=%s", watch.message.c_str(), "PRIORITY=%i",
+                        LOG_ERR, "REDFISH_MESSAGE_ID=%s",
+                        "OpenBMC.0.1.CPUError", "REDFISH_MESSAGE_ARGS=%s",
+                        watch.message.c_str(), NULL);
+
+        if (watch.dumpHpmRegisters)
+        {
+            const int ret = std::system(hpmFpgaDumpCommand);
+            if (ret == -1)
+            {
+                lg2::error("Failed to trigger HPM FPGA register dump");
+            }
+        }
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Platform GPIO {GPIO} handling failed: {ERROR}", "GPIO",
+                   watch.name, "ERROR", e.what());
+    }
 }
 
 } // namespace ras
