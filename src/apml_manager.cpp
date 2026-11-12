@@ -684,6 +684,10 @@ void Manager::registerEventHandler()
         }
     }
 
+    // Optional Turin PMIC and HPM lines. A missing GPIO is skipped and does
+    // not change the alert handlers registered above.
+    registerPlatformGpioAlerts(io);
+
     reconcilePmfwState();
 }
 

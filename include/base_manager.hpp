@@ -3,11 +3,17 @@
 #include "config_manager.hpp"
 #include "oem_cper.hpp"
 
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/posix/stream_descriptor.hpp>
+#include <gpiod.hpp>
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/bus/match.hpp>
 
 #include <algorithm>
+#include <memory>
 #include <mutex>
+#include <string>
+#include <vector>
 
 constexpr size_t socket1 = 1;
 constexpr size_t socket2 = 2;
@@ -299,6 +305,40 @@ class Manager
      *  and resets the shared pointer to nullptr.
      */
     void cleanupFatalCperRecord();
+
+    /** @brief One optional platform GPIO that is not part of the RAS alert
+     *         topology.
+     *
+     *  @details PMIC DIMM fatal lines and the HPM FPGA lockout line. A board
+     *  that does not expose the line is skipped.
+     */
+    struct PlatformGpioWatch
+    {
+        std::string name;
+        std::string message;
+        bool dumpHpmRegisters = false;
+        gpiod::line line;
+        std::unique_ptr<boost::asio::posix::stream_descriptor> descriptor;
+    };
+
+    /** @brief Arm PMIC and HPM GPIO handlers when the lines exist.
+     *
+     *  @details Tried after the transport alert path is already registered.
+     *  A missing line is logged and skipped. Failure here does not disarm
+     *  the Venice APML or PLDM alert handlers.
+     */
+    void registerPlatformGpioAlerts(boost::asio::io_context& io);
+
+    /** @brief Request one optional GPIO and store its event descriptor. */
+    bool armPlatformGpio(PlatformGpioWatch& watch, boost::asio::io_context& io);
+
+    /** @brief Wait for the next edge on an armed platform GPIO. */
+    void watchPlatformGpio(size_t index);
+
+    /** @brief Handle one edge on a PMIC or HPM GPIO. */
+    void handlePlatformGpioEvent(size_t index);
+
+    std::vector<std::unique_ptr<PlatformGpioWatch>> platformGpioWatches;
 };
 
 } // namespace ras
