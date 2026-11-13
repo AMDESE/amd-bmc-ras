@@ -926,11 +926,19 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
 
         // Correctable-only records stay on the BMC; they are not sent to
         // decode-service so no Redfish event is generated for them.
-        if (!cperFilePath.empty() &&
-            highestSeverity != amd::ras::util::cper::sevNonFatalCorrected)
+        if (!cperFilePath.empty())
         {
-            amd::ras::util::decode_service::submitCperForProcessing(
-                *conn, cperFilePath, static_cast<uint8_t>(socIndex[0]));
+            if (highestSeverity != amd::ras::util::cper::sevNonFatalCorrected)
+            {
+                amd::ras::util::decode_service::submitCperForProcessing(
+                    *conn, cperFilePath, static_cast<uint8_t>(socIndex[0]));
+            }
+            else
+            {
+                lg2::debug("Skipping decode-service submission for "
+                           "correctable-only CPER: {FILE}",
+                           "FILE", cperFilePath);
+            }
         }
 
         if (mcaPtr->SectionDescriptor != nullptr)
@@ -1009,11 +1017,19 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
 
         // Correctable-only records stay on the BMC; they are not sent to
         // decode-service so no Redfish event is generated for them.
-        if (!cperFilePath.empty() &&
-            highestSeverity != amd::ras::util::cper::sevNonFatalCorrected)
+        if (!cperFilePath.empty())
         {
-            amd::ras::util::decode_service::submitCperForProcessing(
-                *conn, cperFilePath, static_cast<uint8_t>(socIndex[0]));
+            if (highestSeverity != amd::ras::util::cper::sevNonFatalCorrected)
+            {
+                amd::ras::util::decode_service::submitCperForProcessing(
+                    *conn, cperFilePath, static_cast<uint8_t>(socIndex[0]));
+            }
+            else
+            {
+                lg2::debug("Skipping decode-service submission for "
+                           "correctable-only CPER: {FILE}",
+                           "FILE", cperFilePath);
+            }
         }
 
         if (dramPtr->SectionDescriptor != nullptr)
@@ -1070,11 +1086,19 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
 
         // Correctable-only records stay on the BMC; they are not sent to
         // decode-service so no Redfish event is generated for them.
-        if (!cperFilePath.empty() &&
-            highestSeverity != amd::ras::util::cper::sevNonFatalCorrected)
+        if (!cperFilePath.empty())
         {
-            amd::ras::util::decode_service::submitCperForProcessing(
-                *conn, cperFilePath, static_cast<uint8_t>(socIndex[0]));
+            if (highestSeverity != amd::ras::util::cper::sevNonFatalCorrected)
+            {
+                amd::ras::util::decode_service::submitCperForProcessing(
+                    *conn, cperFilePath, static_cast<uint8_t>(socIndex[0]));
+            }
+            else
+            {
+                lg2::debug("Skipping decode-service submission for "
+                           "correctable-only CPER: {FILE}",
+                           "FILE", cperFilePath);
+            }
         }
 
         if (pciePtr->SectionDescriptor != nullptr)
