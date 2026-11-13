@@ -52,6 +52,13 @@ constexpr uint8_t minorRevision = 0x0E;
  */
 std::string findCperFilename(size_t);
 std::string findCperFilename(size_t number, const std::string& node);
+
+/** @brief The base name of record num, ras-error<num>.cper; createFile()
+ *         adds an error-type prefix for runtime and core-debug-dump records,
+ *         and "node<N>-" when node is not "0".
+ */
+std::string getCperFilename(size_t num);
+
 /** @brief Creates an index file and reads the error count from it.
  *
  *  @details Creates an index file in the specified RAS directory using the

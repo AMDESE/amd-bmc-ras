@@ -20,6 +20,7 @@ extern "C"
 #include <phosphor-logging/lg2.hpp>
 #include <phosphor-logging/log.hpp>
 
+#include <cerrno>
 #include <chrono>
 #include <set>
 
@@ -2330,7 +2331,9 @@ bool Manager::checkIfCPUAlertsProcessed()
     return false;
 }
 
-void Manager::mergeAutonomousTraceData(const std::string& fullPath)
+void Manager::mergeAutonomousTraceData(
+    const std::string& fullPath, std::filesystem::file_time_type notBefore,
+    int maxTimeoutSec)
 {
     std::string tracePropName = (node == secondNodeId)
                                     ? "AutonomousSecondNodeFilePath"
@@ -2344,128 +2347,198 @@ void Manager::mergeAutonomousTraceData(const std::string& fullPath)
     // then to the file path on success or "" on error.
     //
     // Strategy:
-    //   1. Pre-check the property <E2><80><94> if amd-traces already finished
-    //      successfully, merge immediately without waiting.
-    //   2. If "PENDING" or "" (still working or not started yet),
-    //      fall through to signal-based wait.
-    //   3. Wait for signal-based wait to complete or timeout.
-    //   4. Merge the file if successful, log error if empty.
+    //   1. Use a private bus connection, so the wait does not dispatch this
+    //      daemon's own D-Bus calls and signals (they are handled after the
+    //      CPER is exported), and subscribe to the property's changes before
+    //      reading it, so an update made in between is not lost.
+    //   2. Read the property. If the read fails with anything but a
+    //      timeout (e.g. amd-traces is not on the bus), skip the merge. If
+    //      amd-traces already published a fresh file, merge it now. A
+    //      timeout (e.g. while amd-traces collects) falls through to the
+    //      wait.
+    //   3. Wait, up to maxTimeoutSec, for the first published value, in the
+    //      order received, that is "" or a fresh file.
+    //   4. Merge the file if successful, log a warning if amd-traces
+    //      published "" (its error result).
     //   5. Log timeout if wait timed out.
-    sdbusplus::bus::bus traceBus = sdbusplus::bus::new_default();
-    std::string autonomousFile;
-    bool merged = false;
+    //
+    // A file is fresh if it was written at or after notBefore; an older one
+    // is taken to be the previous alert's, still named by the property
+    // until amd-traces marks this alert PENDING, and a file whose time
+    // cannot be read is not fresh. The property carries no alert id, so a
+    // file another alert wrote at or after notBefore is taken.
+    sdbusplus::bus::bus traceBus = sdbusplus::bus::new_system();
+    std::vector<std::string> published;
 
-    // --- Step 1: Pre-check property value ---
+    auto isFresh = [notBefore](const std::string& file) {
+        if (notBefore == std::filesystem::file_time_type::min())
+        {
+            return true;
+        }
+        std::error_code ec;
+        auto written = std::filesystem::last_write_time(file, ec);
+        if (ec)
+        {
+            lg2::warning("Cannot read the time of {FILE}: {ERR}", "FILE", file,
+                         "ERR", ec.message());
+            return false;
+        }
+        if (written >= notBefore)
+        {
+            lg2::info("{FILE} was written {SEC}s after this alert's window "
+                      "opened",
+                      "FILE", file, "SEC",
+                      std::chrono::duration_cast<std::chrono::seconds>(
+                          written - notBefore)
+                          .count());
+            return true;
+        }
+        lg2::warning("{FILE} was written {SEC}s before this alert's window, "
+                     "not merging it",
+                     "FILE", file, "SEC",
+                     std::chrono::duration_cast<std::chrono::seconds>(
+                         notBefore - written)
+                         .count());
+        return false;
+    };
+
+    auto propMatch = sdbusplus::bus::match::match(
+        traceBus,
+        "type='signal',member='PropertiesChanged',"
+        "interface='org.freedesktop.DBus.Properties',"
+        "path='/com/amd/Traces',"
+        "arg0='com.amd.Traces.Tbai'",
+        [&published, &tracePropName](sdbusplus::message::message& msg) {
+            std::string intfName;
+            std::map<std::string, std::variant<std::string>> changedProps;
+            try
+            {
+                msg.read(intfName, changedProps);
+            }
+            catch (const std::exception& e)
+            {
+                lg2::error("Failed to read "
+                           "PropertiesChanged signal: "
+                           "{ERR}",
+                           "ERR", e.what());
+                return;
+            }
+
+            auto it = changedProps.find(tracePropName);
+            if (it != changedProps.end())
+            {
+                auto* val = std::get_if<std::string>(&(it->second));
+                if (val)
+                {
+                    published.push_back(*val);
+                }
+            }
+        });
+
+    // --- Step 2: Pre-check property value ---
+    constexpr uint64_t getTimeoutUs = 2000000;
+    std::string currentFile;
     try
     {
-        autonomousFile = amd::ras::util::getProperty<std::string>(
-            traceBus, "com.amd.Traces", "/com/amd/Traces",
-            "com.amd.Traces.Tbai", tracePropName.c_str());
+        auto method =
+            traceBus.new_method_call("com.amd.Traces", "/com/amd/Traces",
+                                     "org.freedesktop.DBus.Properties", "Get");
+        method.append("com.amd.Traces.Tbai", tracePropName);
+        std::variant<std::string> value;
+        traceBus.call(method, getTimeoutUs).read(value);
+        currentFile = std::get<std::string>(value);
     }
-    catch (const std::exception& e)
+    catch (const sdbusplus::exception_t& e)
     {
-        lg2::error("Failed to read {PROP} "
-                   "property: {ERR}",
-                   "PROP", tracePropName, "ERR", e.what());
+        if (e.get_errno() != ETIMEDOUT)
+        {
+            lg2::warning("Reading {PROP} failed: {NAME} {DESC}, skipping "
+                         "merge",
+                         "PROP", tracePropName, "NAME", e.name(), "DESC",
+                         e.description());
+            return;
+        }
+        currentFile = "(no value read)";
+        lg2::warning("Reading {PROP} timed out: {NAME}, waiting for "
+                     "amd-traces",
+                     "PROP", tracePropName, "NAME", e.name());
     }
 
-    if (!autonomousFile.empty() && autonomousFile != "PENDING")
+    if (!currentFile.empty() && currentFile != "PENDING" &&
+        currentFile != "(no value read)" && isFresh(currentFile))
     {
         lg2::info("{PROP} already available: "
                   "{FILE}, merging directly",
-                  "PROP", tracePropName, "FILE", autonomousFile);
-        amd::ras::util::cper::mergeFile(autonomousFile, fullPath);
-        merged = true;
+                  "PROP", tracePropName, "FILE", currentFile);
+        amd::ras::util::cper::mergeFile(currentFile, fullPath);
+        return;
     }
 
-    // --- Step 2: Signal-based wait (if not already merged) ---
-    if (!merged)
+    // --- Step 3: Signal-based wait ---
+    lg2::info("{PROP} is '{VAL}', "
+              "waiting for signal...",
+              "PROP", tracePropName, "VAL", currentFile);
+
+    const auto start = std::chrono::steady_clock::now();
+    const auto deadline = start + std::chrono::seconds(maxTimeoutSec);
+    bool chosen = false;
+    std::string autonomousFile;
+    size_t next = 0;
+    while (true)
     {
-        lg2::info("{PROP} is '{VAL}', "
-                  "waiting for signal...",
-                  "PROP", tracePropName, "VAL", autonomousFile);
-
-        constexpr int maxTimeoutSec = 120;
-        constexpr int pollIntervalSec = 2;
-        bool signalReceived = false;
-        autonomousFile.clear();
-
-        auto propMatch = sdbusplus::bus::match::match(
-            traceBus,
-            "type='signal',member='PropertiesChanged',"
-            "interface='org.freedesktop.DBus.Properties',"
-            "path='/com/amd/Traces',"
-            "arg0='com.amd.Traces.Tbai'",
-            [&autonomousFile, &signalReceived,
-             &tracePropName](sdbusplus::message::message& msg) {
-                std::string intfName;
-                std::map<std::string, std::variant<std::string>> changedProps;
-                try
-                {
-                    msg.read(intfName, changedProps);
-                }
-                catch (const std::exception& e)
-                {
-                    lg2::error("Failed to read "
-                               "PropertiesChanged signal: "
-                               "{ERR}",
-                               "ERR", e.what());
-                    return;
-                }
-
-                auto it = changedProps.find(tracePropName);
-                if (it != changedProps.end())
-                {
-                    auto* val = std::get_if<std::string>(&(it->second));
-                    if (val && *val != "PENDING")
-                    {
-                        autonomousFile = *val;
-                        signalReceived = true;
-                    }
-                }
-            });
-
-        int elapsed = 0;
-        while (!signalReceived && elapsed < maxTimeoutSec)
+        while (traceBus.process_discard())
+        {}
+        for (; !chosen && next < published.size(); ++next)
         {
-            traceBus.process_discard();
-            traceBus.wait(static_cast<uint64_t>(pollIntervalSec) * 1000000ULL);
-            elapsed += pollIntervalSec;
-            if (!signalReceived)
+            const std::string& value = published[next];
+            if (value != "PENDING" && (value.empty() || isFresh(value)))
             {
-                lg2::debug("Waiting for {PROP} "
-                           "signal... ({SEC}s / {MAX}s)",
-                           "PROP", tracePropName, "SEC", elapsed, "MAX",
-                           maxTimeoutSec);
+                autonomousFile = value;
+                chosen = true;
             }
         }
+        auto now = std::chrono::steady_clock::now();
+        if (chosen || now >= deadline)
+        {
+            break;
+        }
+        traceBus.wait(static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                deadline - now)
+                .count()));
+    }
 
-        if (signalReceived && !autonomousFile.empty())
-        {
-            lg2::info("Merging autonomous trace file: "
-                      "{FILE}",
-                      "FILE", autonomousFile);
-            amd::ras::util::cper::mergeFile(autonomousFile, fullPath);
-        }
-        else if (signalReceived && autonomousFile.empty())
-        {
-            lg2::warning("amd-traces reported error "
-                         "({PROP} is empty), "
-                         "skipping merge",
-                         "PROP", tracePropName);
-        }
-        else
-        {
-            lg2::warning("Timed out waiting for "
-                         "{PROP} after {SEC}s, "
-                         "skipping merge",
-                         "PROP", tracePropName, "SEC", maxTimeoutSec);
-        }
+    if (chosen && !autonomousFile.empty())
+    {
+        lg2::info("Merging autonomous trace file: "
+                  "{FILE}",
+                  "FILE", autonomousFile);
+        amd::ras::util::cper::mergeFile(autonomousFile, fullPath);
+    }
+    else if (chosen)
+    {
+        lg2::warning("amd-traces reported error "
+                     "({PROP} is empty), "
+                     "skipping merge",
+                     "PROP", tracePropName);
+    }
+    else
+    {
+        lg2::warning(
+            "Timed out waiting for "
+            "{PROP} after {SEC}s (last value '{LAST}'), "
+            "skipping merge",
+            "PROP", tracePropName, "SEC",
+            std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - start)
+                .count(),
+            "LAST", published.empty() ? currentFile : published.back());
     }
 }
 
 bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
 {
+    const auto handlerStart = std::filesystem::file_time_type::clock::now();
     std::unique_lock lock(harvestMutex);
     struct ras_df_err_chk errorCheck;
     bool fchHangError = false;
@@ -2702,12 +2775,61 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
     {
         amd::ras::util::cper::createFile(rcd, fatalErr, fatalSectionCount(),
                                          errCount, node);
-        if (src & fatalError)
+        if (src & (fatalError | sysMgmtCtrlErr))
         {
+            // The name createFile() gave this record (its node prefix rule,
+            // cper.cpp); for node "0", findCperFilename() would also match
+            // e.g. ras-error17.cper for record 7, or another node's file.
             std::string currentCperFile =
-                amd::ras::util::cper::findCperFilename(errCount, node);
+                (node != "0" ? "node" + node + "-" : "") +
+                amd::ras::util::cper::getCperFilename(errCount);
             std::string fullPath = RAS_DIR + currentCperFile;
-            mergeAutonomousTraceData(fullPath);
+            std::error_code ec;
+            if (!std::filesystem::exists(fullPath, ec))
+            {
+                lg2::error("No CPER file {FILE} to merge the MP trace data "
+                           "into: {ERR}",
+                           "FILE", fullPath, "ERR",
+                           ec ? ec.message() : std::string("not found"));
+            }
+            else
+            {
+                // The merge is optional: an exception in it must not stop the
+                // export, the index update or the recovery action below.
+                try
+                {
+                    if (src & sysMgmtCtrlErr)
+                    {
+                        // amd-traces also collects the MP trace logs for a
+                        // control-fabric alert, over TBAI, which still works
+                        // after a control-plane error. This path has no MCA
+                        // harvest (only the break-event reads), so it can
+                        // get here before amd-traces marks the alert
+                        // PENDING: skip a file written more than 3 s before
+                        // this handler started (the 1 s alert poll and
+                        // whole-second file times). If the event loop was
+                        // busy before this handler, this alert's own file
+                        // can be older than that and is not merged.
+                        // amd-traces publishes 0.7-2 s after the alert, so
+                        // wait at most 10 s before the recovery action.
+                        mergeAutonomousTraceData(
+                            fullPath, handlerStart - std::chrono::seconds(3),
+                            10);
+                    }
+                    else
+                    {
+                        mergeAutonomousTraceData(
+                            fullPath, std::filesystem::file_time_type::min(),
+                            120);
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    lg2::error("Merging the MP trace data into {FILE} "
+                               "failed: {ERR}",
+                               "FILE", fullPath, "ERR", e.what());
+                }
+            }
         }
         amd::ras::util::cper::exportToDBus(errCount, rcd->Header.TimeStamp,
                                            objectServer, systemBus, node);
