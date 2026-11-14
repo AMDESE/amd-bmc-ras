@@ -11,6 +11,7 @@ extern "C"
 {
 #include "esmi_cpuid_msr.h"
 #include "esmi_rmi.h"
+#include "esmi_tsi.h"
 }
 
 #include <nlohmann/json.hpp>
@@ -723,30 +724,64 @@ void Manager::clearSbrmiAlertMask(uint8_t socNum)
         }
     }
 
-    // Clear SBRMIx02 bit 3 (SwAsyncAlertSts) to re-arm error alert
-    uint8_t sbrmiStatus;
-    if (read_sbrmi_status(socNum, &sbrmiStatus) == OOB_SUCCESS)
+    // SB-TSI shares APML_ALERT_L with SB-RMI. A temperature alert latched
+    // during boot (low threshold 0 C) holds the pin low, so the next RAS
+    // alert gives no falling edge. SBTSIx02 is read-to-clear.
+    uint8_t tsiStatus = 0;
+    if (read_sbtsi_status(socNum, &tsiStatus) == OOB_SUCCESS)
     {
-        if (sbrmiStatus & 0x08)
+        if (tsiStatus != 0)
         {
             lg2::info(
-                "Socket {SOC}: SBRMIx02 bit 3 is set. Clearing it to re-arm "
-                "error alert",
-                "SOC", socNum);
-            // Register 0x02 is write-one-to-clear, write 0x08 to clear bit 3
-            ret = esmi_oob_write_byte(socNum, sbrmiStatusRegister, SBRMI, 0x08);
-            if (ret != OOB_SUCCESS)
-            {
-                lg2::error("Socket {SOC}: Failed to clear SBRMIx02 bit 3",
-                           "SOC", socNum);
-            }
+                "Socket {SOC}: Cleared latched SB-TSI alert. SBTSIx02 was {STS}",
+                "SOC", socNum, "STS", lg2::hex, tsiStatus);
         }
     }
     else
     {
+        lg2::error("Socket {SOC}: Failed to read SBTSIx02 status", "SOC",
+                   socNum);
+    }
+
+    // A RAS event raised while the alert was not seen (SBRMIx02 bit 3 or
+    // SBRMIx4C set) is harvested here instead of being cleared. decodeInterrupt
+    // clears SBRMIx02 bit 3 and SBRMIx4C.
+    uint8_t sbrmiStatus = 0;
+    uint8_t rasStatus = 0;
+    if (read_sbrmi_status(socNum, &sbrmiStatus) != OOB_SUCCESS)
+    {
         lg2::error("Socket {SOC}: Failed to read SBRMIx02 status", "SOC",
                    socNum);
     }
+    else
+    {
+        // APML answers, so the runtime error mailbox can be used. On the
+        // first platformInitialize() this runs before apmlInitialized is set.
+        apmlInitialized = true;
+    }
+    if (read_sbrmi_ras_status(socNum, &rasStatus) != OOB_SUCCESS)
+    {
+        lg2::error("Socket {SOC}: Failed to read SBRMIx4C status", "SOC",
+                   socNum);
+    }
+    if ((sbrmiStatus & 0x08) || rasStatus)
+    {
+        lg2::info(
+            "Socket {SOC}: Pending RAS alert found (SBRMIx02 {STS}, SBRMIx4C {RAS}). Harvesting it",
+            "SOC", socNum, "STS", lg2::hex, sbrmiStatus, "RAS", lg2::hex,
+            rasStatus);
+        if (rcd == nullptr)
+        {
+            rcd = std::make_shared<FatalCperRecord>();
+        }
+        decodeInterrupt(socNum);
+    }
+
+    // PMFW raises no new runtime error alert while a valid instance of the
+    // same category is still queued. Drain what is left.
+    runTimeErrorInfoCheck(mcaErr, interruptMode);
+    runTimeErrorInfoCheck(dramCeccErr, interruptMode);
+    runTimeErrorInfoCheck(pcieErr, interruptMode);
 }
 
 void Manager::requestGPIOEvents(
