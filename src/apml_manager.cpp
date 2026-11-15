@@ -31,6 +31,7 @@ namespace apml
 {
 constexpr size_t sbrmiControlRegister = 0x1;
 constexpr size_t sbrmiStatusRegister = 0x02;
+constexpr size_t maxPendingAlertPasses = 8;
 constexpr size_t sysMgmtCtrlErr = 0x4;
 constexpr size_t shutdownError = 0x40;
 
@@ -855,6 +856,7 @@ void Manager::alertEventHandler(
         }
 
         decodeInterrupt(socket);
+        handlePendingAlert(socket);
     }
 
     apmlAlertEvent.async_wait(
@@ -874,6 +876,40 @@ void Manager::alertEventHandler(
             }
             alertEventHandler(*apmlAlertEventPtr, alertLine, socket);
         });
+}
+
+void Manager::handlePendingAlert(uint8_t socNum)
+{
+    // An event that arrives during the harvest sets SBRMIx02 bit 3 again or a
+    // SBRMIx4C bit decodeInterrupt() did not read. The line stays low, so
+    // without this check the alert is never handled.
+    for (size_t pass = 0; pass < maxPendingAlertPasses; pass++)
+    {
+        uint8_t sbrmiStatus = 0;
+        uint8_t rasStatus = 0;
+
+        if (cfErrorReceived ||
+            read_sbrmi_status(socNum, &sbrmiStatus) != OOB_SUCCESS ||
+            read_sbrmi_ras_status(socNum, &rasStatus) != OOB_SUCCESS)
+        {
+            return;
+        }
+
+        if (!(sbrmiStatus & 0x08) && !rasStatus)
+        {
+            return;
+        }
+
+        lg2::info("Socket {SOC}: Alert raised while handling the last one "
+                  "(SBRMIx02 0x{STS}, SBRMIx4C 0x{RAS}). Handling it",
+                  "SOC", socNum, "STS", lg2::hex, sbrmiStatus, "RAS", lg2::hex,
+                  rasStatus);
+
+        decodeInterrupt(socNum);
+    }
+
+    lg2::error("Socket {SOC}: Alert still pending after {PASSES} passes",
+               "SOC", socNum, "PASSES", maxPendingAlertPasses);
 }
 
 void Manager::harvestRuntimeErrors(uint8_t errorPollingType,

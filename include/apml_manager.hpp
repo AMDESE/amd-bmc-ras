@@ -208,6 +208,16 @@ class Manager : public amd::ras::Manager
      */
     void clearSbrmiAlertMask(uint8_t socNum);
 
+    /** @brief Handle an alert raised while the last one was handled.
+     *
+     *  @details An alert raised while decodeInterrupt() runs keeps
+     *  APML_ALERT_L asserted, so no new falling edge comes. Re-read
+     *  SBRMIx02 and SBRMIx4C and handle the alert again while they are set.
+     *
+     *  @param[in] socNum - Socket number of the processor.
+     */
+    void handlePendingAlert(uint8_t socNum);
+
     /** @brief Proactively set the fatal harvest delay override in the CPU.
      *
      *  @details Arms the CPU's DelayResetOnSyncflood counter with the configured
