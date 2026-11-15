@@ -12,6 +12,9 @@ extern "C"
 #include <gpiod.hpp>
 #include <sdbusplus/asio/connection.hpp>
 
+#include <map>
+#include <memory>
+
 namespace amd
 {
 namespace ras
@@ -124,6 +127,8 @@ class Manager : public amd::ras::Manager
      *  processor and triggers actions upon detection.
      */
     std::vector<boost::asio::posix::stream_descriptor> gpioEventDescriptors;
+    std::map<uint8_t, std::unique_ptr<boost::asio::steady_timer>>
+        pendingAlertTimers;
 
     /** @brief Update processor OOB configuration.
      *
@@ -212,7 +217,8 @@ class Manager : public amd::ras::Manager
      *
      *  @details An alert raised while decodeInterrupt() runs keeps
      *  APML_ALERT_L asserted, so no new falling edge comes. Re-read
-     *  SBRMIx02 and SBRMIx4C and handle the alert again while they are set.
+     *  SBRMIx02 and SBRMIx4C and handle the alert again while they are set;
+     *  if they are still set after the last pass, check again after 1 s.
      *
      *  @param[in] socNum - Socket number of the processor.
      */

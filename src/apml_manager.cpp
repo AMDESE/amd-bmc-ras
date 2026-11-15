@@ -777,6 +777,7 @@ void Manager::clearSbrmiAlertMask(uint8_t socNum)
             rcd = std::make_shared<FatalCperRecord>();
         }
         decodeInterrupt(socNum);
+        handlePendingAlert(socNum);
     }
 
     // PMFW raises no new runtime error alert while a valid instance of the
@@ -901,15 +902,32 @@ void Manager::handlePendingAlert(uint8_t socNum)
         }
 
         lg2::info("Socket {SOC}: Alert raised while handling the last one "
-                  "(SBRMIx02 0x{STS}, SBRMIx4C 0x{RAS}). Handling it",
+                  "(SBRMIx02 {STS}, SBRMIx4C {RAS}). Handling it",
                   "SOC", socNum, "STS", lg2::hex, sbrmiStatus, "RAS", lg2::hex,
                   rasStatus);
 
         decodeInterrupt(socNum);
     }
 
-    lg2::error("Socket {SOC}: Alert still pending after {PASSES} passes",
-               "SOC", socNum, "PASSES", maxPendingAlertPasses);
+    // Still pending (a burst of errors): no falling edge will come, so check
+    // again shortly instead of waiting for one.
+    lg2::info("Socket {SOC}: Alert still pending after {PASSES} passes. "
+              "Checking again in 1 s",
+              "SOC", socNum, "PASSES", maxPendingAlertPasses);
+
+    auto& timer = pendingAlertTimers[socNum];
+    if (timer == nullptr)
+    {
+        timer = std::make_unique<boost::asio::steady_timer>(io);
+    }
+    timer->expires_after(std::chrono::seconds(1));
+    timer->async_wait([this, socNum](const boost::system::error_code& ec) {
+        if (ec)
+        {
+            return;
+        }
+        handlePendingAlert(socNum);
+    });
 }
 
 void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
