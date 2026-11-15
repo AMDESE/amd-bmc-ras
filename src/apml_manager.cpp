@@ -651,6 +651,14 @@ void Manager::configure()
                                     std::ref(gpioLines[i]), socIndex[i]),
                           gpioLines[i], gpioEventDescriptors[i]);
     }
+
+    // An alert raised before the GPIO events were requested (for example
+    // while init() drained the runtime error queue) gave its falling edge to
+    // no one. Handle what is pending now.
+    for (size_t i = 0; i < cpuCount; ++i)
+    {
+        handlePendingAlert(socIndex[i]);
+    }
 }
 
 void Manager::clearSbrmiAlertMask(uint8_t socNum)
@@ -777,7 +785,6 @@ void Manager::clearSbrmiAlertMask(uint8_t socNum)
             rcd = std::make_shared<FatalCperRecord>();
         }
         decodeInterrupt(socNum);
-        handlePendingAlert(socNum);
     }
 
     // PMFW raises no new runtime error alert while a valid instance of the
@@ -785,6 +792,10 @@ void Manager::clearSbrmiAlertMask(uint8_t socNum)
     runTimeErrorInfoCheck(mcaErr, interruptMode);
     runTimeErrorInfoCheck(dramCeccErr, interruptMode);
     runTimeErrorInfoCheck(pcieErr, interruptMode);
+
+    // The harvest and the drain let PMFW raise the next alert while the line
+    // may still be low from the last one: handle it now.
+    handlePendingAlert(socNum);
 }
 
 void Manager::requestGPIOEvents(
@@ -906,6 +917,10 @@ void Manager::handlePendingAlert(uint8_t socNum)
                   "SOC", socNum, "STS", lg2::hex, sbrmiStatus, "RAS", lg2::hex,
                   rasStatus);
 
+        if (rcd == nullptr)
+        {
+            rcd = std::make_shared<FatalCperRecord>();
+        }
         decodeInterrupt(socNum);
     }
 
