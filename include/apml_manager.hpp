@@ -328,9 +328,26 @@ class Manager : public amd::ras::Manager
      *
      *  @param[in] socNum - Socket number of the processor.
      *  @param[in] src - Source of the APML Alert_L events.
+     *
+     *  A host power-off and a fatal RAS alert can be delivered together.
+     *  The host-off signal arrives a few milliseconds first. Harvest after
+     *  the host is off reads invalid data, so the alert is ignored when
+     *  CurrentHostState is Off.
      */
     bool decodeInterrupt(uint8_t, uint32_t);
     bool decodeInterrupt(uint8_t);
+
+    /** @brief Drop a RAS alert when the host is already powered off.
+     *
+     *  @details MCA and debug-log harvest cannot return valid data once the
+     *  host has powered off. Called at the start of alert decode so the
+     *  alert is discarded before any SBRMI access or CPER generation.
+     *
+     *  @param[in] socNum - Socket that raised the alert.
+     *
+     *  @return true if the alert should be ignored.
+     */
+    bool ignoreRasAlertWhileHostOff(uint8_t socNum);
 
     /** @brief Merge autonomous MP trace data from amd-traces service into CPER.
      *
