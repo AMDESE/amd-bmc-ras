@@ -2464,6 +2464,19 @@ void Manager::mergeAutonomousTraceData(const std::string& fullPath)
     }
 }
 
+bool Manager::ignoreRasAlertWhileHostOff(uint8_t socNum)
+{
+    if (isHostPoweredOn())
+    {
+        return false;
+    }
+
+    lg2::info("Host is powered off. Ignoring RAS alert from SOC {SOC}. "
+              "Harvested data would not be valid",
+              "SOC", socNum);
+    return true;
+}
+
 bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
 {
     std::unique_lock lock(harvestMutex);
@@ -2477,6 +2490,15 @@ bool Manager::decodeInterrupt(uint8_t socNum, uint32_t src)
     lg2::info(
         "The UEVENT alert signaled for RAS error SOC: {SOC}. Source: {SRC}",
         "SOC", socNum, "SRC", lg2::hex, src);
+
+    // Power-off and a fatal RAS alert can arrive together. The host-off
+    // signal is delivered a few milliseconds first. Harvest after the host
+    // is off reads invalid MCA data, so drop the alert.
+    if (ignoreRasAlertWhileHostOff(socNum))
+    {
+        return true;
+    }
+
     // Once a reset-driving RAS error has been detected on this socket, the
     // system is expected to be reset based on policy. Ignore any further RAS
     // error alerts from that same socket until the host is rebooted.
@@ -2847,6 +2869,15 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     bool runtimeError = false;
     bool nonMcaShutdownError = false;
     cpuAlertProcessed.resize(cpuCount, false);
+
+    // Power-off and a fatal RAS alert can arrive together. The host-off
+    // signal is delivered a few milliseconds first. Harvest after the host
+    // is off reads invalid MCA data, so drop the alert before any SBRMI
+    // access.
+    if (ignoreRasAlertWhileHostOff(socNum))
+    {
+        return true;
+    }
 
     // Once a reset-driving RAS error has been detected on this socket, the
     // system is expected to be reset based on policy. Ignore any further RAS
