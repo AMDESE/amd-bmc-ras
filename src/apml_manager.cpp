@@ -263,6 +263,9 @@ void Manager::platformInitialize()
                   "reset or host state change");
         apmlInitialized = true;
 
+        // Soft repairs do not survive the host reset
+        amd::ras::util::ppr::resetRuntimePprHistory();
+
         for (size_t i : socIndex)
         {
             clearSbrmiAlertMask(i);
@@ -571,6 +574,9 @@ void Manager::init()
                 {
                     cfErrorReceived = false;
                     watchdogTimerCounter++;
+
+                    // Soft repairs do not survive the host reset
+                    amd::ras::util::ppr::resetRuntimePprHistory();
 
                     lg2::info("BIOS post complete. Clearing SBRMI alert mask");
                     for (size_t i : socIndex)
@@ -1103,21 +1109,22 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         amd::ras::util::cper::dumpErrorDescriptor(
             mcaPtr, sectionCount, runtimeMcaErr, severity, progId);
 
-        // Generate RTPPR / BTPPR JSON files from the in-memory MCA register
+        // Generate RTPPR / BTPPR JSON files from the in-memory MCA register,
+        // one file of each kind for the whole record
+        std::vector<amd::ras::util::ppr::PprSectionRange> pprRanges;
         if (p0Inst.number_of_inst != 0)
         {
-            amd::ras::util::ppr::generatePprJsonFiles(
-                mcaPtr, 0, p0Inst.number_of_inst,
-                static_cast<uint8_t>(socIndex[0]), errCount, node, false);
+            pprRanges.push_back({0, p0Inst.number_of_inst,
+                                 static_cast<uint8_t>(socIndex[0])});
         }
         if (p1Inst.number_of_inst != 0)
         {
-            amd::ras::util::ppr::generatePprJsonFiles(
-                mcaPtr,
-                static_cast<uint16_t>(sectionCount - p1Inst.number_of_inst),
-                p1Inst.number_of_inst,
-                static_cast<uint8_t>(socIndex[1]), errCount, node, false);
+            pprRanges.push_back(
+                {static_cast<uint16_t>(sectionCount - p1Inst.number_of_inst),
+                 p1Inst.number_of_inst, static_cast<uint8_t>(socIndex[1])});
         }
+        amd::ras::util::ppr::generatePprJsonFiles(mcaPtr, pprRanges, errCount,
+                                                  node, false);
 
         auto cperFilePath = amd::ras::util::cper::createFile(
             mcaPtr, runtimeMcaErr, sectionCount, errCount, node);
@@ -1195,21 +1202,23 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         amd::ras::util::cper::dumpErrorDescriptor(
             dramPtr, sectionCount, runtimeDramErr, severity, progId);
 
-        // Generate RTPPR / BTPPR JSON files from the in-memory DRAM CECC
+        // Generate RTPPR / BTPPR JSON files from the in-memory DRAM CECC,
+        // one file of each kind for the whole record. Every counter instance
+        // carries the same MCA data, so the instances map to one repair.
+        std::vector<amd::ras::util::ppr::PprSectionRange> pprRanges;
         if (p0Inst.number_of_inst != 0)
         {
-            amd::ras::util::ppr::generatePprJsonFiles(
-                dramPtr, 0, p0Inst.number_of_inst,
-                static_cast<uint8_t>(socIndex[0]), errCount, node, true);
+            pprRanges.push_back({0, p0Inst.number_of_inst,
+                                 static_cast<uint8_t>(socIndex[0])});
         }
         if (p1Inst.number_of_inst != 0)
         {
-            amd::ras::util::ppr::generatePprJsonFiles(
-                dramPtr,
-                static_cast<uint16_t>(sectionCount - p1Inst.number_of_inst),
-                p1Inst.number_of_inst,
-                static_cast<uint8_t>(socIndex[1]), errCount, node, true);
+            pprRanges.push_back(
+                {static_cast<uint16_t>(sectionCount - p1Inst.number_of_inst),
+                 p1Inst.number_of_inst, static_cast<uint8_t>(socIndex[1])});
         }
+        amd::ras::util::ppr::generatePprJsonFiles(dramPtr, pprRanges, errCount,
+                                                  node, true);
 
         auto cperFilePath = amd::ras::util::cper::createFile(
             dramPtr, runtimeDramErr, sectionCount, errCount, node);

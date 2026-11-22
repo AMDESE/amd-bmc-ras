@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace amd
 {
@@ -28,6 +29,26 @@ constexpr uint32_t errCodeEcsRow  = 0x08;
 constexpr uint32_t pprRepairTypeRtSoft = 0x0000;
 constexpr uint32_t pprRepairTypeBtSoft = 0x8000;
 
+// The APML RAS action carries a 3-bit repair entry number, so one runtime
+// request file holds at most 8 entries.
+constexpr size_t maxRtPprEntriesPerFile = 8;
+
+// fb-ipmi-oem serves each *_btppr.json to the BIOS as one PPR row (OEM
+// GET_PPR) and applies one SET_PPR result to the whole file: keep one entry.
+constexpr size_t maxBtPprEntriesPerFile = 1;
+
+// Venice supports at most 64 DRAM repairs per platform (SP7/SP8 Platform RAS
+// spec, 6.3.17). Never request more runtime repairs than that per host boot.
+constexpr size_t maxRtPprPerBoot = 64;
+
+/** @brief Sections of one harvested record that belong to one socket. */
+struct PprSectionRange
+{
+    uint16_t sectionStart;
+    uint16_t sectionCount;
+    uint8_t socNum;
+};
+
 //    DumpData[0..1]   = MCA_CTL
 //    DumpData[2]      = MCA_STATUS_LO
 //    DumpData[3]      = MCA_STATUS_HI
@@ -41,21 +62,31 @@ constexpr uint32_t pprRepairTypeBtSoft = 0x8000;
 
 /** @brief Function to generate PPR json files
  *
+ *  Writes at most one *_rtppr.json and one *_btppr.json per harvested
+ *  record. A DRAM row gets one runtime repair request per host boot, no
+ *  runtime repair is requested without a translated DRAM address, and none
+ *  on a channel that has logged a deferred or uncorrected UMC error since
+ *  the host booted.
  *
  *  @param[in] ptr           Shared pointer to the MCA or DRAM runtime CPER
  *                           record.
- *  @param[in] sectionStart  Index of the first section to scan.
- *  @param[in] sectionCount  Number of sections to scan.
- *  @param[in] socNum        Socket number.
+ *  @param[in] ranges        Section ranges to scan, one per socket.
  *  @param[in] errCount      Current error file counter.
  *  @param[in] node          Node string for filename prefix.
  *  @param[in] isDram        true  → dramCeccErr
  *                           false → mcaErr
  */
 void generatePprJsonFiles(const std::shared_ptr<McaRuntimeCperRecord>& ptr,
-                          uint16_t sectionStart, uint16_t sectionCount,
-                          uint8_t socNum, size_t errCount,
-                          const std::string& node, bool isDram);
+                          const std::vector<PprSectionRange>& ranges,
+                          size_t errCount, const std::string& node,
+                          bool isDram);
+
+/** @brief Forget the runtime repairs requested so far.
+ *
+ *  Soft repairs do not survive a host reset, so this is called when the
+ *  host has booted again.
+ */
+void resetRuntimePprHistory();
 
 } // namespace ppr
 } // namespace util
