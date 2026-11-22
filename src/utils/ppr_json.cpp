@@ -73,6 +73,7 @@ static std::mutex pprHistoryMtx;
 static std::set<RepairKey> rtRequested;
 static std::set<RepairKey> btRequested;
 static std::set<std::pair<uint8_t, uint8_t>> rtBlockedChannels;
+static std::set<RepairKey> rtBlockedLogged;
 
 //   Payload packing
 //   Payload[0] = bits[ 15:  0]
@@ -206,6 +207,7 @@ void resetRuntimePprHistory()
     rtRequested.clear();
     btRequested.clear();
     rtBlockedChannels.clear();
+    rtBlockedLogged.clear();
 }
 
 // Function body to generatePPR while harvesting
@@ -406,10 +408,17 @@ void generatePprJsonFiles(const std::shared_ptr<McaRuntimeCperRecord>& ptr,
 
                 if (channelBlocked)
                 {
-                    lg2::debug("PPR JSON: runtime PPR blocked on socket {SOC} "
-                              "channel {CH}, row {ROW}",
-                              "SOC", range.socNum, "CH", e.Channel, "ROW",
-                              lg2::hex, e.Row);
+                    // Info once per row, so each skipped request has a
+                    // journal line of its own after older lines rotate out.
+                    if (rtBlockedLogged.insert(key).second)
+                    {
+                        lg2::info(
+                            "PPR JSON: no runtime PPR for socket {SOC} channel "
+                            "{CH} row {ROW}: the channel logged a deferred or "
+                            "uncorrected error in this host boot",
+                            "SOC", range.socNum, "CH", e.Channel, "ROW",
+                            lg2::hex, e.Row);
+                    }
                 }
                 else if (rtRequested.contains(key))
                 {
