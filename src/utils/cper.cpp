@@ -31,6 +31,14 @@ constexpr uint16_t hundred = 100;
 constexpr uint16_t value256 = 0x100;
 constexpr size_t maxCperCount = 10;
 
+// IA32/X64 Processor Error Section ValidFields (UEFI N.2.4.2)
+constexpr uint64_t procErrApicIdValid = 0x1;
+constexpr uint64_t procErrCpuIdValid = 0x2;
+constexpr uint64_t procErrInfoNum = 1;
+constexpr uint64_t procCtxInfoNum = 1;
+constexpr size_t procErrInfoNumShift = 2;
+constexpr size_t procCtxInfoNumShift = 8;
+
 EFI_GUID gEfiEventCreatorIdGuid = {
     0x61FA3FAC,
     0xCB80,
@@ -165,6 +173,19 @@ void createIndexFile(size_t& errCount, const std::string& node)
     }
 }
 
+/* CpuIdInfo is a 48-byte field that holds CPUID Fn0000_0001 EAX, EBX, ECX
+ * and EDX as four little-endian 64-bit values followed by 16 reserved bytes
+ * (UEFI N.2.4.2, EFI_IA32_X64_CPU_ID in libcper). */
+static void fillCpuIdInfo(EFI_IA32_X64_PROCESSOR_ERROR_RECORD& procError,
+                          const CpuId& id)
+{
+    const uint64_t regs[quadBit] = {id.eax, id.ebx, id.ecx, id.edx};
+
+    std::memset(procError.CpuIdInfo, 0, sizeof(procError.CpuIdInfo));
+    std::memcpy(procError.CpuIdInfo, regs, sizeof(regs));
+    procError.ApicId = ((id.ebx >> 24) & maxByte);
+}
+
 void dumpProcessorError(const std::shared_ptr<FatalCperRecord>& fatalPtr,
                         uint8_t socNum, const std::unique_ptr<CpuId[]>& cpuId,
                         std::vector<size_t>& socIndex, uint16_t numbanks)
@@ -180,14 +201,7 @@ void dumpProcessorError(const std::shared_ptr<FatalCperRecord>& fatalPtr,
               bits 8-13: Number of Processor Context Info structures present
               bits 14-63: RSVD*/
             fatalPtr->ErrorRecord[i].ProcError.ValidFields = tripleBit;
-            fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[0] = cpuId[i].eax;
-            fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[doubleBit] =
-                cpuId[i].ebx;
-            fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[quadBit] =
-                cpuId[i].ecx;
-            fatalPtr->ErrorRecord[i].ProcError.CpuIdInfo[hexBit] = cpuId[i].edx;
-            fatalPtr->ErrorRecord[i].ProcError.ApicId =
-                ((cpuId[i].ebx >> 24) & maxByte);
+            fillCpuIdInfo(fatalPtr->ErrorRecord[i].ProcError, cpuId[i]);
 
             if (numbanks != 0)
             {
@@ -198,34 +212,34 @@ void dumpProcessorError(const std::shared_ptr<FatalCperRecord>& fatalPtr,
 }
 
 void dumpProcErrorInfoSection(
-    const std::shared_ptr<McaRuntimeCperRecord>& procPtr, uint16_t sectionCount,
-    uint64_t* checkInfo, uint32_t sectionStart, uint8_t cpuCount,
+    const std::shared_ptr<McaRuntimeCperRecord>& procPtr, uint16_t instCount,
+    uint64_t* checkInfo, uint32_t sectionStart, uint8_t cpuIndex,
     const std::unique_ptr<CpuId[]>& cpuId)
 {
-    for (uint32_t i = sectionStart; i < sectionCount; i++)
+    for (uint32_t i = sectionStart; i < sectionStart + instCount; i++)
     {
+        /* Every runtime section carries exactly one Processor Error Info
+         * structure and one Processor Context Info structure (UEFI N.2.4.2.1):
+         * bit 0     : Local APIC ID valid
+         * bit 1     : CPUID info valid
+         * bits 7:2  : number of Processor Error Info structures
+         * bits 13:8 : number of Processor Context Info structures */
         procPtr->McaErrorInfo[i].ProcError.ValidFields =
-            0b11 | (sectionCount << doubleBit) | (sectionCount << hexBit);
+            procErrApicIdValid | procErrCpuIdValid |
+            (procErrInfoNum << procErrInfoNumShift) |
+            (procCtxInfoNum << procCtxInfoNumShift);
 
-        for (size_t rec = 0; rec < cpuCount; rec++)
-        {
-            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[0] = cpuId[rec].eax;
-            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[doubleBit] =
-                cpuId[rec].ebx;
-            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[quadBit] =
-                cpuId[rec].ecx;
-            procPtr->McaErrorInfo[i].ProcError.CpuIdInfo[hexBit] =
-                cpuId[rec].edx;
-            procPtr->McaErrorInfo[i].ProcError.ApicId =
-                ((cpuId[rec].ebx >> 24) & maxByte);
-        }
+        fillCpuIdInfo(procPtr->McaErrorInfo[i].ProcError, cpuId[cpuIndex]);
 
         memcpy(&procPtr->McaErrorInfo[i].ErrorInfo.ErrorType,
                &gEfiIa32x64ErrorTypeMsCheckGuid, sizeof(EFI_GUID));
         procPtr->McaErrorInfo[i].ErrorInfo.ValidFields = singleBit;
         procPtr->McaErrorInfo[i].ErrorInfo.CheckInfo.Data64 = checkInfo[i];
-        procPtr->McaErrorInfo[i].ContextInfo.RegisterType = singleBit;
-        procPtr->McaErrorInfo[i].ContextInfo.ArraySize = 32;
+        procPtr->McaErrorInfo[i].ContextInfo.RegisterType = singleBit; // MSR
+        /* Size in bytes of the register array that follows the context
+         * header: the whole MCA bank dump */
+        procPtr->McaErrorInfo[i].ContextInfo.ArraySize =
+            sizeof(procPtr->McaErrorInfo[i].DumpData);
     }
 }
 

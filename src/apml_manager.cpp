@@ -64,6 +64,9 @@ constexpr size_t offHi1 = 4;
 constexpr size_t offLo2 = 8;
 constexpr size_t offHi2 = 12;
 constexpr size_t copySize = 4;
+// IA32/X64 MS Check structure ValidFields: bit 0 ErrorType, bit 1
+// ProcessorContextCorrupt, bit 2 Uncorrected, bit 5 Overflow (UEFI N.2.4.2.3)
+constexpr uint64_t msCheckValidBits = 0x27;
 constexpr size_t crashdump = 1;
 constexpr size_t shutdown = 2;
 constexpr size_t breakEvent = 3;
@@ -916,8 +919,8 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
                                  sectionStart, severity, checkInfo);
 
             amd::ras::util::cper::dumpProcErrorInfoSection(
-                mcaPtr, p0Inst.number_of_inst, checkInfo, sectionStart,
-                cpuCount, cpuId);
+                mcaPtr, p0Inst.number_of_inst, checkInfo, sectionStart, 0,
+                cpuId);
         }
         if (p1Inst.number_of_inst != 0)
         {
@@ -927,8 +930,8 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
                                  sectionStart, severity, checkInfo);
 
             amd::ras::util::cper::dumpProcErrorInfoSection(
-                mcaPtr, p1Inst.number_of_inst, checkInfo, sectionStart,
-                cpuCount, cpuId);
+                mcaPtr, p1Inst.number_of_inst, checkInfo, sectionStart, 1,
+                cpuId);
         }
 
         amd::ras::util::cper::calculateSeverity(
@@ -1008,18 +1011,18 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
             dumpProcErrorSection(dramPtr, 0, p0Inst, dramCeccErr, sectionStart,
                                  severity, checkInfo);
             amd::ras::util::cper::dumpProcErrorInfoSection(
-                dramPtr, p0Inst.number_of_inst, checkInfo, sectionStart,
-                cpuCount, cpuId);
+                dramPtr, p0Inst.number_of_inst, checkInfo, sectionStart, 0,
+                cpuId);
         }
         if (p1Inst.number_of_inst != 0)
         {
             sectionStart = sectionCount - p1Inst.number_of_inst;
 
-            dumpProcErrorSection(mcaPtr, 1, p1Inst, dramCeccErr, sectionStart,
+            dumpProcErrorSection(dramPtr, 1, p1Inst, dramCeccErr, sectionStart,
                                  severity, checkInfo);
             amd::ras::util::cper::dumpProcErrorInfoSection(
-                mcaPtr, p1Inst.number_of_inst, checkInfo, sectionStart,
-                cpuCount, cpuId);
+                dramPtr, p1Inst.number_of_inst, checkInfo, sectionStart, 1,
+                cpuId);
         }
 
         amd::ras::util::cper::calculateSeverity(
@@ -2801,13 +2804,13 @@ void Manager::dumpProcErrorSection(
 
         if ((category == 0) || (category == 1))
         {
-            memcpy(ProcPtr->SectionDescriptor[socNum].FruString + offLo1,
+            memcpy(ProcPtr->SectionDescriptor[section].FruString + offLo1,
                    &mcaPspSynd1Lo, copySize);
-            memcpy(ProcPtr->SectionDescriptor[socNum].FruString + offHi1,
+            memcpy(ProcPtr->SectionDescriptor[section].FruString + offHi1,
                    &mcaPspSynd1Hi, copySize);
-            memcpy(ProcPtr->SectionDescriptor[socNum].FruString + offLo2,
+            memcpy(ProcPtr->SectionDescriptor[section].FruString + offLo2,
                    &mcaPspSynd2Lo, copySize);
-            memcpy(ProcPtr->SectionDescriptor[socNum].FruString + offHi2,
+            memcpy(ProcPtr->SectionDescriptor[section].FruString + offHi2,
                    &mcaPspSynd2Hi, copySize);
 
             CheckInfo[section] = 0;
@@ -2815,6 +2818,9 @@ void Manager::dumpProcErrorSection(
             CheckInfo[section] |= ((mcaStatusRegister >> 61) & 1ULL) << 20;
             CheckInfo[section] |= ((mcaStatusRegister >> 62) & 1ULL) << 23;
             CheckInfo[section] |= (5ULL << 16);
+            // MS Check ValidFields[15:0]: ErrorType, ProcessorContextCorrupt,
+            // Uncorrected and Overflow carry valid information
+            CheckInfo[section] |= msCheckValidBits;
 
             if (((mcaStatusRegister & (1ULL << 61)) == 0) &&
                 ((mcaStatusRegister & (1ULL << 44)) == 0))

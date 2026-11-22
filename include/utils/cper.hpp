@@ -119,10 +119,12 @@ void dumpProcessorError(const std::shared_ptr<FatalCperRecord>&, uint8_t,
  * information, including valid bits,MCA array size, MS check GUID.
  *
  *  @param[in] procPtr - Shared pointer to the MCA runtime CPER record.
- *  @param[in] sectionCount - Number of sections.
+ *  @param[in] instCount - Number of sections (MCA instances) to fill,
+ *  starting at sectionStart.
  *  @param[in] checkInfo - Pointer to the check information.
- *  @param[in] sectionStart - Start of the section.
- *  @param[in] cpuCount - Number of CPUs.
+ *  @param[in] sectionStart - Index of the first section to fill.
+ *  @param[in] cpuIndex - Index into cpuId of the socket the instances
+ *  belong to.
  *  @param[in] cpuId - Unique pointer to an array of CPU IDs.
  */
 void dumpProcErrorInfoSection(const std::shared_ptr<McaRuntimeCperRecord>&,
