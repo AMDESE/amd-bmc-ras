@@ -302,39 +302,85 @@ bool checkSignatureIdMatch(std::map<std::string, std::string>* configSigIdList,
     return ret;
 }
 
+/* Rank of a CPER severity, higher is more severe:
+   Fatal > non-fatal uncorrected (recoverable) > corrected > informational */
+static int severityRank(uint32_t severity)
+{
+    switch (severity)
+    {
+        case sevFatal:
+            return 3;
+        case sevNonFatalUncorrected:
+            return 2;
+        case sevNonFatalCorrected:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 /*The function returns the highest severity out of all Section Severity for CPER
-  header Severity Order = Fatal > non-fatal uncorrected > corrected*/
+  header Severity Order = Fatal > non-fatal uncorrected > corrected >
+  informational*/
 bool calculateSeverity(uint32_t* severity, uint16_t sectionCount,
                        uint32_t* highestSeverity,
                        const std::string_view& errorType)
 {
     bool rc = true;
 
-    *highestSeverity = sevNonFatalCorrected;
+    *highestSeverity = sevInformational;
 
     for (size_t i = 0; i < sectionCount; i++)
     {
-        if (severity[i] == singleBit) // Fatal Severity
+        if ((severity[i] == sevFatal) && (errorType != runtimePcieErr))
         {
-            if (errorType == runtimePcieErr)
-            {
-                *highestSeverity = singleBit;
-                break;
-            }
-            else
-            {
-                lg2::error("Error Severity is fatal. This must be captured "
-                           "in Crashdump CPER, not runtime CPER");
-                rc = false;
-            }
+            lg2::error("Error Severity is fatal. This must be captured "
+                       "in Crashdump CPER, not runtime CPER");
+            rc = false;
+            continue;
         }
-        else if (severity[i] == sevNonFatalUncorrected)
+
+        if (severityRank(severity[i]) > severityRank(*highestSeverity))
         {
-            *highestSeverity = sevNonFatalUncorrected;
-            break;
+            *highestSeverity = severity[i];
         }
     }
     return rc;
+}
+
+bool isUncorrected(uint32_t severity)
+{
+    return (severity == sevFatal) || (severity == sevNonFatalUncorrected);
+}
+
+uint32_t pcieErrorSeverity(const uint32_t* aer, uint32_t oobAerHeader)
+{
+    const uint32_t uncorrected =
+        aer[aerUncorrStatus] & ~aer[aerUncorrMask];
+    const uint32_t corrected = aer[aerCorrStatus] & ~aer[aerCorrMask];
+    const uint32_t rootStatus = aer[aerRootErrStatus];
+
+    if (uncorrected != 0)
+    {
+        return (uncorrected & aer[aerUncorrSeverity]) ? sevFatal
+                                                      : sevNonFatalUncorrected;
+    }
+    if (rootStatus & rootErrFatalMsgRcvd)
+    {
+        return sevFatal;
+    }
+    if (rootStatus & rootErrNonFatalMsgRcvd)
+    {
+        return sevNonFatalUncorrected;
+    }
+    if ((corrected != 0) || (rootStatus & rootErrCorRcvd))
+    {
+        return sevNonFatalCorrected;
+    }
+
+    // Nothing logged in AER: fall back to the firmware severity
+    uint32_t fwSeverity = oobAerHeader & maxByte;
+    return (fwSeverity <= sevInformational) ? fwSeverity : sevInformational;
 }
 
 template <typename PtrType>

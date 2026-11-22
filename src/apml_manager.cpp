@@ -72,6 +72,12 @@ constexpr size_t shutdown = 2;
 constexpr size_t breakEvent = 3;
 constexpr uint16_t breakEventBanks = 1;
 constexpr size_t index28 = 28;
+// PCIe runtime error instance: dword 0 is the PMFW/MPRAS OOB AER payload
+// header ([7:0] firmware severity, [23:16] root port). It is stored at
+// PcieData[index28] (AMD OOB CPER layout, the first dword of the AER info
+// area as ADDC expects it); the AER extended capability follows at
+// PcieData[pcieAerIndex].
+constexpr size_t pcieAerIndex = index28 + 1;
 constexpr size_t blockId25 = 25;
 
 void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
@@ -962,11 +968,12 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         auto cperFilePath = amd::ras::util::cper::createFile(
             mcaPtr, runtimeMcaErr, sectionCount, errCount, node);
 
-        // Correctable-only records stay on the BMC; they are not sent to
-        // decode-service so no Redfish event is generated for them.
+        // Only uncorrected (fatal / non-fatal) records are sent to
+        // decode-service; corrected and informational records stay on the
+        // BMC, so no Redfish event is generated for them.
         if (!cperFilePath.empty())
         {
-            if (highestSeverity != amd::ras::util::cper::sevNonFatalCorrected)
+            if (amd::ras::util::cper::isUncorrected(highestSeverity))
             {
                 amd::ras::util::decode_service::submitCperForProcessing(
                     *conn, cperFilePath, static_cast<uint8_t>(socIndex[0]));
@@ -974,7 +981,7 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
             else
             {
                 lg2::debug("Skipping decode-service submission for "
-                           "correctable-only CPER: {FILE}",
+                           "corrected/informational CPER: {FILE}",
                            "FILE", cperFilePath);
             }
         }
@@ -1053,11 +1060,12 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         auto cperFilePath = amd::ras::util::cper::createFile(
             dramPtr, runtimeDramErr, sectionCount, errCount, node);
 
-        // Correctable-only records stay on the BMC; they are not sent to
-        // decode-service so no Redfish event is generated for them.
+        // Only uncorrected (fatal / non-fatal) records are sent to
+        // decode-service; corrected and informational records stay on the
+        // BMC, so no Redfish event is generated for them.
         if (!cperFilePath.empty())
         {
-            if (highestSeverity != amd::ras::util::cper::sevNonFatalCorrected)
+            if (amd::ras::util::cper::isUncorrected(highestSeverity))
             {
                 amd::ras::util::decode_service::submitCperForProcessing(
                     *conn, cperFilePath, static_cast<uint8_t>(socIndex[0]));
@@ -1065,7 +1073,7 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
             else
             {
                 lg2::debug("Skipping decode-service submission for "
-                           "correctable-only CPER: {FILE}",
+                           "corrected/informational CPER: {FILE}",
                            "FILE", cperFilePath);
             }
         }
@@ -1122,11 +1130,12 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
         auto cperFilePath = amd::ras::util::cper::createFile(
             pciePtr, runtimePcieErr, sectionCount, errCount, node);
 
-        // Correctable-only records stay on the BMC; they are not sent to
-        // decode-service so no Redfish event is generated for them.
+        // Only uncorrected (fatal / non-fatal) records are sent to
+        // decode-service; corrected and informational records stay on the
+        // BMC, so no Redfish event is generated for them.
         if (!cperFilePath.empty())
         {
-            if (highestSeverity != amd::ras::util::cper::sevNonFatalCorrected)
+            if (amd::ras::util::cper::isUncorrected(highestSeverity))
             {
                 amd::ras::util::decode_service::submitCperForProcessing(
                     *conn, cperFilePath, static_cast<uint8_t>(socIndex[0]));
@@ -1134,7 +1143,7 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
             else
             {
                 lg2::debug("Skipping decode-service submission for "
-                           "correctable-only CPER: {FILE}",
+                           "corrected/informational CPER: {FILE}",
                            "FILE", cperFilePath);
             }
         }
@@ -2650,7 +2659,7 @@ void Manager::dumpProcErrorSection(
     struct run_time_err_d_in dataIn;
     uint32_t dataOut = 0;
     uint64_t mcaStatusRegister = 0;
-    uint32_t rootErrStatus = 0;
+    uint32_t oobAerHeader = 0;
     uint32_t offset, baseOffset;
     oob_status_t ret;
 
@@ -2783,13 +2792,13 @@ void Manager::dumpProcErrorSection(
                 if (dumpIndex == index28)
                 {
                     PciePtr->PcieErrorData[section].PcieData[dumpIndex] =
-                        rootErrStatus;
+                        oobAerHeader;
                     dumpIndex++;
                 }
 
                 if (dataIn.offset == 0)
                 {
-                    rootErrStatus = dataOut;
+                    oobAerHeader = dataOut;
                     continue;
                 }
                 else
@@ -2837,7 +2846,17 @@ void Manager::dumpProcErrorSection(
         }
         else if (category == 2) // PCIE error
         {
-            Severity[section] = rootErrStatus & 0xFF;
+            // Classify from the AER registers of the record. The firmware
+            // severity in the OOB AER header follows Root Error Status, which
+            // does not record an ERR_FATAL/ERR_NONFATAL that DPC contained.
+            uint32_t aer[amd::ras::util::cper::aerDwords];
+            std::memcpy(aer,
+                        reinterpret_cast<const uint8_t*>(
+                            PciePtr->PcieErrorData + section) +
+                            (pcieAerIndex * sizeof(uint32_t)),
+                        sizeof(aer));
+            Severity[section] =
+                amd::ras::util::cper::pcieErrorSeverity(aer, oobAerHeader);
         }
         n++;
         section++;

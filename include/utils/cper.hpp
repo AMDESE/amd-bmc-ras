@@ -17,7 +17,23 @@ namespace cper
 {
 
 constexpr uint8_t sevNonFatalUncorrected = 0;
+constexpr uint8_t sevFatal = 1;
 constexpr uint8_t sevNonFatalCorrected = 2;
+constexpr uint8_t sevInformational = 3;
+
+// Dword offsets in the PCIe AER extended capability (PCIe Base 7.8.4)
+constexpr size_t aerUncorrStatus = 1;
+constexpr size_t aerUncorrMask = 2;
+constexpr size_t aerUncorrSeverity = 3;
+constexpr size_t aerCorrStatus = 4;
+constexpr size_t aerCorrMask = 5;
+constexpr size_t aerRootErrStatus = 12;
+constexpr size_t aerDwords = 14;
+
+// Root Error Status bits
+constexpr uint32_t rootErrCorRcvd = 1U << 0;
+constexpr uint32_t rootErrNonFatalMsgRcvd = 1U << 5;
+constexpr uint32_t rootErrFatalMsgRcvd = 1U << 6;
 
 constexpr uint8_t cperValidPlatformId = 0x1;
 constexpr uint8_t cperValidTimestamp = 0x2;
@@ -186,7 +202,8 @@ bool checkSignatureIdMatch(std::map<std::string, std::string>*,
  *
  *  @details Evaluates the severity levels of different sections and returns the
  * highest severity. The severity order is: Fatal > non-fatal uncorrected >
- * corrected. Logs an error if a fatal severity is found in a runtime CPER.
+ * corrected > informational. Logs an error if a fatal severity is found in a
+ * runtime MCA / DRAM CPER (fatal is allowed for runtime PCIe CPERs).
  *
  *  @param[in] severity - Pointer to an array of severity values.
  *  @param[in] sectionCount - The number of sections to evaluate.
@@ -197,6 +214,29 @@ bool checkSignatureIdMatch(std::map<std::string, std::string>*,
  * otherwise.
  */
 bool calculateSeverity(uint32_t*, uint16_t, uint32_t*, const std::string_view&);
+
+/** @brief Tells whether a CPER severity is uncorrected.
+ *
+ *  @param[in] severity - CPER severity code.
+ *
+ *  @return true for Fatal or non-fatal uncorrected (recoverable).
+ */
+bool isUncorrected(uint32_t severity);
+
+/** @brief Derives the CPER severity of a runtime PCIe error.
+ *
+ *  @details An unmasked uncorrectable error status bit makes the error Fatal
+ * when its AER severity bit is set, non-fatal uncorrected otherwise. Next the
+ * Root Error Status fatal / non-fatal message bits, then the correctable
+ * status. If AER logged nothing, the firmware severity from the OOB AER
+ * header is used.
+ *
+ *  @param[in] aer - The AER extended capability (aerDwords dwords).
+ *  @param[in] oobAerHeader - First dword of the firmware PCIe error instance.
+ *
+ *  @return CPER severity code.
+ */
+uint32_t pcieErrorSeverity(const uint32_t* aer, uint32_t oobAerHeader);
 
 } // namespace cper
 } // namespace util
