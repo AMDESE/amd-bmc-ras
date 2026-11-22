@@ -87,6 +87,19 @@ constexpr size_t mcaStatusLoIdx = 2;
 constexpr size_t mcaStatusHiIdx = 3;
 constexpr size_t mcaIpidLoIdx = 10;
 constexpr size_t mcaIpidHiIdx = 11;
+// CrashDumpData[] holds length32 banks of mcaDataBankLen 32-bit words
+// (oem_cper.hpp). The 5Bh validity check returns 9-bit counts, so both have
+// to be bounded before they index the CPER buffers.
+constexpr uint16_t maxMcaBanks = length32;
+constexpr uint16_t maxMcaWords = mcaDataBankLen;
+constexpr uint8_t mcaDebugLogId = 32;
+// 6Ah retries: every 30 s for the first 10 attempts, then every 120 s. PMFW was
+// seen aborting 6Ah (OOB_MAILBOX_CMD_ABORTED) for more than 5 minutes after a
+// cold boot while the host was already running; give up after about 2 hours.
+constexpr int fatalDelayFastRetries = 10;
+constexpr int fatalDelayFastRetrySecs = 30;
+constexpr int fatalDelaySlowRetrySecs = 120;
+constexpr int fatalDelayRetryMax = 65;
 
 void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
 {
@@ -137,7 +150,8 @@ Manager::Manager(amd::ras::config::Manager& manager,
     cfErrorReceived(false), McaErrorPollingEvent(nullptr),
     DramCeccErrorPollingEvent(nullptr), PcieAerErrorPollingEvent(nullptr),
     mcaErrorHarvestMtx(), dramErrorHarvestMtx(), pcieErrorHarvestMtx(),
-    conn(std::make_shared<sdbusplus::asio::connection>(io))
+    conn(std::make_shared<sdbusplus::asio::connection>(io)),
+    fatalDelayRetryTimer(io), fatalDelayRetryCount(0)
 {}
 
 void Manager::currentHostStateMonitor()
@@ -1753,20 +1767,41 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
 
     uint16_t blockInstances = errorCheck.df_block_instances;
 
+    if ((blockInstances > maxMcaBanks) || (maxOffset32 > maxMcaWords))
+    {
+        lg2::error("Socket {SOCKET}: MCA bank count {NUMBANKS} or length "
+                   "{MAX_OFFSET} words out of range. Not harvesting MCA banks",
+                   "SOCKET", socNum, "NUMBANKS", blockInstances, "MAX_OFFSET",
+                   maxOffset32);
+        blockInstances = 0;
+        maxOffset32 = 0;
+    }
+
     lg2::info("Number of Valid MCA bank: {NUMBANKS}", "NUMBANKS",
               blockInstances);
     lg2::info("Number of 32 Bit Words:{MAX_OFFSET}", "MAX_OFFSET", maxOffset32);
 
-    while (n < errorCheck.df_block_instances)
+    // Set once a word has used all its retries: the mailbox is not answering,
+    // so the rest of the record is marked invalid without more reads.
+    bool mailboxFailed = false;
+
+    while (n < blockInstances)
     {
         for (uint32_t offset = 0; offset < maxOffset32; offset++)
         {
+            if (mailboxFailed == true)
+            {
+                rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[offset] =
+                    badData;
+                continue;
+            }
+
             memset(&buffer, 0, sizeof(buffer));
             memset(&dfError, 0, sizeof(dfError));
             /* Offset */
             dfError.input[0] = offset * 4;
             /* DF block ID */
-            dfError.input[1] = 32;
+            dfError.input[1] = mcaDebugLogId;
             /* DF block ID instance */
             dfError.input[2] = n;
 
@@ -1774,14 +1809,19 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
 
             if (ret != OOB_SUCCESS)
             {
-                while (*apmlRetryCount > 0)
+                // Retry budget is per 32-bit word, and the first word that
+                // uses it up ends the reads for this record. Decrementing the
+                // shared config value left later words with no retry at all.
+                int64_t retriesLeft = *apmlRetryCount;
+
+                while (retriesLeft > 0)
                 {
                     memset(&buffer, 0, sizeof(buffer));
                     memset(&dfError, 0, sizeof(dfError));
                     /* Offset */
                     dfError.input[0] = offset * 4;
                     /* DF block ID */
-                    dfError.input[1] = 32;
+                    dfError.input[1] = mcaDebugLogId;
                     /* DF block ID instance */
                     dfError.input[2] = n;
 
@@ -1791,17 +1831,21 @@ void Manager::harvestMcaDataBanks(uint8_t socNum,
                     {
                         break;
                     }
-                    (*apmlRetryCount)--;
+                    retriesLeft--;
                     sleep(1);
                 }
                 if (ret != OOB_SUCCESS)
                 {
                     lg2::error("Socket {SOCKET} : Failed to get MCA bank data "
-                               "from Bank:{N}, Offset:{OFFSET}",
+                               "from Bank:{N}, Offset:{OFFSET}, Err:{ERR}",
                                "SOCKET", socNum, "N", n, "OFFSET", lg2::hex,
-                               offset);
+                               offset, "ERR", ret);
+                    lg2::error("Socket {SOCKET} : Marking the remaining MCA "
+                               "bank data invalid",
+                               "SOCKET", socNum);
                     rcd->ErrorRecord[socNum].CrashDumpData[n].McaData[offset] =
                         badData; // Write BAADDA7A pattern on error
+                    mailboxFailed = true;
                     continue;
                 }
 
@@ -1900,47 +1944,41 @@ bool Manager::harvestMcaValidityCheck(uint8_t info,
                                       struct ras_df_err_chk* errorCheck)
 {
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
-    uint16_t retries = 0;
-    bool mcaValidityCheck = true;
-    uint8_t mcaDebugLogId = 32;
 
     amd::ras::config::Manager::AttributeValue apmlRetry =
         configMgr.getAttribute("ApmlRetries");
     int64_t* apmlRetryCount = std::get_if<int64_t>(&apmlRetry);
+    int64_t attempts = (apmlRetryCount != nullptr) ? *apmlRetryCount + 1 : 1;
 
-    while (ret != OOB_SUCCESS)
+    for (int64_t retries = 1; retries <= attempts; retries++)
     {
-        retries++;
+        // read_ras_df_err_validity_check() only writes errorCheck on
+        // success. Clear it so a failed read never leaves a stale or
+        // uninitialised bank count behind.
+        *errorCheck = {};
 
         ret = read_ras_df_err_validity_check(info, mcaDebugLogId, errorCheck);
 
-        if (retries > *apmlRetryCount)
+        if ((ret == OOB_SUCCESS) && (errorCheck->df_block_instances != 0) &&
+            (errorCheck->df_block_instances <= maxMcaBanks))
         {
-            lg2::error(
-                "Socket {SOCK}: Failed to get MCA debug log ID with valid status",
-                "SOCK", info);
-            break;
+            return true;
         }
 
-        if ((errorCheck->df_block_instances == 0) ||
-            (errorCheck->df_block_instances > 32))
-        {
-            lg2::error("Socket {SOCKET}: Invalid MCA bank validity status. "
-                       "Retry Count: {RETRY_COUNT}",
-                       "SOCKET", info, "RETRY_COUNT", retries);
-            ret = OOB_MAILBOX_CMD_UNKNOWN;
-            sleep(1);
-            continue;
-        }
+        lg2::error("Socket {SOCKET}: Invalid MCA bank validity status. "
+                   "Retry Count: {RETRY_COUNT}, Err: {ERR}, Banks: {NUMBANKS}",
+                   "SOCKET", info, "RETRY_COUNT", retries, "ERR", ret,
+                   "NUMBANKS",
+                   static_cast<uint16_t>(errorCheck->df_block_instances));
+        sleep(1);
     }
 
-    if ((errorCheck->df_block_instances <= 0) ||
-        (errorCheck->df_block_instances > 32))
-    {
-        mcaValidityCheck = false;
-    }
+    lg2::error("Socket {SOCK}: Failed to get MCA debug log ID with valid status",
+               "SOCK", info);
 
-    return mcaValidityCheck;
+    *errorCheck = {};
+
+    return false;
 }
 
 bool Manager::checkIfCPUAlertsProcessed()
@@ -1966,7 +2004,7 @@ bool Manager::checkIfCPUAlertsProcessed()
 bool Manager::decodeInterrupt(uint8_t socNum)
 {
     std::unique_lock lock(harvestMutex);
-    struct ras_df_err_chk errorCheck;
+    struct ras_df_err_chk errorCheck = {};
     uint8_t buf;
     bool fchHangError = false;
     bool resetReady = false;
@@ -2054,6 +2092,10 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
             if (buf & cfError)
             {
+                // A pending 6Ah retry must not change the reset delay of the
+                // syncflood in progress (AIFS may have stopped its counter)
+                fatalDelayRetryTimer.cancel();
+
                 if (buf & sysMgmtCtrlErr)
                 {
                     /*if RasStatus[reset_ctrl_err] is set in any of the
@@ -2085,6 +2127,10 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             {
                 if (buf & fatalError)
                 {
+                    // A pending 6Ah retry must not change the reset delay of
+                    // the syncflood in progress
+                    fatalDelayRetryTimer.cancel();
+
                     if (buf & shutdownError)
                     {
                         lg2::info(
@@ -2106,8 +2152,13 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
                     if (false == harvestMcaValidityCheck(socNum, &errorCheck))
                     {
-                        lg2::info(
-                            "No valid mca banks found. Harvesting additional debug log ID dumps");
+                        // Never harvest with a bank count the processor did
+                        // not report: a failed 5Bh leaves errorCheck
+                        // untouched, so clear it and build a 0-bank record.
+                        errorCheck = {};
+                        lg2::error(
+                            "Socket {SOC}: No valid MCA bank reported over APML. Harvesting additional debug log ID dumps only",
+                            "SOC", socNum);
                     }
                     harvestMcaDataBanks(socNum, errorCheck);
                 }
@@ -2739,8 +2790,16 @@ oob_status_t Manager::setRasErrThreshold(struct run_time_threshold th)
     return ret;
 }
 
-void Manager::setFatalHarvestDelay()
+void Manager::setFatalHarvestDelay(bool isRetry)
 {
+    if (isRetry == false)
+    {
+        // A fresh request (service start, host state change, BIOS post
+        // complete) gets a full retry budget.
+        fatalDelayRetryTimer.cancel();
+        fatalDelayRetryCount = 0;
+    }
+
     amd::ras::config::Manager::AttributeValue fatalDelayEnVal =
         configMgr.getAttribute("FatalHarvestDelayEn");
     bool* fatalHarvestDelayEn = std::get_if<bool>(&fatalDelayEnVal);
@@ -2775,20 +2834,56 @@ void Manager::setFatalHarvestDelay()
     oob_status_t ret = override_delay_reset_on_sync_flood(
         socIndex[0], delayDataIn, &ackResp);
 
-    if (ret != OOB_SUCCESS)
+    if ((ret != OOB_SUCCESS) || (ackResp == false))
     {
         lg2::error(
-            "Failed to set fatal harvest delay override ({MINS} mins): {ERR}",
+            "Failed to set fatal harvest delay override ({MINS} mins): {ERR}, "
+            "Ack: {ACK}, Attempt: {ATTEMPT}",
             "MINS", static_cast<uint32_t>(delayDataIn.delay_val_override),
-            "ERR", ret);
+            "ERR", ret, "ACK", static_cast<int>(ackResp), "ATTEMPT",
+            fatalDelayRetryCount + 1);
+
+        // PMFW can abort 6Ah (OOB_MAILBOX_CMD_ABORTED) right after POST or
+        // while the host changes state. Retry later from the io loop instead
+        // of blocking here.
+        if (fatalDelayRetryCount < fatalDelayRetryMax)
+        {
+            fatalDelayRetryCount++;
+            fatalDelayRetryTimer.expires_after(std::chrono::seconds(
+                (fatalDelayRetryCount <= fatalDelayFastRetries)
+                    ? fatalDelayFastRetrySecs
+                    : fatalDelaySlowRetrySecs));
+            fatalDelayRetryTimer.async_wait(
+                [this](const boost::system::error_code& ec) {
+                    if (ec)
+                    {
+                        return;
+                    }
+                    if (apmlInitialized == false)
+                    {
+                        return;
+                    }
+                    setFatalHarvestDelay(true);
+                });
+        }
+        else
+        {
+            lg2::error("Fatal harvest delay override not set after {ATTEMPT} "
+                       "attempts. The CPU resets with its default delay after "
+                       "a syncflood",
+                       "ATTEMPT", fatalDelayRetryCount + 1);
+        }
+        return;
     }
-    else
-    {
-        lg2::info(
-            "Fatal harvest delay override set to {MINS} mins. "
-            "CPU will wait before resetting after syncflood.",
-            "MINS", static_cast<uint32_t>(delayDataIn.delay_val_override));
-    }
+
+    lg2::info("Fatal harvest delay override set to {MINS} mins. "
+              "CPU will wait before resetting after syncflood. Attempt: "
+              "{ATTEMPT}",
+              "MINS", static_cast<uint32_t>(delayDataIn.delay_val_override),
+              "ATTEMPT", fatalDelayRetryCount + 1);
+
+    fatalDelayRetryTimer.cancel();
+    fatalDelayRetryCount = 0;
 }
 
 oob_status_t Manager::setPcieErrThreshold()

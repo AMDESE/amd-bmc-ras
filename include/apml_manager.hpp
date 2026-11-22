@@ -91,6 +91,9 @@ class Manager : public amd::ras::Manager
     std::mutex pcieErrorHarvestMtx;
     std::vector<gpiod::line> gpioLines;
     std::shared_ptr<sdbusplus::asio::connection> conn;
+    /** @brief Retries a rejected fatal harvest delay override. */
+    boost::asio::steady_timer fatalDelayRetryTimer;
+    int fatalDelayRetryCount;
 
     /**
      * @brief Requests GPIO events for hardware alert handling.
@@ -215,9 +218,12 @@ class Manager : public amd::ras::Manager
      *
      *  @details Arms the CPU's DelayResetOnSyncflood counter with the configured
      *  value so the system waits before resetting after a fatal error, giving the
-     *  BMC time to collect MCA data
+     *  BMC time to collect MCA data. A rejected request is retried from the
+     *  io loop.
+     *
+     *  @param[in] isRetry - true when called by the retry timer.
      */
-    void setFatalHarvestDelay();
+    void setFatalHarvestDelay(bool isRetry = false);
 
     /** @brief Cancel runtime polling timers on control fabric error. */
     void deactivateRuntimeErrorPolling();
