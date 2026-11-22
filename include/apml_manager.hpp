@@ -12,6 +12,9 @@ extern "C"
 #include <gpiod.hpp>
 #include <sdbusplus/asio/connection.hpp>
 
+#include <map>
+#include <vector>
+
 namespace amd
 {
 namespace ras
@@ -282,10 +285,39 @@ class Manager : public amd::ras::Manager
      * processor 0.
      * @param[in] p1Inst - Structure representing a valid RAS error instance for
      * processor 1.
+     * @param[in] reqType - Request type of the validity check that returned
+     * the instances (pollingMode or interruptMode).
      *
      */
     void harvestRuntimeErrors(uint8_t, struct ras_rt_valid_err_inst,
-                              struct ras_rt_valid_err_inst);
+                              struct ras_rt_valid_err_inst, uint8_t);
+
+    /** @brief Runtime MCA records already written to a CPER.
+     *
+     * @details Key: socket number followed by the 32 dwords of the MCA bank
+     * image read with GET_BMC_RAS_RUNTIME_ERR_INFO. Value: number of later
+     * polls that returned the same record and were not reported again.
+     * The polling-mode validity check keeps returning a record until PMFW
+     * clears the OOB bank status, so without this the same error would be
+     * written to a new CPER on every poll.
+     */
+    std::map<std::vector<uint32_t>, uint32_t> reportedMcaRecords;
+
+    /** @brief Decide whether a runtime MCA harvest is reported.
+     *
+     * @details Compares the bank image of every section in mcaPtr with the
+     * records already reported. A polling-mode harvest whose records were
+     * all reported before is not written to a CPER again. Interrupt-mode
+     * harvests are always reported. Must be called with mcaErrorHarvestMtx
+     * held.
+     *
+     * @param[in] sectionCount - Number of sections in mcaPtr.
+     * @param[in] p0Count - Number of sections that belong to processor 0.
+     * @param[in] reqType - Request type (pollingMode or interruptMode).
+     *
+     * @return true if a CPER must be created for this harvest.
+     */
+    bool filterReportedMcaRecords(uint16_t, uint16_t, uint8_t);
 
     /** @brief Check runtime error information.
      *

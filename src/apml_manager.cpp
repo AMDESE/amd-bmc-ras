@@ -82,6 +82,11 @@ constexpr size_t pcieAerIndex = index28 + 1;
 // the last 4-byte aligned offset that can be addressed.
 constexpr uint32_t maxRtErrOffset = 0xFC;
 constexpr size_t blockId25 = 25;
+constexpr size_t maxReportedMcaRecords = 64;
+constexpr size_t mcaStatusLoIdx = 2;
+constexpr size_t mcaStatusHiIdx = 3;
+constexpr size_t mcaIpidLoIdx = 10;
+constexpr size_t mcaIpidHiIdx = 11;
 
 void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
 {
@@ -888,9 +893,140 @@ void Manager::alertEventHandler(
         });
 }
 
+bool Manager::filterReportedMcaRecords(uint16_t sectionCount,
+                                       uint16_t p0Count, uint8_t reqType)
+{
+    // Called with mcaErrorHarvestMtx held, after the bank images of all
+    // sections have been read into mcaPtr->McaErrorInfo[].DumpData.
+    //
+    // A runtime MCA record returned by the polling-mode validity check stays
+    // valid until PMFW clears the OOB MCA bank status. Reading it with
+    // GET_BMC_RAS_RUNTIME_ERR_INFO does not clear it, so the same record is
+    // returned on every poll. A record is identified by its socket and the
+    // full bank image (STATUS, ADDR, MISC0 error count, IPID, SYND, DESTAT,
+    // ...). A new hardware error changes the image (MISC0 error count or
+    // STATUS overflow), so it is still reported.
+    //
+    // Interrupt-mode harvests are always reported: PMFW raised an alert for
+    // them, which is a new event by definition.
+    std::map<std::vector<uint32_t>, uint32_t> currentRecords;
+    bool newRecordFound = false;
+
+    for (uint16_t i = 0; i < sectionCount; i++)
+    {
+        size_t soc = (i < p0Count) ? socIndex[0] : socIndex[1];
+        std::vector<uint32_t> record;
+        bool readFailed = false;
+
+        record.reserve(length32 + 1);
+        record.push_back(static_cast<uint32_t>(soc));
+        for (size_t d = 0; d < length32; d++)
+        {
+            uint32_t value = mcaPtr->McaErrorInfo[i].DumpData[d];
+            if (value == badData)
+            {
+                readFailed = true;
+            }
+            record.push_back(value);
+        }
+
+        uint64_t status =
+            (static_cast<uint64_t>(record[1 + mcaStatusHiIdx]) << 32) |
+            record[1 + mcaStatusLoIdx];
+        uint64_t ipid =
+            (static_cast<uint64_t>(record[1 + mcaIpidHiIdx]) << 32) |
+            record[1 + mcaIpidLoIdx];
+
+        // A record with failed reads is not a reliable identity.
+        if (readFailed)
+        {
+            newRecordFound = true;
+            continue;
+        }
+
+        auto it = reportedMcaRecords.find(record);
+        if (it == reportedMcaRecords.end())
+        {
+            newRecordFound = true;
+            currentRecords.emplace(std::move(record), 0);
+            lg2::debug("Socket {SOC}: new runtime MCA record ({MODE}), "
+                       "IPID {IPID}, MCA_STATUS {STATUS}",
+                       "SOC", soc, "MODE",
+                       (reqType == pollingMode) ? "polling" : "interrupt",
+                       "IPID", lg2::hex, ipid, "STATUS", lg2::hex, status);
+        }
+        else
+        {
+            currentRecords.emplace(std::move(record), it->second);
+        }
+    }
+
+    if (reqType != pollingMode)
+    {
+        amd::ras::config::Manager::AttributeValue mcaPolling =
+            configMgr.getAttribute("McaPollingEn");
+        bool* mcaPollingEn = std::get_if<bool>(&mcaPolling);
+
+        // Remember the records so the next poll does not report them again.
+        // Only needed when polling is on; bounded in case PMFW never drops
+        // them from the polling view.
+        if ((mcaPollingEn != nullptr) && (*mcaPollingEn == true))
+        {
+            for (auto& [record, count] : currentRecords)
+            {
+                reportedMcaRecords.try_emplace(record, count);
+            }
+            if (reportedMcaRecords.size() > maxReportedMcaRecords)
+            {
+                reportedMcaRecords.clear();
+            }
+        }
+        return true;
+    }
+
+    if (!newRecordFound)
+    {
+        for (auto& [record, count] : currentRecords)
+        {
+            count++;
+            uint64_t status =
+                (static_cast<uint64_t>(record[1 + mcaStatusHiIdx]) << 32) |
+                record[1 + mcaStatusLoIdx];
+            uint64_t ipid =
+                (static_cast<uint64_t>(record[1 + mcaIpidHiIdx]) << 32) |
+                record[1 + mcaIpidLoIdx];
+
+            if (count == 1)
+            {
+                lg2::info(
+                    "Socket {SOC}: runtime MCA record IPID {IPID}, "
+                    "MCA_STATUS {STATUS} is still valid in firmware. "
+                    "Already reported, no new CPER",
+                    "SOC", record[0], "IPID", lg2::hex, ipid, "STATUS",
+                    lg2::hex, status);
+            }
+            else
+            {
+                lg2::debug("Socket {SOC}: runtime MCA record IPID {IPID} "
+                           "still valid, polls skipped {COUNT}",
+                           "SOC", record[0], "IPID", lg2::hex, ipid, "COUNT",
+                           count);
+            }
+        }
+    }
+
+    // The polling-mode result is the full set of records that are valid now.
+    // Records that are gone are forgotten, so the same error is reported
+    // again if it is logged again later.
+    reportedMcaRecords = std::move(currentRecords);
+
+    return newRecordFound;
+}
+
 void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
                                    struct ras_rt_valid_err_inst p0Inst,
-                                   struct ras_rt_valid_err_inst p1Inst)
+                                   struct ras_rt_valid_err_inst p1Inst,
+                                   uint8_t reqType)
 {
     uint32_t* severity = nullptr;
     uint64_t* checkInfo = nullptr;
@@ -941,6 +1077,21 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
             amd::ras::util::cper::dumpProcErrorInfoSection(
                 mcaPtr, p1Inst.number_of_inst, checkInfo, sectionStart, 1,
                 cpuId);
+        }
+
+        // PMFW keeps returning a record from the polling-mode validity check
+        // for as long as the OOB MCA bank status stays valid. Report it once:
+        // no CPER, PPR JSON or decode-service request for a replay.
+        if (!filterReportedMcaRecords(sectionCount, p0Inst.number_of_inst,
+                                      reqType))
+        {
+            delete[] mcaPtr->SectionDescriptor;
+            mcaPtr->SectionDescriptor = nullptr;
+            delete[] mcaPtr->McaErrorInfo;
+            mcaPtr->McaErrorInfo = nullptr;
+            delete[] checkInfo;
+            delete[] severity;
+            return;
         }
 
         amd::ras::util::cper::calculateSeverity(
@@ -1218,6 +1369,17 @@ void Manager::runTimeErrorInfoCheck(uint8_t errType, uint8_t reqType)
             runTimeErrValidityCheck(socIndex[1], rt_err_category, &p1_inst);
     }
 
+    if ((errType == mcaErr) && (reqType == pollingMode) &&
+        (p0_ret == OOB_SUCCESS) && (p0_inst.number_of_inst == 0) &&
+        ((cpuCount != 2) ||
+         ((p1_ret == OOB_SUCCESS) && (p1_inst.number_of_inst == 0))))
+    {
+        // No runtime MCA record is valid any more. A record seen again
+        // later is a new error and must be reported.
+        std::unique_lock lock(mcaErrorHarvestMtx);
+        reportedMcaRecords.clear();
+    }
+
     if (((p0_ret == OOB_SUCCESS) && (p0_inst.number_of_inst > 0)) ||
         ((p1_ret == OOB_SUCCESS) && (p1_inst.number_of_inst > 0)))
     {
@@ -1227,7 +1389,7 @@ void Manager::runTimeErrorInfoCheck(uint8_t errType, uint8_t reqType)
             {
                 mcaPtr = std::make_shared<McaRuntimeCperRecord>();
             }
-            harvestRuntimeErrors(errType, p0_inst, p1_inst);
+            harvestRuntimeErrors(errType, p0_inst, p1_inst, reqType);
         }
         else if (errType == dramCeccErr)
         {
@@ -1248,7 +1410,7 @@ void Manager::runTimeErrorInfoCheck(uint8_t errType, uint8_t reqType)
                 {
                     dramPtr = std::make_shared<McaRuntimeCperRecord>();
                 }
-                harvestRuntimeErrors(errType, p0_inst, p1_inst);
+                harvestRuntimeErrors(errType, p0_inst, p1_inst, reqType);
             }
         }
         else if (errType == pcieErr)
@@ -1257,7 +1419,7 @@ void Manager::runTimeErrorInfoCheck(uint8_t errType, uint8_t reqType)
             {
                 pciePtr = std::make_shared<PcieRuntimeCperRecord>();
             }
-            harvestRuntimeErrors(errType, p0_inst, p1_inst);
+            harvestRuntimeErrors(errType, p0_inst, p1_inst, reqType);
         }
     }
 }
