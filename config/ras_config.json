@@ -90,21 +90,21 @@
         {
             "DramCeccOobEcMode": {
                 "Description": "DRAM CECC OOB error counter mode: 0=disabled, 1=no-leak mode, 2=leaky bucket mode",
-                "Value": 2,
+                "Value": 1,
                 "MaxBoundLimit": 2
             }
         },
         {
             "DramCeccLeakRate": {
                 "Description": "DRAM CECC leaky bucket leak rate (0x00-0x1F). Only used when DramCeccOobEcMode=2",
-                "Value": 25,
+                "Value": 0,
                 "MaxBoundLimit": 31
             }
         },
         {
             "DramCeccThresholdEn": {
                 "Description": "If this field is true, error thresholding for DRAM ECC correctable errors will be enabled",
-                "Value": true
+                "Value": false
             }
         },
         {
@@ -122,13 +122,13 @@
         {
             "McaPollingEn": {
                 "Description": "If this field is true, Machine Check Architecture (MCA) correctable errors will be polled",
-                "Value": false
+                "Value": true
             }
         },
         {
             "McaThresholdEn": {
                 "Description": "If this field is true, error thresholding for MCA errors will be enabled",
-                "Value": true
+                "Value": false
             }
         },
         {
@@ -144,21 +144,27 @@
             }
         },
         {
+            "McaUmcErrThresholdCnt": {
+                "Description": "Error threshold count for MCA UMC errors",
+                "Value": 1
+            }
+        },
+        {
             "PcieAerPollingEn": {
                 "Description": "If this field is true, PCI Express Advanced Error Reporting (PCIE AER) correctable errors will be polled",
-                "Value": true
+                "Value": false
             }
         },
         {
             "PcieAerThresholdEn": {
                 "Description": "If this field is true, error thresholding for PCIE AER errors will be enabled",
-                "Value": true
+                "Value": false
             }
         },
         {
             "PcieAerPollingPeriod": {
                 "Description": "Polling interval in seconds for PCIE AER errors",
-                "Value": 7
+                "Value": 1
             }
         },
         {
