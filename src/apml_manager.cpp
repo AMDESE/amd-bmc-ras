@@ -3790,7 +3790,7 @@ void Manager::dumpProcErrorSection(
     constexpr size_t mcaConfigLoOffset = 0x20;
     constexpr uint32_t mcaFruTextInMcaBit = 9;
     uint16_t n = 0;
-    struct run_time_err_d_in dataIn;
+    struct run_time_err_d_in_ext dataIn;
     uint32_t dataOut = 0;
     uint64_t mcaStatusRegister = 0;
     uint32_t rootErrStatus = 0;
@@ -3851,7 +3851,7 @@ void Manager::dumpProcErrorSection(
             dataIn.category = category;
             dataIn.valid_inst_index = n;
 
-            ret = get_bmc_ras_run_time_error_info(socNum, dataIn, &dataOut);
+            ret = get_bmc_ras_run_time_error_info_ext(socNum, dataIn, &dataOut);
 
             if (ret != OOB_SUCCESS)
             {
@@ -3864,8 +3864,8 @@ void Manager::dumpProcErrorSection(
                     dataIn.category = category;
                     dataIn.valid_inst_index = n;
 
-                    ret = get_bmc_ras_run_time_error_info(socNum, dataIn,
-                                                          &dataOut);
+                    ret = get_bmc_ras_run_time_error_info_ext(socNum, dataIn,
+                                                              &dataOut);
 
                     if (ret == OOB_SUCCESS)
                     {
@@ -4055,7 +4055,7 @@ void Manager::harvestDramCeccErrorCounters(struct ras_rt_valid_err_inst inst,
                                            uint8_t socNum)
 {
     uint32_t dataOut = 0;
-    struct run_time_err_d_in dataIn;
+    struct run_time_err_d_in_ext dataIn;
     oob_status_t ret = OOB_MAILBOX_CMD_UNKNOWN;
 
     amd::ras::config::Manager::AttributeValue apmlRetry =
@@ -4073,7 +4073,7 @@ void Manager::harvestDramCeccErrorCounters(struct ras_rt_valid_err_inst inst,
             dataIn.offset = 0;
             dataIn.category = dramCeccErr;
 
-            ret = get_bmc_ras_run_time_error_info(socNum, dataIn, &dataOut);
+            ret = get_bmc_ras_run_time_error_info_ext(socNum, dataIn, &dataOut);
 
             if (ret != OOB_SUCCESS)
             {
@@ -4086,8 +4086,8 @@ void Manager::harvestDramCeccErrorCounters(struct ras_rt_valid_err_inst inst,
                     dataIn.category = dramCeccErr;
                     dataIn.valid_inst_index = n;
 
-                    ret = get_bmc_ras_run_time_error_info(socNum, dataIn,
-                                                          &dataOut);
+                    ret = get_bmc_ras_run_time_error_info_ext(socNum, dataIn,
+                                                              &dataOut);
                     if (ret == OOB_SUCCESS)
                     {
                         break;
