@@ -78,6 +78,9 @@ constexpr size_t index28 = 28;
 // area as ADDC expects it); the AER extended capability follows at
 // PcieData[pcieAerIndex].
 constexpr size_t pcieAerIndex = index28 + 1;
+// The APML runtime error info request carries an 8-bit offset, so 0xFC is
+// the last 4-byte aligned offset that can be addressed.
+constexpr uint32_t maxRtErrOffset = 0xFC;
 constexpr size_t blockId25 = 25;
 
 void writeOobRegister(uint8_t info, uint32_t reg, uint32_t value)
@@ -1107,15 +1110,15 @@ void Manager::harvestRuntimeErrors(uint8_t errorPollingType,
 
         if (p0Inst.number_of_inst != 0)
         {
-            dumpProcErrorSection(pciePtr, 0, p0Inst, pcieErr, sectionStart,
-                                 severity, checkInfo);
+            dumpProcErrorSection(pciePtr, socIndex[0], p0Inst, pcieErr,
+                                 sectionStart, severity, checkInfo);
         }
         if (p1Inst.number_of_inst != 0)
         {
             sectionStart = sectionCount - p1Inst.number_of_inst;
 
-            dumpProcErrorSection(pciePtr, 0, p1Inst, pcieErr, sectionStart,
-                                 severity, checkInfo);
+            dumpProcErrorSection(pciePtr, socIndex[1], p1Inst, pcieErr,
+                                 sectionStart, severity, checkInfo);
         }
 
         amd::ras::util::cper::calculateSeverity(
@@ -2704,10 +2707,18 @@ void Manager::dumpProcErrorSection(
         }
 
         uint32_t dumpIndex = 0;
+        // Never write past DumpData[] / PcieData[] of this section
+        const uint32_t dumpCapacity = ProcPtr ? length32 : length91;
 
-        for (offset = baseOffset; offset < inst.number_bytes;
+        for (offset = baseOffset;
+             (offset < inst.number_bytes) && (offset <= maxRtErrOffset);
              offset = offset + 4)
         {
+            if (dumpIndex >= dumpCapacity)
+            {
+                break;
+            }
+
             memset(&dataIn, 0, sizeof(dataIn));
             memset(&dataOut, 0, sizeof(dataOut));
             dataIn.offset = offset;
