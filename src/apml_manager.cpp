@@ -593,10 +593,12 @@ void Manager::init()
                     amd::ras::util::ppr::resetRuntimePprHistory();
 
                     lg2::info("BIOS post complete. Clearing SBRMI alert mask");
+                    postCompleteAlertScan = true;
                     for (size_t i : socIndex)
                     {
                         clearSbrmiAlertMask(i);
                     }
+                    postCompleteAlertScan = false;
 
                     lg2::info(
                         "BIOS post complete. Setting MCA and DRAM OOB config");
@@ -2006,7 +2008,6 @@ bool Manager::decodeInterrupt(uint8_t socNum)
     std::unique_lock lock(harvestMutex);
     struct ras_df_err_chk errorCheck = {};
     uint8_t buf;
-    bool fchHangError = false;
     bool resetReady = false;
     bool runtimeError = false;
     bool nonMcaShutdownError = false;
@@ -2115,12 +2116,30 @@ bool Manager::decodeInterrupt(uint8_t socNum)
                 }
                 else if (buf & resetHangErr)
                 {
+                    if (postCompleteAlertScan == true)
+                    {
+                        // The host has just completed BIOS POST, so it is not
+                        // hung in a reset: the status is stale
+                        lg2::info("Socket {SOC}: Stale reset hang status found "
+                                  "after BIOS post complete, no reset",
+                                  "SOC", socNum);
+                        writeOobRegister(socNum, 0x4C, buf);
+                        return true;
+                    }
+
                     lg2::info(
                         "Socket {SOC}: System hang while resetting in syncflood. "
                         "Manual immediate reset suggested.",
                         "SOC", socNum);
 
-                    fchHangError = true;
+                    // Do not wait for a manual reset: record the event (Break
+                    // Event CPER, decode-service) and let rasRecoveryAction()
+                    // cold reset the system
+                    deactivateRuntimeErrorPolling();
+                    cfErrorReceived = true;
+
+                    harvestBreakEvent(socNum);
+                    cpuAlertProcessed.assign(cpuCount, true);
                 }
             }
             else
@@ -2213,8 +2232,7 @@ bool Manager::decodeInterrupt(uint8_t socNum)
             // implementation of SMU?
             writeOobRegister(socNum, 0x4C, buf);
 
-            if (fchHangError == true || runtimeError == true ||
-                nonMcaShutdownError == true)
+            if (runtimeError == true || nonMcaShutdownError == true)
             {
                 return true;
             }
