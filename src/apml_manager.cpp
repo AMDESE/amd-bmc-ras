@@ -196,6 +196,7 @@ void Manager::currentHostStateMonitor()
 
             apmlInitialized = false;
             cfErrorReceived = false;
+            cfLatchLogged = false;
 
             if (*currentHostState !=
                 "xyz.openbmc_project.State.Host.HostState.Off")
@@ -587,6 +588,7 @@ void Manager::init()
                     "xyz.openbmc_project.State.Watchdog.TimerUse.BIOSFRB2")
                 {
                     cfErrorReceived = false;
+                    cfLatchLogged = false;
                     watchdogTimerCounter++;
 
                     // Soft repairs do not survive the host reset
@@ -2015,8 +2017,14 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
     if (cfErrorReceived)
     {
-        lg2::info("Control fabric error latched, ignoring alert for SOC {SOC}",
-                  "SOC", socNum);
+        // The alert keeps firing while the error is latched: log it once
+        if (cfLatchLogged == false)
+        {
+            lg2::info(
+                "Control fabric error latched, ignoring alert for SOC {SOC}",
+                "SOC", socNum);
+            cfLatchLogged = true;
+        }
         return true;
     }
 

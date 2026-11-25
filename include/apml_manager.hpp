@@ -81,6 +81,8 @@ class Manager : public amd::ras::Manager
     bool runtimeErrPollingSupported;
     /** @brief Latch for control fabric error; ignores alerts until reboot. */
     bool cfErrorReceived;
+    /** @brief The ignored alerts of the current latch have been logged. */
+    bool cfLatchLogged = false;
     /** @brief Set while pending alerts are harvested at BIOS POST complete. */
     bool postCompleteAlertScan = false;
     std::vector<bool> cpuAlertProcessed;
