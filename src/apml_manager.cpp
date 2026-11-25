@@ -2492,13 +2492,17 @@ oob_status_t Manager::setMcaErrThreshold()
 
         memset(&oob_config, 0, sizeof(oob_config));
 
-        getOobRegisters(&oob_config);
+        ret = getOobRegisters(&oob_config);
 
         /* Core MCA Error Reporting Enable */
         oob_config.core_mca_err_reporting_en = 1;
         oob_config.mca_oob_misc0_ec_enable = 1;
 
-        ret = setRasOobConfig(oob_config);
+        // Never write back fields that could not be read
+        if (ret == OOB_SUCCESS)
+        {
+            ret = setRasOobConfig(oob_config);
+        }
 
         if (ret == OOB_SUCCESS)
         {
@@ -2541,13 +2545,17 @@ oob_status_t Manager::setMcaErrThreshold()
 
             memset(&oob_config, 0, sizeof(oob_config));
 
-            getOobRegisters(&oob_config);
+            ret = getOobRegisters(&oob_config);
 
             /* Core MCA Error Reporting Enable */
             oob_config.core_mca_err_reporting_en = 1;
             oob_config.mca_oob_misc0_ec_enable = 1;
 
-            ret = setRasOobConfig(oob_config);
+            // Never write back fields that could not be read
+            if (ret == OOB_SUCCESS)
+            {
+                ret = setRasOobConfig(oob_config);
+            }
 
             if (ret == OOB_SUCCESS)
             {
@@ -2577,7 +2585,7 @@ oob_status_t Manager::setMcaErrThreshold()
 
         memset(&oob_config, 0, sizeof(oob_config));
 
-        getOobRegisters(&oob_config);
+        ret = getOobRegisters(&oob_config);
 
         amd::ras::config::Manager::AttributeValue dramCeccOobEcModeVal =
             configMgr.getAttribute("DramCeccOobEcMode");
@@ -2595,7 +2603,11 @@ oob_status_t Manager::setMcaErrThreshold()
             static_cast<uint8_t>(*dramCeccLeakRate);
         oob_config.mca_oob_misc0_ec_enable = 1;
 
-        ret = setRasOobConfig(oob_config);
+        // Never write back fields that could not be read
+        if (ret == OOB_SUCCESS)
+        {
+            ret = setRasOobConfig(oob_config);
+        }
 
         if (ret == OOB_SUCCESS)
         {
@@ -2682,7 +2694,7 @@ oob_status_t Manager::getRasOobConfig(struct oob_config_d_in* oob_config)
     else
     {
         oob_config->core_mca_err_reporting_en =
-            (dataOut >> PCIE_ERR_REPORT_EN & 1);
+            (dataOut >> MCA_ERR_REPORT_EN & 1);
         oob_config->dram_cecc_oob_ec_mode =
             (dataOut >> DRAM_CECC_OOB_EC_MODE & TRIBBLE_BITS);
         oob_config->dram_cecc_leak_rate =
@@ -2763,7 +2775,14 @@ oob_status_t Manager::setPcieOobRegisters()
     struct oob_config_d_in oob_config;
 
     memset(&oob_config, 0, sizeof(oob_config));
-    getRasOobConfig(&oob_config);
+    ret = getRasOobConfig(&oob_config);
+
+    // Never write back fields that could not be read: the DRAM CECC mode,
+    // leak rate and MISC0 enable would be written as 0
+    if (ret != OOB_SUCCESS)
+    {
+        return ret;
+    }
 
     oob_config.pcie_err_reporting_en = 1;
     oob_config.core_mca_err_reporting_en = 1;
