@@ -125,6 +125,7 @@ bool compareBitwiseAnd(const uint32_t* Var, const std::string& hexString)
 }
 
 constexpr size_t sysMgmtCtrlErr = 0x4;
+constexpr size_t resetHangErr = 0x2;
 constexpr size_t socket0 = 0;
 
 void requestHostTransition(std::string command)
@@ -234,7 +235,7 @@ void rasRecoveryAction(std::string& node, uint8_t buf,
 {
     if (*systemRecovery == "WARM_RESET")
     {
-        if ((buf & sysMgmtCtrlErr))
+        if ((buf & (sysMgmtCtrlErr | resetHangErr)))
         {
             triggerColdReset(resetSignal);
         }
@@ -249,7 +250,18 @@ void rasRecoveryAction(std::string& node, uint8_t buf,
     }
     else if (*systemRecovery == "NO_RESET")
     {
-        lg2::info("NO RESET triggered");
+        if (buf & resetHangErr)
+        {
+            // RasStatus[reset_hang_err]: the CPU hung while resetting after a
+            // syncflood and cannot finish the reset itself.
+            lg2::info("Reset hang after a syncflood: the CPU cannot finish its "
+                      "own reset, cold reset regardless of NO_RESET");
+            triggerColdReset(resetSignal);
+        }
+        else
+        {
+            lg2::info("NO RESET triggered");
+        }
     }
     else
     {
