@@ -151,8 +151,63 @@ Manager::Manager(amd::ras::config::Manager& manager,
     DramCeccErrorPollingEvent(nullptr), PcieAerErrorPollingEvent(nullptr),
     mcaErrorHarvestMtx(), dramErrorHarvestMtx(), pcieErrorHarvestMtx(),
     conn(std::make_shared<sdbusplus::asio::connection>(io)),
-    fatalDelayRetryTimer(io), fatalDelayRetryCount(0)
+    fatalDelayRetryTimer(io), fatalDelayRetryCount(0), cfResetWatchdog(io)
 {}
+
+// After a control fabric error the CPU resets itself once the fatal harvest
+// delay has passed and the host is back at BIOS POST complete after about 8
+// minutes on Helios-P. Under NO_RESET the BMC keeps that and only cold resets
+// if BIOS POST has not completed 15 minutes after the error: the CPU did not
+// reset, or its reset hung in early boot.
+constexpr int cfResetWatchdogSec = 900;
+
+void Manager::armCfResetWatchdog()
+{
+    amd::ras::config::Manager::AttributeValue SystemRecoveryVal =
+        configMgr.getAttribute("SystemRecoveryMode");
+    std::string* systemRecovery = std::get_if<std::string>(&SystemRecoveryVal);
+
+    // Other recovery modes already reset the host on a control fabric error
+    if (systemRecovery == nullptr || *systemRecovery != "NO_RESET")
+    {
+        return;
+    }
+
+    cfResetPending = true;
+    cfResetWatchdog.cancel();
+    cfResetWatchdog.expires_after(std::chrono::seconds(cfResetWatchdogSec));
+    cfResetWatchdog.async_wait([this](const boost::system::error_code& ec) {
+        if (ec || !cfResetPending)
+        {
+            return;
+        }
+        cfResetPending = false;
+
+        // A host powered off in the meantime is not hung: leave it off
+        sdbusplus::bus_t bus = sdbusplus::bus::new_default();
+        std::string currentHostState =
+            amd::ras::util::getProperty<std::string>(
+                bus, "xyz.openbmc_project.State.Host",
+                "/xyz/openbmc_project/state/host0",
+                "xyz.openbmc_project.State.Host", "CurrentHostState");
+
+        if (currentHostState == "xyz.openbmc_project.State.Host.HostState.Off")
+        {
+            lg2::info("Control fabric error: host is off, no cold reset");
+            return;
+        }
+
+        lg2::warning("Control fabric error: BIOS POST has not completed "
+                     "within {SEC} s, cold reset",
+                     "SEC", cfResetWatchdogSec);
+
+        amd::ras::config::Manager::AttributeValue ResetSignalVal =
+            configMgr.getAttribute("ResetSignalType");
+        std::string* resetSignal = std::get_if<std::string>(&ResetSignalVal);
+
+        amd::ras::util::triggerColdReset(resetSignal);
+    });
+}
 
 void Manager::currentHostStateMonitor()
 {
@@ -589,6 +644,7 @@ void Manager::init()
                 {
                     cfErrorReceived = false;
                     cfLatchLogged = false;
+                    cfResetPending = false;
                     watchdogTimerCounter++;
 
                     // Soft repairs do not survive the host reset
@@ -2377,6 +2433,13 @@ bool Manager::decodeInterrupt(uint8_t socNum)
 
                     amd::ras::util::rasRecoveryAction(node, buf, systemRecovery,
                                                       resetSignal);
+
+                    // Not armed when AIFS holds the system (recoveryAction
+                    // false): that hold must not end in a cold reset
+                    if (buf & sysMgmtCtrlErr)
+                    {
+                        armCfResetWatchdog();
+                    }
                 }
 
                 if (rcd->SectionDescriptor != nullptr)

@@ -98,6 +98,10 @@ class Manager : public amd::ras::Manager
     /** @brief Retries a rejected fatal harvest delay override. */
     boost::asio::steady_timer fatalDelayRetryTimer;
     int fatalDelayRetryCount;
+    /** @brief Cold resets the host if BIOS POST does not complete after a
+     *  control fabric error under NO_RESET. */
+    boost::asio::steady_timer cfResetWatchdog;
+    bool cfResetPending = false;
 
     /**
      * @brief Requests GPIO events for hardware alert handling.
@@ -238,6 +242,7 @@ class Manager : public amd::ras::Manager
      *  xyz.openbmc_project.State.Host D-bus Interface.
      */
     void currentHostStateMonitor();
+    void armCfResetWatchdog();
 
     /** @brief Initializes platform-specific settings.
      *
